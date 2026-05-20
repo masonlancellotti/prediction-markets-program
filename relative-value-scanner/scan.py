@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 from relative_value.live_snapshot_matcher import match_snapshot_files
@@ -621,7 +622,7 @@ def run_targeted_pipeline(
             return result
 
     try:
-        summary = _targeted_pipeline_summary(paths)
+        summary = _targeted_pipeline_summary(paths, min_net_gap=min_net_gap)
     except ValueError as exc:
         print(f"targeted_pipeline_status=FAILED message={exc}")
         return 1
@@ -819,7 +820,7 @@ def _targeted_pipeline_paths(output_dir: Path, label: str) -> dict[str, Path]:
     }
 
 
-def _targeted_pipeline_summary(paths: dict[str, Path]) -> dict[str, Any]:
+def _targeted_pipeline_summary(paths: dict[str, Path], min_net_gap: float = 0.01) -> dict[str, Any]:
     polymarket_snapshot = _load_json_report(paths["polymarket_snapshot"], "polymarket_snapshot")
     kalshi_snapshot = _load_json_report(paths["kalshi_snapshot"], "kalshi_snapshot")
     polymarket_enriched = _load_json_report(paths["polymarket_enriched"], "polymarket_enriched")
@@ -841,6 +842,7 @@ def _targeted_pipeline_summary(paths: dict[str, Path]) -> dict[str, Any]:
         "evaluator_counts": ledger.get("counts_by_action") or {},
         "top_rejection_reasons": _top_rejection_reasons(ledger),
         "gap_distribution": _gap_distribution(ledger),
+        "near_miss_summary": _near_miss_summary(ledger, min_net_gap=min_net_gap),
     }
 
 
@@ -872,6 +874,9 @@ def _completed_sweep_row(label: str, summary_payload: dict[str, Any]) -> dict[st
     gap_distribution = summary.get("gap_distribution")
     if not isinstance(gap_distribution, dict):
         gap_distribution = _empty_gap_distribution()
+    near_miss_summary = summary.get("near_miss_summary")
+    if not isinstance(near_miss_summary, dict):
+        near_miss_summary = _empty_near_miss_summary()
     return {
         "label": label,
         "status": "completed",
@@ -882,6 +887,7 @@ def _completed_sweep_row(label: str, summary_payload: dict[str, Any]) -> dict[st
         "evaluator_counts": evaluator_counts,
         "top_rejection_reasons": top_reasons[:3],
         "gap_distribution": gap_distribution,
+        "near_miss_summary": near_miss_summary,
     }
 
 
@@ -896,6 +902,7 @@ def _failed_sweep_row(label: str, failure_reason: str) -> dict[str, Any]:
         "evaluator_counts": {},
         "top_rejection_reasons": [],
         "gap_distribution": _empty_gap_distribution(),
+        "near_miss_summary": _empty_near_miss_summary(),
     }
 
 
@@ -918,8 +925,8 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
         "",
         "Read-only targeted pipeline sweep. Rows summarize saved-file outputs only.",
         "",
-        "| Label | Status | Polymarket | Kalshi | Pairs | Gap > 0 | Net > 0 | WATCH | MANUAL_REVIEW | PAPER_CANDIDATE | Top rejection reasons | Failure reason |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Label | Status | Polymarket | Kalshi | Pairs | Gap > 0 | Net > 0 | Near-miss net | WATCH | MANUAL_REVIEW | PAPER_CANDIDATE | Top rejection reasons | Failure reason |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     universes = payload.get("universes") or []
     if isinstance(universes, list):
@@ -932,6 +939,9 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
             gap_distribution = row.get("gap_distribution")
             if not isinstance(gap_distribution, dict):
                 gap_distribution = _empty_gap_distribution()
+            near_miss_summary = row.get("near_miss_summary")
+            if not isinstance(near_miss_summary, dict):
+                near_miss_summary = _empty_near_miss_summary()
             lines.append(
                 "| "
                 + " | ".join(
@@ -943,6 +953,7 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
                         _markdown_cell(row.get("pair_count")),
                         _markdown_cell(_gross_gap_positive_count(gap_distribution)),
                         _markdown_cell(gap_distribution.get("estimated_net_gap_gt_0_count", 0)),
+                        _markdown_cell(near_miss_summary.get("count", 0)),
                         _markdown_cell(counts.get("WATCH", 0)),
                         _markdown_cell(counts.get("MANUAL_REVIEW", 0)),
                         _markdown_cell(counts.get("PAPER_CANDIDATE", 0)),
@@ -1014,6 +1025,44 @@ def _gross_gap_positive_count(gap_distribution: dict[str, Any]) -> int:
         "gross_gap_gt_0_02_count",
     ]
     return sum(int(gap_distribution.get(key) or 0) for key in keys)
+
+
+def _empty_near_miss_summary() -> dict[str, Any]:
+    return {
+        "count": 0,
+        "min_distance": None,
+        "max_distance": None,
+        "median_distance": None,
+    }
+
+
+def _near_miss_summary(ledger_payload: dict[str, Any], min_net_gap: float = 0.01) -> dict[str, Any]:
+    distances: list[float] = []
+    rows = ledger_payload.get("ledger")
+    if not isinstance(rows, list):
+        return _empty_near_miss_summary()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("action") != "WATCH":
+            continue
+        if row.get("missed_fill_reason") != "estimated_net_gap_below_minimum":
+            continue
+        gap = row.get("gap")
+        if not isinstance(gap, dict):
+            continue
+        estimated_net_gap = _float_or_none(gap.get("estimated_net_gap"))
+        if estimated_net_gap is None:
+            continue
+        distances.append(round(min_net_gap - estimated_net_gap, 6))
+    if not distances:
+        return _empty_near_miss_summary()
+    return {
+        "count": len(distances),
+        "min_distance": round(min(distances), 6),
+        "max_distance": round(max(distances), 6),
+        "median_distance": round(median(distances), 6),
+    }
 
 
 def _float_or_none(value: Any) -> float | None:

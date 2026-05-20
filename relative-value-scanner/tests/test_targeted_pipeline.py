@@ -115,9 +115,9 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
                     },
                     {
                         "action": "WATCH",
-                        "gap": {"gross_gap": 0.025, "estimated_net_gap": 0.01},
-                        "ineligibility_reasons": [],
-                        "missed_fill_reason": None,
+                        "gap": {"gross_gap": 0.025, "estimated_net_gap": 0.019},
+                        "ineligibility_reasons": ["estimated_net_gap_below_minimum"],
+                        "missed_fill_reason": "estimated_net_gap_below_minimum",
                     },
                 ],
             },
@@ -184,10 +184,10 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
         "MANUAL_REVIEW": 1,
         "PAPER_CANDIDATE": 0,
     }
-    assert summary["summary"]["top_rejection_reasons"][0] == {
+    assert {
         "reason": "missed_fill:settlement_delta_exceeds_limit",
         "count": 1,
-    }
+    } in summary["summary"]["top_rejection_reasons"]
     assert summary["summary"]["gap_distribution"] == {
         "gross_gap_lte_0_count": 1,
         "gross_gap_gt_0_lte_0_005_count": 1,
@@ -196,6 +196,12 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
         "gross_gap_gt_0_02_count": 1,
         "estimated_net_gap_gt_0_count": 3,
         "estimated_net_gap_lte_0_count": 1,
+    }
+    assert summary["summary"]["near_miss_summary"] == {
+        "count": 1,
+        "min_distance": 0.001,
+        "max_distance": 0.001,
+        "median_distance": 0.001,
     }
     assert "PAPER" not in json.dumps(summary["summary"]["evaluator_counts"]).replace("PAPER_CANDIDATE", "")
 
@@ -243,3 +249,49 @@ def test_gap_distribution_boundaries_and_nan_handling() -> None:
     assert distribution["gross_gap_gt_0_02_count"] == 0
     assert distribution["estimated_net_gap_gt_0_count"] == 0
     assert distribution["estimated_net_gap_lte_0_count"] == 0
+
+
+def test_near_miss_summary_counts_only_watch_net_gap_near_misses() -> None:
+    summary = scan._near_miss_summary(
+        {
+            "ledger": [
+                {
+                    "action": "WATCH",
+                    "missed_fill_reason": "estimated_net_gap_below_minimum",
+                    "gap": {"estimated_net_gap": 0.019},
+                },
+                {
+                    "action": "WATCH",
+                    "missed_fill_reason": "estimated_net_gap_below_minimum",
+                    "gap": {"estimated_net_gap": None},
+                },
+                {
+                    "action": "MANUAL_REVIEW",
+                    "missed_fill_reason": "estimated_net_gap_below_minimum",
+                    "gap": {"estimated_net_gap": 0.018},
+                },
+                {
+                    "action": "WATCH",
+                    "missed_fill_reason": "no_positive_bid_ask_gap",
+                    "gap": {"estimated_net_gap": 0.017},
+                },
+            ]
+        },
+        min_net_gap=0.02,
+    )
+
+    assert summary == {
+        "count": 1,
+        "min_distance": 0.001,
+        "max_distance": 0.001,
+        "median_distance": 0.001,
+    }
+
+
+def test_near_miss_summary_empty_shape_when_no_qualifying_rows() -> None:
+    assert scan._near_miss_summary({"ledger": []}, min_net_gap=0.02) == {
+        "count": 0,
+        "min_distance": None,
+        "max_distance": None,
+        "median_distance": None,
+    }
