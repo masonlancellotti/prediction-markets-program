@@ -158,6 +158,14 @@ def main(argv: list[str] | None = None) -> int:
     pipeline_parser.add_argument("--timeout-seconds", type=float, default=10.0)
     pipeline_parser.add_argument("--max-snapshot-age-hours", type=float, default=24.0)
     pipeline_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    pipeline_parser.add_argument("--max-settlement-delta-seconds", type=float, default=3600.0)
+    pipeline_parser.add_argument("--min-top-of-book-size", type=float, default=1.0)
+    pipeline_parser.add_argument("--min-net-gap", type=float, default=0.01)
+    pipeline_parser.add_argument(
+        "--accept-unit-mismatch",
+        action="store_true",
+        help="Forward unit-mismatch acceptance to evaluate-paper-candidates.",
+    )
     pipeline_parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
 
     parser.add_argument("--fixture-dir", type=Path, default=PROJECT_ROOT / "venues" / "fixtures")
@@ -237,6 +245,10 @@ def main(argv: list[str] | None = None) -> int:
             kalshi_max_pages=args.kalshi_max_pages,
             max_snapshot_age_hours=args.max_snapshot_age_hours,
             max_quote_age_seconds=args.max_quote_age_seconds,
+            max_settlement_delta_seconds=args.max_settlement_delta_seconds,
+            min_top_of_book_size=args.min_top_of_book_size,
+            min_net_gap=args.min_net_gap,
+            accept_unit_mismatch=args.accept_unit_mismatch,
         )
 
     scanner = RelativeValueScanner()
@@ -485,6 +497,10 @@ def run_targeted_pipeline(
     kalshi_max_pages: int = 2,
     max_snapshot_age_hours: float = 24.0,
     max_quote_age_seconds: float = 1800.0,
+    max_settlement_delta_seconds: float = 3600.0,
+    min_top_of_book_size: float = 1.0,
+    min_net_gap: float = 0.01,
+    accept_unit_mismatch: bool = False,
 ) -> int:
     try:
         safe_label = _safe_pipeline_label(label)
@@ -555,6 +571,10 @@ def run_targeted_pipeline(
                 paths["kalshi_enriched"],
                 paths["paper_candidates"],
                 max_quote_age_seconds=max_quote_age_seconds,
+                max_settlement_delta_seconds=max_settlement_delta_seconds,
+                min_top_of_book_size=min_top_of_book_size,
+                min_net_gap=min_net_gap,
+                accept_unit_mismatch=accept_unit_mismatch,
             ),
         ),
     ]

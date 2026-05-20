@@ -43,6 +43,7 @@
 - Live Kalshi ingestion is read-only public `GET /markets?status=open` discovery only; it writes `schema_version=1` snapshots and does not feed scoring yet.
 - Kalshi targeted discovery may pass public `series_ticker` and/or `event_ticker` filters, start from `cursor`, and follow returned `cursor`/`next_cursor` values with `--max-pages`; broad one-page discovery remains unchanged when those options are omitted.
 - Kalshi `status=active` is treated as live/open for discovery because the open-market endpoint returns it in practice.
+- Kalshi early-closing markets use parseable `expected_expiration_time` for normalized `end_date` when `can_close_early=true`; normalized `close_time` stays on the conservative close/expiration fallback.
 - Kalshi `best_bid`/`best_ask` are YES market metadata values, not normalized orderbook depth.
 - Both live snapshot families use `schema_version=1`; consumers should rely only on documented common fields unless explicitly handling venue-specific extras.
 - Live snapshot matching reads saved JSON files only and emits `WATCH`/`MANUAL_REVIEW` pairs only.
@@ -63,6 +64,7 @@
 - Missing, stale, too-early, or too-late markout windows stay null with `markout_status`.
 - Targeted pipeline runner is orchestration only: it runs read-only discovery, enrichment, saved snapshot matching, and paper candidate evaluation into labeled report files.
 - Targeted pipeline runner must not sleep/wait, trade, authenticate, call account/order endpoints, integrate `RelativeValueScanner` scoring, or emit `PAPER`/`POSSIBLE_ARB`.
+- Targeted pipeline runner forwards evaluator flags (`--max-settlement-delta-seconds`, `--min-net-gap`, `--min-top-of-book-size`, `--accept-unit-mismatch`) without changing evaluator defaults.
 
 ## Current Next Task
 
@@ -159,6 +161,7 @@ python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-t
 
 New command added for repeatable read-only targeted workflow. It writes labeled files under `reports/`, prints normalized/enrichment/pair/evaluator summaries, and prints the exact later markout replay command. Tests mock every pipeline step; no network is used in tests.
 Current NBA/KXNBA result: Polymarket 600 normalized, Kalshi 4 normalized, Polymarket 528/600 enriched, Kalshi 4/4 enriched, 4 pairs, evaluator counts `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0`. Top rejection reasons are `settlement_delta_exceeds_limit` and `missed_fill:settlement_delta_exceeds_limit`, both count 4.
+Current after Kalshi early-close `end_date` normalization: saved Kalshi KXNBA rows now have `end_date=2026-06-30T14:00:00Z` and `close_time=2028-06-29T14:00:00Z`. The normal and `--max-settlement-delta-seconds 43200` pipeline runs still produce 4 `WATCH` rows because the existing evaluator settlement gate intentionally uses Kalshi `close_time` before `end_date`; that logic was not changed.
 
 Latest printed later markout command:
 

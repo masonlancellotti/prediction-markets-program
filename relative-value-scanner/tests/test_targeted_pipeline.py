@@ -73,6 +73,11 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
 
     def fake_evaluate_paper_candidates(pairs, polymarket_enriched, kalshi_enriched, output, **kwargs):
         calls.append(("evaluate_paper_candidates", output.name, {"pairs": pairs.name}))
+        assert kwargs["max_quote_age_seconds"] == 1234.0
+        assert kwargs["max_settlement_delta_seconds"] == 43200.0
+        assert kwargs["min_top_of_book_size"] == 5.0
+        assert kwargs["min_net_gap"] == 0.02
+        assert kwargs["accept_unit_mismatch"] is True
         _write(
             output,
             {
@@ -116,6 +121,15 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
             "nba_kxnba",
             "--output-dir",
             str(tmp_path),
+            "--max-quote-age-seconds",
+            "1234",
+            "--max-settlement-delta-seconds",
+            "43200",
+            "--min-top-of-book-size",
+            "5",
+            "--min-net-gap",
+            "0.02",
+            "--accept-unit-mismatch",
         ]
     )
 

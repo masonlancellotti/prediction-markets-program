@@ -228,8 +228,8 @@ def normalize_kalshi_markets(
                 "best_ask": yes_ask,
                 "volume": _float_or_none(_first_present(market, "volume_fp", "volume", "volume_24h_fp")),
                 "liquidity": _float_or_none(_first_present(market, "liquidity_dollars", "liquidity")),
-                "end_date": _string_or_none(_first_present(market, "close_time", "expiration_time", "expected_expiration_time")),
-                "close_time": _string_or_none(market.get("close_time")),
+                "end_date": _normalized_end_date(market),
+                "close_time": _string_or_none(_first_present(market, "close_time", "expiration_time", "expected_expiration_time")),
                 "active": state["active"],
                 "closed": state["closed"],
                 "status": state["status"],
@@ -280,6 +280,13 @@ def _first_present(row: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _normalized_end_date(market: dict[str, Any]) -> str | None:
+    expected_expiration_time = _string_or_none(market.get("expected_expiration_time"))
+    if _bool_or_none(market.get("can_close_early")) is True and _parse_datetime_or_none(expected_expiration_time) is not None:
+        return expected_expiration_time
+    return _string_or_none(_first_present(market, "close_time", "expiration_time", "expected_expiration_time"))
+
+
 def _string_or_none(value: Any) -> str | None:
     if value is None:
         return None
@@ -293,6 +300,22 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return None
 
 
 def _price_or_none(value: Any) -> float | None:

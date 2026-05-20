@@ -99,11 +99,12 @@ Markout replay is research evidence only. It does not call live APIs, use midpoi
 
 ```powershell
 python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba
+python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba_looser_review --max-settlement-delta-seconds 43200
 ```
 
 This runs the read-only saved-file workflow for one target universe: Polymarket discovery, Kalshi discovery, orderbook enrichment, saved snapshot matching, and paper candidate evaluation. Outputs are labeled under `reports/`, for example `reports/nba_kxnba_pairs.json` and `reports/nba_kxnba_paper_candidates.json`.
 
-The runner prints normalized counts, enrichment counts, pair count, evaluator action counts, top rejection reasons, and the exact `replay-paper-candidate-markouts` command to run later after separate later snapshots have been captured. It does not sleep, trade, authenticate, score through `RelativeValueScanner`, use midpoint fills, claim profit, or emit `PAPER` / `POSSIBLE_ARB`.
+The runner prints normalized counts, enrichment counts, pair count, evaluator action counts, top rejection reasons, and the exact `replay-paper-candidate-markouts` command to run later after separate later snapshots have been captured. It forwards evaluator review knobs such as `--max-settlement-delta-seconds`, `--min-net-gap`, `--min-top-of-book-size`, and `--accept-unit-mismatch` without changing their defaults. It does not sleep, trade, authenticate, score through `RelativeValueScanner`, use midpoint fills, claim profit, or emit `PAPER` / `POSSIBLE_ARB`.
 
 ## Action Ladder
 

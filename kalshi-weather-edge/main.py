@@ -30,6 +30,7 @@ from maintenance import ProjectMaintenance
 from research.liquidity_analysis import LiquidityAnalyzer
 from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingConfig
 from research.paper_market_making_evidence import PaperMarketMakingEvidenceConfig, PaperMarketMakingEvidenceReporter
+from research.paper_market_making_target_review import PaperMarketMakingTargetReviewConfig, PaperMarketMakingTargetReviewer
 from research.market_making_replay import MarketMakingReplayBacktester, MarketMakingReplayConfig
 from research.market_universe import MarketUniverseBuilder, MarketUniverseConfig
 from research.opportunity_ranker import OpportunityRanker
@@ -324,6 +325,12 @@ def main(argv: list[str] | None = None) -> int:
     paper_mm_evidence.add_argument("--since", help="Only include paper quotes at or after this ISO timestamp. Overrides --last-days.")
     paper_mm_evidence.add_argument("--timestamped-export", action="store_true", help="Write timestamp-suffixed report files instead of overwriting default evidence report paths.")
     paper_mm_evidence.add_argument("--no-export", action="store_true")
+    paper_mm_target_review = sub.add_parser("paper-market-making-target-review", help="Read-only reconciliation of analyzer candidates and paper quote evidence; never sends real orders")
+    paper_mm_target_review.add_argument("--last-days", type=int, default=7)
+    paper_mm_target_review.add_argument("--too-few-fills-threshold", type=int, default=5)
+    paper_mm_target_review.add_argument("--adverse-high-threshold", type=float, default=0.35)
+    paper_mm_target_review.add_argument("--adverse-caution-threshold", type=float, default=0.20)
+    paper_mm_target_review.add_argument("--no-export", action="store_true")
 
     args = parser.parse_args(argv)
     if args.command == "init-db":
@@ -546,6 +553,15 @@ def main(argv: list[str] | None = None) -> int:
             timestamped_export=args.timestamped_export,
         )
         print(PaperMarketMakingEvidenceReporter().build(cfg, persist_exports=not args.no_export).to_text())
+        return 0
+    if args.command == "paper-market-making-target-review":
+        cfg = PaperMarketMakingTargetReviewConfig(
+            last_days=args.last_days,
+            too_few_fills_threshold=args.too_few_fills_threshold,
+            adverse_high_threshold=args.adverse_high_threshold,
+            adverse_caution_threshold=args.adverse_caution_threshold,
+        )
+        print(PaperMarketMakingTargetReviewer().build(cfg, persist_exports=not args.no_export).to_text())
         return 0
     if args.command == "project-status":
         print(ProjectMaintenance().project_status().to_text())

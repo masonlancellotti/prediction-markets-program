@@ -20,7 +20,7 @@ Normalized outcome rows use `outcome_yes_token_price`, meaning the Gamma-discove
 
 Optional `--series-ticker` and `--event-ticker` arguments target the same public markets endpoint by Kalshi series or event. Optional `--cursor` starts from a returned page cursor, and `--max-pages` follows returned `cursor` or `next_cursor` values. When omitted, the broad one-page `status=open&limit=...` request remains unchanged.
 
-Kalshi normalized snapshots use `schema_version=1`. Outcome rows use `outcome_yes_token_price` for the displayed outcome token price or closest venue equivalent. Market-level `best_bid` and `best_ask` are YES bid/ask discovery values from market metadata, not proof of orderbook depth. `liquidity` is Kalshi's liquidity-dollar field when present, not `liquidity_top_contracts`.
+Kalshi normalized snapshots use `schema_version=1`. For early-closing markets with `can_close_early=true` and a parseable `expected_expiration_time`, normalized `end_date` uses `expected_expiration_time` as the Polymarket-comparable date while normalized `close_time` preserves the conservative close/expiration fallback. Outcome rows use `outcome_yes_token_price` for the displayed outcome token price or closest venue equivalent. Market-level `best_bid` and `best_ask` are YES bid/ask discovery values from market metadata, not proof of orderbook depth. `liquidity` is Kalshi's liquidity-dollar field when present, not `liquidity_top_contracts`.
 
 ## Snapshot Schema Contract
 
@@ -71,6 +71,8 @@ A filled markout is research evidence that a later saved quote was observed near
 `python scan.py run-targeted-pipeline` is a repeatable orchestration wrapper around the saved-file workflow for one target universe. It runs read-only Polymarket discovery, read-only Kalshi discovery, saved snapshot orderbook enrichment, saved snapshot matching, and saved-file paper candidate evaluation into labeled report files.
 
 The runner does not sleep or wait for later markouts. It prints the exact markout replay command to run after separate later snapshots have been captured. It does not trade, authenticate, read accounts, place orders, score through `RelativeValueScanner`, use midpoint fills, make profit claims, or emit `PAPER` / `POSSIBLE_ARB`.
+
+The runner forwards evaluator review flags such as `--max-settlement-delta-seconds`, `--min-net-gap`, `--min-top-of-book-size`, and `--accept-unit-mismatch`. These are pass-through controls only; evaluator defaults and settlement-gate logic are unchanged.
 
 ## Sportsbook Odds
 

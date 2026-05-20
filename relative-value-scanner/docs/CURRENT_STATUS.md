@@ -457,6 +457,51 @@ Next exact command:
 python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba
 ```
 
+## 2026-05-20 Kalshi Early-Close Normalization And Pipeline Flags
+
+Completed:
+
+- Changed Kalshi normalized `end_date` selection for early-closing markets: when `can_close_early=true` and `expected_expiration_time` is parseable, `end_date` uses `expected_expiration_time`.
+- Preserved Kalshi normalized `close_time` on the conservative `close_time` -> `expiration_time` -> `expected_expiration_time` fallback.
+- Preserved the past-close-time skip gate and evaluator settlement logic.
+- Added pipeline pass-through flags: `--max-settlement-delta-seconds`, `--min-net-gap`, `--min-top-of-book-size`, and `--accept-unit-mismatch`.
+- Added tests for KXNBA-style early-closing normalization, non-early-closing fallback behavior, and pipeline evaluator pass-through values.
+
+Commands run:
+
+- `python -m pytest tests\test_kalshi_live.py tests\test_targeted_pipeline.py -q`
+- `python -m pytest -q`
+- `python scan.py`
+- `python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba`
+- `python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba_looser_review --max-settlement-delta-seconds 43200`
+
+Tests run:
+
+- `python -m pytest tests\test_kalshi_live.py tests\test_targeted_pipeline.py -q`: 19 passed in 0.23s
+- `python -m pytest -q`: 154 passed in 0.56s
+
+What works:
+
+- KXNBA Kalshi snapshots now normalize `end_date` to `2026-06-30T14:00:00Z` while preserving `close_time` as `2028-06-29T14:00:00Z`.
+- Normal NBA/KXNBA pipeline result: Polymarket 600 normalized, Kalshi 4 normalized, Polymarket 528/600 enriched, Kalshi 4/4 enriched, 4 pairs, evaluator counts `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0`.
+- Looser 12-hour settlement review result: same counts, `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0`.
+
+Why candidates still stay WATCH:
+
+- The existing evaluator settlement gate reads Kalshi `close_time` before `end_date`.
+- `close_time` intentionally remains the conservative 2028 close/expiration value, so the evaluator still records `settlement_delta_exceeds_limit`.
+- `_settlement_status` was intentionally not changed.
+
+What remains intentionally not built:
+
+- No trading, auth/private keys/account/order logic, live scoring, `RelativeValueScanner` integration, midpoint fills, global gate weakening, `PAPER`, or `POSSIBLE_ARB`.
+
+Next exact command:
+
+```powershell
+python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba_looser_review --max-settlement-delta-seconds 43200
+```
+
 ## 2026-05-20 Live Snapshot Matcher Precision Aids
 
 Completed:

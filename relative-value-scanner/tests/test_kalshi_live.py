@@ -144,6 +144,52 @@ def test_active_status_is_kept_like_open_status() -> None:
     assert snapshot["normalized_markets"][0]["status"] == "active"
 
 
+def test_early_closing_market_uses_expected_expiration_for_end_date_only() -> None:
+    response = _sample_kalshi_response()
+    response["markets"][0].update(
+        {
+            "ticker": "KXNBA-26-OKC",
+            "status": "active",
+            "close_time": "2028-06-29T14:00:00Z",
+            "expiration_time": "2028-06-29T14:00:00Z",
+            "expected_expiration_time": "2026-06-30T14:00:00Z",
+            "can_close_early": True,
+        }
+    )
+
+    snapshot = build_kalshi_market_snapshot(
+        response,
+        fetched_at=datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
+    )
+
+    row = snapshot["normalized_markets"][0]
+    assert row["end_date"] == "2026-06-30T14:00:00Z"
+    assert row["close_time"] == "2028-06-29T14:00:00Z"
+
+
+def test_non_early_closing_market_keeps_conservative_end_date_fallback() -> None:
+    response = _sample_kalshi_response()
+    response["markets"][0].update(
+        {
+            "ticker": "KXNBA-26-OKC",
+            "status": "active",
+            "close_time": "2028-06-29T14:00:00Z",
+            "expiration_time": "2028-06-29T14:00:00Z",
+            "expected_expiration_time": "2026-06-30T14:00:00Z",
+            "can_close_early": False,
+        }
+    )
+
+    snapshot = build_kalshi_market_snapshot(
+        response,
+        fetched_at=datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
+    )
+
+    row = snapshot["normalized_markets"][0]
+    assert row["end_date"] == "2028-06-29T14:00:00Z"
+    assert row["close_time"] == "2028-06-29T14:00:00Z"
+
+
 def test_include_flags_allow_closed_and_past_close_time() -> None:
     response = _sample_kalshi_response()
     response["markets"][0]["status"] = "closed"
