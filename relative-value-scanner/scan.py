@@ -840,6 +840,7 @@ def _targeted_pipeline_summary(paths: dict[str, Path]) -> dict[str, Any]:
         "pair_count": int(pairs.get("pair_count") or 0),
         "evaluator_counts": ledger.get("counts_by_action") or {},
         "top_rejection_reasons": _top_rejection_reasons(ledger),
+        "gap_distribution": _gap_distribution(ledger),
     }
 
 
@@ -868,6 +869,9 @@ def _completed_sweep_row(label: str, summary_payload: dict[str, Any]) -> dict[st
     top_reasons = summary.get("top_rejection_reasons")
     if not isinstance(top_reasons, list):
         top_reasons = []
+    gap_distribution = summary.get("gap_distribution")
+    if not isinstance(gap_distribution, dict):
+        gap_distribution = _empty_gap_distribution()
     return {
         "label": label,
         "status": "completed",
@@ -877,6 +881,7 @@ def _completed_sweep_row(label: str, summary_payload: dict[str, Any]) -> dict[st
         "pair_count": int(summary.get("pair_count") or 0),
         "evaluator_counts": evaluator_counts,
         "top_rejection_reasons": top_reasons[:3],
+        "gap_distribution": gap_distribution,
     }
 
 
@@ -890,6 +895,7 @@ def _failed_sweep_row(label: str, failure_reason: str) -> dict[str, Any]:
         "pair_count": None,
         "evaluator_counts": {},
         "top_rejection_reasons": [],
+        "gap_distribution": _empty_gap_distribution(),
     }
 
 
@@ -912,8 +918,8 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
         "",
         "Read-only targeted pipeline sweep. Rows summarize saved-file outputs only.",
         "",
-        "| Label | Status | Polymarket | Kalshi | Pairs | WATCH | MANUAL_REVIEW | PAPER_CANDIDATE | Top rejection reasons | Failure reason |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Label | Status | Polymarket | Kalshi | Pairs | Gap > 0 | Net > 0 | WATCH | MANUAL_REVIEW | PAPER_CANDIDATE | Top rejection reasons | Failure reason |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     universes = payload.get("universes") or []
     if isinstance(universes, list):
@@ -923,6 +929,9 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
             counts = row.get("evaluator_counts")
             if not isinstance(counts, dict):
                 counts = {}
+            gap_distribution = row.get("gap_distribution")
+            if not isinstance(gap_distribution, dict):
+                gap_distribution = _empty_gap_distribution()
             lines.append(
                 "| "
                 + " | ".join(
@@ -932,6 +941,8 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
                         _markdown_cell(row.get("polymarket_normalized_count")),
                         _markdown_cell(row.get("kalshi_normalized_count")),
                         _markdown_cell(row.get("pair_count")),
+                        _markdown_cell(_gross_gap_positive_count(gap_distribution)),
+                        _markdown_cell(gap_distribution.get("estimated_net_gap_gt_0_count", 0)),
                         _markdown_cell(counts.get("WATCH", 0)),
                         _markdown_cell(counts.get("MANUAL_REVIEW", 0)),
                         _markdown_cell(counts.get("PAPER_CANDIDATE", 0)),
@@ -949,6 +960,71 @@ def _markdown_cell(value: Any) -> str:
     if value is None:
         return ""
     return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def _empty_gap_distribution() -> dict[str, int]:
+    return {
+        "gross_gap_lte_0_count": 0,
+        "gross_gap_gt_0_lte_0_005_count": 0,
+        "gross_gap_gt_0_005_lte_0_01_count": 0,
+        "gross_gap_gt_0_01_lte_0_02_count": 0,
+        "gross_gap_gt_0_02_count": 0,
+        "estimated_net_gap_gt_0_count": 0,
+        "estimated_net_gap_lte_0_count": 0,
+    }
+
+
+def _gap_distribution(ledger_payload: dict[str, Any]) -> dict[str, int]:
+    distribution = _empty_gap_distribution()
+    rows = ledger_payload.get("ledger")
+    if not isinstance(rows, list):
+        return distribution
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        gap = row.get("gap")
+        if not isinstance(gap, dict):
+            continue
+        gross_gap = _float_or_none(gap.get("gross_gap"))
+        if gross_gap is not None:
+            if gross_gap <= 0:
+                distribution["gross_gap_lte_0_count"] += 1
+            elif gross_gap <= 0.005:
+                distribution["gross_gap_gt_0_lte_0_005_count"] += 1
+            elif gross_gap <= 0.01:
+                distribution["gross_gap_gt_0_005_lte_0_01_count"] += 1
+            elif gross_gap <= 0.02:
+                distribution["gross_gap_gt_0_01_lte_0_02_count"] += 1
+            else:
+                distribution["gross_gap_gt_0_02_count"] += 1
+        estimated_net_gap = _float_or_none(gap.get("estimated_net_gap"))
+        if estimated_net_gap is not None:
+            if estimated_net_gap > 0:
+                distribution["estimated_net_gap_gt_0_count"] += 1
+            else:
+                distribution["estimated_net_gap_lte_0_count"] += 1
+    return distribution
+
+
+def _gross_gap_positive_count(gap_distribution: dict[str, Any]) -> int:
+    keys = [
+        "gross_gap_gt_0_lte_0_005_count",
+        "gross_gap_gt_0_005_lte_0_01_count",
+        "gross_gap_gt_0_01_lte_0_02_count",
+        "gross_gap_gt_0_02_count",
+    ]
+    return sum(int(gap_distribution.get(key) or 0) for key in keys)
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        if value != value:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_json_report(path: Path, label: str) -> dict[str, Any]:

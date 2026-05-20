@@ -24,6 +24,15 @@ def _pipeline_summary(label: str, *, pair_count: int, watch_count: int, top_reas
                 "PAPER_CANDIDATE": 0,
             },
             "top_rejection_reasons": top_reasons,
+            "gap_distribution": {
+                "gross_gap_lte_0_count": 1,
+                "gross_gap_gt_0_lte_0_005_count": 1,
+                "gross_gap_gt_0_005_lte_0_01_count": 1,
+                "gross_gap_gt_0_01_lte_0_02_count": 1,
+                "gross_gap_gt_0_02_count": 1,
+                "estimated_net_gap_gt_0_count": 3,
+                "estimated_net_gap_lte_0_count": 1,
+            },
         },
     }
 
@@ -117,10 +126,23 @@ def test_multi_universe_sweep_invokes_each_manifest_row_and_writes_aggregate(mon
     assert summary["universes"][0]["pair_count"] == 4
     assert summary["universes"][0]["evaluator_counts"]["WATCH"] == 3
     assert len(summary["universes"][0]["top_rejection_reasons"]) == 3
+    assert summary["universes"][0]["gap_distribution"]["estimated_net_gap_gt_0_count"] == 3
     assert summary["universes"][1]["status"] == "failed"
     assert summary["universes"][1]["failure_reason"] == "run_targeted_pipeline_returned_7"
+    assert summary["universes"][1]["gap_distribution"] == {
+        "gross_gap_lte_0_count": 0,
+        "gross_gap_gt_0_lte_0_005_count": 0,
+        "gross_gap_gt_0_005_lte_0_01_count": 0,
+        "gross_gap_gt_0_01_lte_0_02_count": 0,
+        "gross_gap_gt_0_02_count": 0,
+        "estimated_net_gap_gt_0_count": 0,
+        "estimated_net_gap_lte_0_count": 0,
+    }
 
     markdown = (tmp_path / "daily_review_sweep_summary.md").read_text(encoding="utf-8")
+    assert "Gap > 0" in markdown
+    assert "Net > 0" in markdown
+    assert "| nba_kxnba | completed | 14 | 5 | 4 | 4 | 3 |" in markdown
     assert "| nba_kxnba | completed |" in markdown
     assert "settlement_delta_exceeds_limit:2" in markdown
     assert "estimated_net_gap_below_minimum:1" in markdown

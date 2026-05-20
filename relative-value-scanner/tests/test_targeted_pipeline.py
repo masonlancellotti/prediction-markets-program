@@ -91,13 +91,33 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
                 "ledger": [
                     {
                         "action": "WATCH",
+                        "gap": {"gross_gap": -0.01, "estimated_net_gap": 0.01},
                         "ineligibility_reasons": ["settlement_delta_exceeds_limit"],
                         "missed_fill_reason": "settlement_delta_exceeds_limit",
                     },
                     {
                         "action": "MANUAL_REVIEW",
+                        "gap": {"gross_gap": 0.003, "estimated_net_gap": None},
                         "ineligibility_reasons": ["unit_mismatch_not_accepted"],
                         "missed_fill_reason": "unit_mismatch_not_accepted",
+                    },
+                    {
+                        "action": "WATCH",
+                        "gap": {"gross_gap": 0.007, "estimated_net_gap": -0.002},
+                        "ineligibility_reasons": [],
+                        "missed_fill_reason": None,
+                    },
+                    {
+                        "action": "WATCH",
+                        "gap": {"gross_gap": 0.015, "estimated_net_gap": 0.004},
+                        "ineligibility_reasons": [],
+                        "missed_fill_reason": None,
+                    },
+                    {
+                        "action": "WATCH",
+                        "gap": {"gross_gap": 0.025, "estimated_net_gap": 0.01},
+                        "ineligibility_reasons": [],
+                        "missed_fill_reason": None,
                     },
                 ],
             },
@@ -168,6 +188,15 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
         "reason": "missed_fill:settlement_delta_exceeds_limit",
         "count": 1,
     }
+    assert summary["summary"]["gap_distribution"] == {
+        "gross_gap_lte_0_count": 1,
+        "gross_gap_gt_0_lte_0_005_count": 1,
+        "gross_gap_gt_0_005_lte_0_01_count": 1,
+        "gross_gap_gt_0_01_lte_0_02_count": 1,
+        "gross_gap_gt_0_02_count": 1,
+        "estimated_net_gap_gt_0_count": 3,
+        "estimated_net_gap_lte_0_count": 1,
+    }
     assert "PAPER" not in json.dumps(summary["summary"]["evaluator_counts"]).replace("PAPER_CANDIDATE", "")
 
     output_text = capsys.readouterr().out
@@ -192,3 +221,25 @@ def test_run_targeted_pipeline_rejects_unsafe_label(capsys) -> None:
 
     assert result == 1
     assert "targeted_pipeline_status=FAILED message=label may contain only" in capsys.readouterr().out
+
+
+def test_gap_distribution_boundaries_and_nan_handling() -> None:
+    distribution = scan._gap_distribution(
+        {
+            "ledger": [
+                {"gap": {"gross_gap": 0.0, "estimated_net_gap": None}},
+                {"gap": {"gross_gap": 0.005, "estimated_net_gap": None}},
+                {"gap": {"gross_gap": 0.01, "estimated_net_gap": None}},
+                {"gap": {"gross_gap": 0.02, "estimated_net_gap": None}},
+                {"gap": {"gross_gap": float("nan"), "estimated_net_gap": None}},
+            ]
+        }
+    )
+
+    assert distribution["gross_gap_lte_0_count"] == 1
+    assert distribution["gross_gap_gt_0_lte_0_005_count"] == 1
+    assert distribution["gross_gap_gt_0_005_lte_0_01_count"] == 1
+    assert distribution["gross_gap_gt_0_01_lte_0_02_count"] == 1
+    assert distribution["gross_gap_gt_0_02_count"] == 0
+    assert distribution["estimated_net_gap_gt_0_count"] == 0
+    assert distribution["estimated_net_gap_lte_0_count"] == 0
