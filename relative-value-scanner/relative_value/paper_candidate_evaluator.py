@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from relative_value._numeric import float_or_none
 from relative_value.fees import FeeModel, KalshiTieredFeeModel, NoFeeModel
 
 
@@ -177,10 +178,31 @@ def _evaluate_pair(
         return _ledger_row(pair, polymarket, kalshi, detected_at, ACTION_WATCH, "ineligible", depth_reasons, "insufficient_top_of_book_depth", direction)
 
     settlement = _settlement_status(polymarket, kalshi, cfg.max_settlement_delta_seconds)
+    settlement_direction = {**direction, "settlement_delta_seconds": settlement.delta_seconds}
     if settlement.reason and settlement.manual_ceiling:
-        return _ledger_row(pair, polymarket, kalshi, detected_at, ACTION_MANUAL_REVIEW, "near_equivalent_manual_review", [settlement.reason], settlement.reason, direction)
+        return _ledger_row(
+            pair,
+            polymarket,
+            kalshi,
+            detected_at,
+            ACTION_MANUAL_REVIEW,
+            "near_equivalent_manual_review",
+            [settlement.reason],
+            settlement.reason,
+            settlement_direction,
+        )
     if settlement.reason:
-        return _ledger_row(pair, polymarket, kalshi, detected_at, ACTION_WATCH, "ineligible", [settlement.reason], settlement.reason, direction)
+        return _ledger_row(
+            pair,
+            polymarket,
+            kalshi,
+            detected_at,
+            ACTION_WATCH,
+            "ineligible",
+            [settlement.reason],
+            settlement.reason,
+            settlement_direction,
+        )
 
     matcher_reasons = _matcher_reasons(pair)
     if matcher_reasons:
@@ -238,6 +260,7 @@ def _evaluate_pair(
 class _SettlementStatus:
     reason: str | None
     manual_ceiling: bool = False
+    delta_seconds: float | None = None
 
 
 def _settlement_status(polymarket: dict[str, Any], kalshi: dict[str, Any], max_delta_seconds: float) -> _SettlementStatus:
@@ -249,8 +272,8 @@ def _settlement_status(polymarket: dict[str, Any], kalshi: dict[str, Any], max_d
         return _SettlementStatus("settlement_time_missing_or_naive", manual_ceiling=True)
     delta = abs((poly_dt - kalshi_dt).total_seconds())
     if delta > max_delta_seconds:
-        return _SettlementStatus("settlement_delta_exceeds_limit")
-    return _SettlementStatus(None)
+        return _SettlementStatus("settlement_delta_exceeds_limit", delta_seconds=delta)
+    return _SettlementStatus(None, delta_seconds=delta)
 
 
 def _settlement_time_value(market: dict[str, Any]) -> str | None:
@@ -298,7 +321,7 @@ def _depth_reasons(
     for venue, enrichment in (("polymarket", polymarket_enrichment), ("kalshi", kalshi_enrichment)):
         side = direction[f"{venue}_would_enter_side"]
         depth_key = "depth_at_best_ask" if side == "BUY_YES" else "depth_at_best_bid"
-        depth = _float_or_none(enrichment.get(depth_key))
+        depth = float_or_none(enrichment.get(depth_key))
         direction[f"{venue}_would_enter_size"] = depth
         if depth is None:
             reasons.append(f"{venue}_missing_top_of_book_depth")
@@ -347,6 +370,7 @@ def _ledger_row(
             "polymarket_fee": direction.get("polymarket_fee"),
             "kalshi_fee": direction.get("kalshi_fee"),
             "estimated_net_gap": direction.get("estimated_net_gap"),
+            "settlement_delta_seconds": direction.get("settlement_delta_seconds"),
             "size_unit_warning": UNIT_WARNING,
         },
         "ineligibility_reasons": sorted(set(reasons)),
@@ -446,10 +470,10 @@ def _enrichment(market: dict[str, Any]) -> dict[str, Any]:
 
 def _prices(poly_enrichment: dict[str, Any], kalshi_enrichment: dict[str, Any]) -> dict[str, float | None]:
     return {
-        "polymarket_best_bid": _float_or_none(poly_enrichment.get("best_bid")),
-        "polymarket_best_ask": _float_or_none(poly_enrichment.get("best_ask")),
-        "kalshi_best_bid": _float_or_none(kalshi_enrichment.get("best_bid")),
-        "kalshi_best_ask": _float_or_none(kalshi_enrichment.get("best_ask")),
+        "polymarket_best_bid": float_or_none(poly_enrichment.get("best_bid")),
+        "polymarket_best_ask": float_or_none(poly_enrichment.get("best_ask")),
+        "kalshi_best_bid": float_or_none(kalshi_enrichment.get("best_bid")),
+        "kalshi_best_ask": float_or_none(kalshi_enrichment.get("best_ask")),
     }
 
 
@@ -536,17 +560,6 @@ def _parse_datetime_or_none(value: Any) -> datetime | None:
 def _require_tz_aware(value: datetime, name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must include timezone information")
-
-
-def _float_or_none(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        if value != value:
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _string_or_empty(value: Any) -> str:

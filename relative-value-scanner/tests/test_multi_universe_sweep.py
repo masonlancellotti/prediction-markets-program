@@ -34,10 +34,18 @@ def _pipeline_summary(label: str, *, pair_count: int, watch_count: int, top_reas
                 "estimated_net_gap_lte_0_count": 1,
             },
             "near_miss_summary": {
-                "count": 1,
-                "min_distance": 0.001,
-                "max_distance": 0.001,
-                "median_distance": 0.001,
+                "net_gap": {
+                    "count": 1,
+                    "min_distance": 0.001,
+                    "max_distance": 0.001,
+                    "median_distance": 0.001,
+                },
+                "settlement_delta": {
+                    "count": 2,
+                    "min_distance": 1800.0,
+                    "max_distance": 3600.0,
+                    "median_distance": 2700.0,
+                },
             },
         },
     }
@@ -134,10 +142,18 @@ def test_multi_universe_sweep_invokes_each_manifest_row_and_writes_aggregate(mon
     assert len(summary["universes"][0]["top_rejection_reasons"]) == 3
     assert summary["universes"][0]["gap_distribution"]["estimated_net_gap_gt_0_count"] == 3
     assert summary["universes"][0]["near_miss_summary"] == {
-        "count": 1,
-        "min_distance": 0.001,
-        "max_distance": 0.001,
-        "median_distance": 0.001,
+        "net_gap": {
+            "count": 1,
+            "min_distance": 0.001,
+            "max_distance": 0.001,
+            "median_distance": 0.001,
+        },
+        "settlement_delta": {
+            "count": 2,
+            "min_distance": 1800.0,
+            "max_distance": 3600.0,
+            "median_distance": 2700.0,
+        },
     }
     assert summary["universes"][1]["status"] == "failed"
     assert summary["universes"][1]["failure_reason"] == "run_targeted_pipeline_returned_7"
@@ -151,17 +167,26 @@ def test_multi_universe_sweep_invokes_each_manifest_row_and_writes_aggregate(mon
         "estimated_net_gap_lte_0_count": 0,
     }
     assert summary["universes"][1]["near_miss_summary"] == {
-        "count": 0,
-        "min_distance": None,
-        "max_distance": None,
-        "median_distance": None,
+        "net_gap": {
+            "count": 0,
+            "min_distance": None,
+            "max_distance": None,
+            "median_distance": None,
+        },
+        "settlement_delta": {
+            "count": 0,
+            "min_distance": None,
+            "max_distance": None,
+            "median_distance": None,
+        },
     }
 
     markdown = (tmp_path / "daily_review_sweep_summary.md").read_text(encoding="utf-8")
     assert "Gap > 0" in markdown
     assert "Net > 0" in markdown
     assert "Near-miss net" in markdown
-    assert "| nba_kxnba | completed | 14 | 5 | 4 | 4 | 3 | 1 |" in markdown
+    assert "Near-miss settlement" in markdown
+    assert "| nba_kxnba | completed | 14 | 5 | 4 | 4 | 3 | 1 | 2 |" in markdown
     assert "| nba_kxnba | completed |" in markdown
     assert "settlement_delta_exceeds_limit:2" in markdown
     assert "estimated_net_gap_below_minimum:1" in markdown

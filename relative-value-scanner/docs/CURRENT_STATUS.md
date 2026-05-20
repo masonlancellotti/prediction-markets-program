@@ -4,6 +4,7 @@
 
 - 2026-05-19 Initial Scaffold: created the read-only fixture scanner, core models, adapters, reports, docs, and first tests.
 - 2026-05-19 False-Arb Hardening: added polarity/threshold caps, fee models, NO-side penalty, fail-closed executable flags, and false-arb docs.
+- 2026-05-20 Pipeline Diagnostics: `summary.near_miss_summary` changed from a flat block to nested `net_gap` and `settlement_delta` blocks in targeted pipeline and sweep summaries.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

@@ -277,6 +277,7 @@ def test_missing_or_naive_settlement_time_caps_at_manual_review() -> None:
     assert row["action"] == ACTION_MANUAL_REVIEW
     assert row["opportunity_class"] == "near_equivalent_manual_review"
     assert row["missed_fill_reason"] == "settlement_time_missing_or_naive"
+    assert row["gap"]["settlement_delta_seconds"] is None
 
 
 def test_settlement_delta_over_limit_is_watch() -> None:
@@ -286,6 +287,20 @@ def test_settlement_delta_over_limit_is_watch() -> None:
 
     assert row["action"] == ACTION_WATCH
     assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(7201.0)
+
+
+def test_settlement_delta_seconds_is_null_when_settlement_check_is_skipped() -> None:
+    poly_row = _polymarket_payload()["normalized_markets"][0]
+    poly_row["orderbook_enrichment"]["orderbook_captured_at"] = "2026-05-20T10:00:00+00:00"
+    poly = _polymarket_payload()
+    poly["normalized_markets"][0] = poly_row
+
+    row = _first(_evaluate(poly=poly, accept_unit_mismatch=True))
+
+    assert row["action"] == ACTION_WATCH
+    assert row["missed_fill_reason"] == "stale_or_missing_quote_time"
+    assert row["gap"]["settlement_delta_seconds"] is None
 
 
 def test_settlement_comparison_prefers_end_date_over_close_time() -> None:

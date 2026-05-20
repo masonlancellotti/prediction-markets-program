@@ -6,6 +6,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+from relative_value._numeric import float_or_none
 from relative_value.live_snapshot_matcher import match_snapshot_files
 from relative_value.markout_replay import MarkoutReplayConfig, replay_paper_candidate_markout_files
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot_file
@@ -622,7 +623,11 @@ def run_targeted_pipeline(
             return result
 
     try:
-        summary = _targeted_pipeline_summary(paths, min_net_gap=min_net_gap)
+        summary = _targeted_pipeline_summary(
+            paths,
+            min_net_gap=min_net_gap,
+            max_settlement_delta_seconds=max_settlement_delta_seconds,
+        )
     except ValueError as exc:
         print(f"targeted_pipeline_status=FAILED message={exc}")
         return 1
@@ -820,7 +825,11 @@ def _targeted_pipeline_paths(output_dir: Path, label: str) -> dict[str, Path]:
     }
 
 
-def _targeted_pipeline_summary(paths: dict[str, Path], min_net_gap: float = 0.01) -> dict[str, Any]:
+def _targeted_pipeline_summary(
+    paths: dict[str, Path],
+    min_net_gap: float = 0.01,
+    max_settlement_delta_seconds: float = 3600.0,
+) -> dict[str, Any]:
     polymarket_snapshot = _load_json_report(paths["polymarket_snapshot"], "polymarket_snapshot")
     kalshi_snapshot = _load_json_report(paths["kalshi_snapshot"], "kalshi_snapshot")
     polymarket_enriched = _load_json_report(paths["polymarket_enriched"], "polymarket_enriched")
@@ -842,7 +851,11 @@ def _targeted_pipeline_summary(paths: dict[str, Path], min_net_gap: float = 0.01
         "evaluator_counts": ledger.get("counts_by_action") or {},
         "top_rejection_reasons": _top_rejection_reasons(ledger),
         "gap_distribution": _gap_distribution(ledger),
-        "near_miss_summary": _near_miss_summary(ledger, min_net_gap=min_net_gap),
+        "near_miss_summary": _near_miss_summary(
+            ledger,
+            min_net_gap=min_net_gap,
+            max_settlement_delta_seconds=max_settlement_delta_seconds,
+        ),
     }
 
 
@@ -925,8 +938,8 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
         "",
         "Read-only targeted pipeline sweep. Rows summarize saved-file outputs only.",
         "",
-        "| Label | Status | Polymarket | Kalshi | Pairs | Gap > 0 | Net > 0 | Near-miss net | WATCH | MANUAL_REVIEW | PAPER_CANDIDATE | Top rejection reasons | Failure reason |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Label | Status | Polymarket | Kalshi | Pairs | Gap > 0 | Net > 0 | Near-miss net | Near-miss settlement | WATCH | MANUAL_REVIEW | PAPER_CANDIDATE | Top rejection reasons | Failure reason |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     universes = payload.get("universes") or []
     if isinstance(universes, list):
@@ -953,7 +966,8 @@ def _sweep_markdown(payload: dict[str, Any]) -> str:
                         _markdown_cell(row.get("pair_count")),
                         _markdown_cell(_gross_gap_positive_count(gap_distribution)),
                         _markdown_cell(gap_distribution.get("estimated_net_gap_gt_0_count", 0)),
-                        _markdown_cell(near_miss_summary.get("count", 0)),
+                        _markdown_cell(_near_miss_count(near_miss_summary, "net_gap")),
+                        _markdown_cell(_near_miss_count(near_miss_summary, "settlement_delta")),
                         _markdown_cell(counts.get("WATCH", 0)),
                         _markdown_cell(counts.get("MANUAL_REVIEW", 0)),
                         _markdown_cell(counts.get("PAPER_CANDIDATE", 0)),
@@ -996,7 +1010,7 @@ def _gap_distribution(ledger_payload: dict[str, Any]) -> dict[str, int]:
         gap = row.get("gap")
         if not isinstance(gap, dict):
             continue
-        gross_gap = _float_or_none(gap.get("gross_gap"))
+        gross_gap = float_or_none(gap.get("gross_gap"))
         if gross_gap is not None:
             if gross_gap <= 0:
                 distribution["gross_gap_lte_0_count"] += 1
@@ -1008,7 +1022,7 @@ def _gap_distribution(ledger_payload: dict[str, Any]) -> dict[str, int]:
                 distribution["gross_gap_gt_0_01_lte_0_02_count"] += 1
             else:
                 distribution["gross_gap_gt_0_02_count"] += 1
-        estimated_net_gap = _float_or_none(gap.get("estimated_net_gap"))
+        estimated_net_gap = float_or_none(gap.get("estimated_net_gap"))
         if estimated_net_gap is not None:
             if estimated_net_gap > 0:
                 distribution["estimated_net_gap_gt_0_count"] += 1
@@ -1027,7 +1041,14 @@ def _gross_gap_positive_count(gap_distribution: dict[str, Any]) -> int:
     return sum(int(gap_distribution.get(key) or 0) for key in keys)
 
 
-def _empty_near_miss_summary() -> dict[str, Any]:
+def _near_miss_count(near_miss_summary: dict[str, Any], key: str) -> int:
+    summary = near_miss_summary.get(key)
+    if not isinstance(summary, dict):
+        return 0
+    return int(summary.get("count") or 0)
+
+
+def _empty_distance_summary() -> dict[str, Any]:
     return {
         "count": 0,
         "min_distance": None,
@@ -1036,11 +1057,32 @@ def _empty_near_miss_summary() -> dict[str, Any]:
     }
 
 
-def _near_miss_summary(ledger_payload: dict[str, Any], min_net_gap: float = 0.01) -> dict[str, Any]:
+def _empty_near_miss_summary() -> dict[str, Any]:
+    return {
+        "net_gap": _empty_distance_summary(),
+        "settlement_delta": _empty_distance_summary(),
+    }
+
+
+def _near_miss_summary(
+    ledger_payload: dict[str, Any],
+    min_net_gap: float = 0.01,
+    max_settlement_delta_seconds: float = 3600.0,
+) -> dict[str, Any]:
+    return {
+        "net_gap": _net_gap_near_miss_summary(ledger_payload, min_net_gap=min_net_gap),
+        "settlement_delta": _settlement_delta_near_miss_summary(
+            ledger_payload,
+            max_settlement_delta_seconds=max_settlement_delta_seconds,
+        ),
+    }
+
+
+def _net_gap_near_miss_summary(ledger_payload: dict[str, Any], min_net_gap: float = 0.01) -> dict[str, Any]:
     distances: list[float] = []
     rows = ledger_payload.get("ledger")
     if not isinstance(rows, list):
-        return _empty_near_miss_summary()
+        return _empty_distance_summary()
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -1051,29 +1093,49 @@ def _near_miss_summary(ledger_payload: dict[str, Any], min_net_gap: float = 0.01
         gap = row.get("gap")
         if not isinstance(gap, dict):
             continue
-        estimated_net_gap = _float_or_none(gap.get("estimated_net_gap"))
+        estimated_net_gap = float_or_none(gap.get("estimated_net_gap"))
         if estimated_net_gap is None:
             continue
         distances.append(round(min_net_gap - estimated_net_gap, 6))
     if not distances:
-        return _empty_near_miss_summary()
+        return _empty_distance_summary()
+    return _distance_summary(distances)
+
+
+def _settlement_delta_near_miss_summary(
+    ledger_payload: dict[str, Any],
+    max_settlement_delta_seconds: float = 3600.0,
+) -> dict[str, Any]:
+    distances: list[float] = []
+    rows = ledger_payload.get("ledger")
+    if not isinstance(rows, list):
+        return _empty_distance_summary()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("action") != "WATCH":
+            continue
+        if row.get("missed_fill_reason") != "settlement_delta_exceeds_limit":
+            continue
+        gap = row.get("gap")
+        if not isinstance(gap, dict):
+            continue
+        settlement_delta_seconds = float_or_none(gap.get("settlement_delta_seconds"))
+        if settlement_delta_seconds is None:
+            continue
+        distances.append(round(settlement_delta_seconds - max_settlement_delta_seconds, 6))
+    if not distances:
+        return _empty_distance_summary()
+    return _distance_summary(distances)
+
+
+def _distance_summary(distances: list[float]) -> dict[str, Any]:
     return {
         "count": len(distances),
         "min_distance": round(min(distances), 6),
         "max_distance": round(max(distances), 6),
         "median_distance": round(median(distances), 6),
     }
-
-
-def _float_or_none(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        if value != value:
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _load_json_report(path: Path, label: str) -> dict[str, Any]:
