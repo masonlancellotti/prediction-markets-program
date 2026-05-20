@@ -1,0 +1,55 @@
+# Directory Map
+
+- `README.md`: project summary, quick start, action ladder.
+- `requirements.txt`: optional local test/parser dependencies.
+- `scan.py`: offline scanner entrypoint.
+- `graph_engine/models.py`: core dataclasses, enums, validation, serialization.
+- `graph_engine/loader.py`: fixture loader and snapshot builder.
+- `graph_engine/snapshot_loader.py`: read-only schema-v1 saved snapshot loader prototype.
+- `graph_engine/relationships/types.py`: relationship model exports.
+- `graph_engine/relationships/registry.py`: relationship file loader and validator.
+- `graph_engine/relationships/confidence.py`: confidence helpers.
+- `graph_engine/relationships/llm_extractor.py`: deterministic offline LLM interface stub.
+- `graph_engine/consistency/checks.py`: v1 consistency checks.
+- `graph_engine/consistency/runner.py`: check orchestration.
+- `graph_engine/consistency/tolerances.py`: tolerances and action ladder.
+- `graph_engine/semantics/normalizer.py`: simple text normalization helper.
+- `graph_engine/semantics/entities.py`: simple entity-list helper.
+- `graph_engine/semantics/wording.py`: simple wording-overlap helper.
+- `graph_engine/reporting/json_report.py`: JSON report builder/writer.
+- `graph_engine/reporting/md_report.py`: Markdown report builder/writer.
+- `graph_engine/reporting/templates/`: reserved for future report templates.
+- `graph_engine/backtest/replay.py`: replay placeholder.
+- `graph_engine/backtest/metrics.py`: metrics placeholder.
+- `venues/fixtures/polymarket_ai_2027.json`: synthetic Polymarket-like AI fixtures.
+- `venues/fixtures/kalshi_ai_revenue_2027.json`: synthetic Kalshi-like AI fixtures.
+- `venues/fixtures/manifold_agi_first.json`: synthetic Manifold-like AGI fixtures.
+- `venues/adapters/__init__.py`: explicit note that live adapters are absent.
+- `relationships/ai_race_2027.yaml`: manual AGI relationship fixtures and exclusion set.
+- `relationships/private_valuations.yaml`: manual valuation relationship fixtures.
+- `relationships/README.md`: relationship authoring rules.
+- `reports/graph_consistency_summary.json`: generated JSON report.
+- `reports/graph_consistency_summary.md`: generated Markdown report.
+- `tests/conftest.py`: shared test fixtures.
+- `tests/fixtures/expected_report.md`: strict Markdown golden report fixture.
+- `tests/fixtures/schema_v1_snapshot_polymarket.json`: local saved snapshot loader fixture.
+- `tests/fixtures/schema_v1_snapshot_kalshi.json`: local saved snapshot loader fixture.
+- `tests/fixtures/not_a_schema_v1_snapshot.json`: local non-snapshot JSON fixture.
+- `tests/test_models.py`: model validation and round-trip tests.
+- `tests/test_loader.py`: fixture and registry tests.
+- `tests/test_snapshot_loader.py`: schema-v1 saved snapshot loader tests.
+- `tests/test_checks_implication.py`: implication tests.
+- `tests/test_checks_subset.py`: subset tests.
+- `tests/test_checks_sum_over_one.py`: exclusion-set tests.
+- `tests/test_report_golden.py`: stable report and report guardrail tests.
+- `tests/test_action_guardrails.py`: action ladder, confidence, and LLM stub tests.
+- `docs/ARCHITECTURE.md`: condensed architecture.
+- `docs/RELATIONSHIPS.md`: relationship semantics and examples.
+- `docs/VIOLATIONS.md`: violation math and limitations.
+- `docs/LLM_USAGE.md`: future LLM rules and current stub.
+- `docs/BACKTEST.md`: replay methodology.
+- `docs/NOT_YET.md`: hard list of deferred features.
+- `docs/CURRENT_STATUS.md`: latest work and test state.
+- `docs/CODEX_HANDOFF.md`: next-agent read-first handoff.
+- `docs/DATA_REALITY.md`: fixture/source assumptions and risks.
+- `docs/DIRECTORY_MAP.md`: this file.

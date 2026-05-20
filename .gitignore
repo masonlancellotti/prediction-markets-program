@@ -1,0 +1,48 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+
+# Databases / local data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Generated reports
+reports/*.json
+reports/*.csv
+reports/*.md
+**/reports/*.json
+**/reports/*.csv
+**/reports/*.md
+!**/reports/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Node / build
+node_modules/
+dist/
+build/
+
+# Agent/tool junk
+.claude/
+.claude-flow/
+*.log
+before_autonomous_*
+before_overnight_*
+overnight_ruflo_logs_*
+overnight_autonomous_report.md
+laptop_directory_listing.txt
+
+# Old nested git histories, kept locally only
+.git.old-*

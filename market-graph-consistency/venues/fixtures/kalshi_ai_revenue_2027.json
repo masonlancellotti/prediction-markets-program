@@ -1,0 +1,39 @@
+{
+  "source_snapshot_id": "fixture-kalshi-ai-2027-001",
+  "as_of": "2026-05-19T18:05:00+00:00",
+  "markets": [
+    {
+      "market_id": "kalshi:openai_value_above_1t_2027",
+      "venue": "kalshi",
+      "title": "Will OpenAI be valued over one trillion dollars before 2028?",
+      "canonical_text": "OpenAI reaches a valuation greater than 1 trillion USD before 2028.",
+      "resolution_criteria": "Resolves yes if accepted business press or a filing reports an OpenAI valuation above 1 trillion USD before 2028-01-01.",
+      "resolution_date": "2027-12-31",
+      "entities": ["OpenAI"],
+      "themes": ["ai", "private-company-valuation", "2027"],
+      "yes_price": 0.50,
+      "no_price": 0.52,
+      "bid": 0.48,
+      "ask": 0.52,
+      "volume_24h": 6400.0,
+      "liquidity_score": 0.58
+    },
+    {
+      "market_id": "kalshi:microsoft_first_agi_2027",
+      "venue": "kalshi",
+      "title": "Microsoft first to AGI by the end of 2027",
+      "canonical_text": "Microsoft or a majority-owned Microsoft AI lab is first among named companies to announce AGI before 2028.",
+      "resolution_criteria": "Resolves yes if Microsoft is judged first among listed companies to announce AGI before 2028-01-01.",
+      "resolution_date": "2027-12-31",
+      "entities": ["Microsoft", "OpenAI"],
+      "themes": ["ai", "agi", "first-company", "2027"],
+      "yes_price": 0.31,
+      "no_price": 0.72,
+      "bid": 0.29,
+      "ask": 0.33,
+      "volume_24h": 5200.0,
+      "liquidity_score": 0.49
+    }
+  ]
+}
+

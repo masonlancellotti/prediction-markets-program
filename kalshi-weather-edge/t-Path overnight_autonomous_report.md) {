@@ -1,0 +1,43 @@
+warning: in the working copy of 'backtest/recorded_replay.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'data/kalshi_client.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'data/kalshi_market_loader.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'data/storage.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/CURRENT_STATUS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/DATA_REALITY.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/DIRECTORY_MAP.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/EDGE_RESEARCH_PLAYBOOK.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/PROJECT_PURPOSE.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'live/collector.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'live/orderbook_recorder.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/test_backtest_no_lookahead.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/test_live_orderbook_recorder.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/test_weather_recorders.py', LF will be replaced by CRLF the next time Git touches it
+ backtest/recorded_replay.py             |  259 [32m+++++[m[31m-[m
+ data/active_weather_station_resolver.py |    6 [32m+[m[31m-[m
+ data/kalshi_client.py                   |   28 [32m+[m[31m-[m
+ data/kalshi_historical_loader.py        |    6 [32m+[m[31m-[m
+ data/kalshi_market_loader.py            |   40 [32m+[m
+ data/nws_climate_report_client.py       |   20 [32m+[m[31m-[m
+ data/storage.py                         |  323 [32m+++++++[m[31m-[m
+ data/weather_station_mapper.py          |   18 [32m+[m
+ docs/CODEX_HANDOFF.md                   |  226 [32m+++++[m[31m-[m
+ docs/CURRENT_STATUS.md                  |  101 [32m++[m[31m-[m
+ docs/DATA_REALITY.md                    |   31 [32m+[m[31m-[m
+ docs/DIRECTORY_MAP.md                   |   22 [32m+[m[31m-[m
+ docs/EDGE_RESEARCH_PLAYBOOK.md          |   56 [32m+[m[31m-[m
+ docs/PROJECT_PURPOSE.md                 |   18 [32m+[m[31m-[m
+ live/collector.py                       |    8 [32m+[m
+ live/orderbook_recorder.py              |  432 [32m+++++++++[m[31m-[m
+ live/scanner.py                         |    6 [32m+[m[31m-[m
+ live/weather_recorder.py                |   71 [32m+[m[31m-[m
+ main.py                                 |  243 [32m+++++[m[31m-[m
+ maintenance.py                          |  128 [32m++[m[31m-[m
+ parsing/rule_parser.py                  |   36 [32m+[m[31m-[m
+ research/liquidity_analysis.py          |   42 [32m+[m[31m-[m
+ research/trading_readiness.py           |   76 [32m+[m[31m-[m
+ tests/test_backtest_no_lookahead.py     |    8 [32m+[m[31m-[m
+ tests/test_live_orderbook_recorder.py   |   59 [32m+[m[31m-[m
+ tests/test_nws_climate_report_parser.py |   22 [32m+[m
+ tests/test_trading_research_engine.py   | 1337 [32m++++++++++++++++++++++++++++++[m[31m-[m
+ tests/test_weather_recorders.py         |   91 [32m++[m[31m-[m
+ 28 files changed, 3575 insertions(+), 138 deletions(-)

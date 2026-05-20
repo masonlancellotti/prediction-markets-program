@@ -1,0 +1,54 @@
+[
+  {
+    "market_id": "KAL_NBA_CLE_TEAM_TOTAL_91_OVER",
+    "event_name": "Cleveland Cavaliers vs New York Knicks Cleveland team total over 91.5",
+    "outcome_name": "Cleveland over 91.5 points",
+    "yes_bid": 0.12,
+    "yes_ask": 0.20,
+    "liquidity_top_contracts": 75.0,
+    "volume_24h": 900.0,
+    "settlement_time": "2026-05-20T03:30:00Z",
+    "captured_at": "2026-05-19T20:00:00Z",
+    "settlement_rule": "official NBA box score team points",
+    "is_executable": true
+  },
+  {
+    "market_id": "KAL_KY_TURNOUT_120K",
+    "event_name": "Kentucky fourth district primary turnout above 120000",
+    "outcome_name": "turnout above 120000",
+    "yes_bid": 0.40,
+    "yes_ask": 0.48,
+    "liquidity_top_contracts": 250.0,
+    "volume_24h": 15.0,
+    "settlement_time": "2026-05-20T04:00:00Z",
+    "captured_at": "2026-05-19T20:00:00Z",
+    "settlement_rule": "official state election turnout",
+    "is_executable": true
+  },
+  {
+    "market_id": "KAL_MLB_EXTRA_INNINGS_PIT_STL",
+    "event_name": "Pittsburgh Pirates vs St Louis Cardinals extra innings",
+    "outcome_name": "game goes to extra innings",
+    "yes_bid": 0.08,
+    "yes_ask": 0.16,
+    "liquidity_top_contracts": 40.0,
+    "volume_24h": 30.0,
+    "settlement_time": "2026-05-21T21:30:00Z",
+    "captured_at": "2026-05-19T20:00:00Z",
+    "settlement_rule": "official MLB result",
+    "is_executable": true
+  },
+  {
+    "market_id": "KAL_FAKE_TOTAL_OVER_100",
+    "event_name": "Example City vs Sample Town total over 100.5",
+    "outcome_name": "total over 100.5 points",
+    "yes_bid": 0.10,
+    "yes_ask": 0.20,
+    "liquidity_top_contracts": 100.0,
+    "volume_24h": 10.0,
+    "settlement_time": "2026-05-22T03:30:00Z",
+    "captured_at": "2026-05-19T20:00:00Z",
+    "settlement_rule": "official box score total points",
+    "is_executable": true
+  }
+]

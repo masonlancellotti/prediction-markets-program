@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "rvs-kalshi-fixture-001",
+  "source": "relative-value-scanner",
+  "venue": "kalshi",
+  "generated_at": "2026-05-20T14:05:00+00:00",
+  "normalized_markets": [
+    {
+      "native_id": "msft-ai-revenue-leader-2027",
+      "title": "Microsoft highest AI revenue in 2027",
+      "description": "Read-only local fixture row from normalized snapshot schema.",
+      "close_time": "2027-12-31",
+      "entities": ["Microsoft"],
+      "categories": ["ai", "revenue"],
+      "mid": 0.29,
+      "bid": 0.27,
+      "ask": 0.31,
+      "volume": 850.0,
+      "liquidity_score": 0.37
+    }
+  ]
+}
+

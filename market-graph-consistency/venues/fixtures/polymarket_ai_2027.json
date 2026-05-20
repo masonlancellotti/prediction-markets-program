@@ -1,0 +1,55 @@
+{
+  "source_snapshot_id": "fixture-polymarket-ai-2027-001",
+  "as_of": "2026-05-19T18:00:00+00:00",
+  "markets": [
+    {
+      "market_id": "polymarket:openai_valuation_1t_2027",
+      "venue": "polymarket",
+      "title": "OpenAI exceeds $1T valuation by end of 2027",
+      "canonical_text": "OpenAI private or public market valuation is at least 1 trillion USD by 2027-12-31.",
+      "resolution_criteria": "Resolves yes if a credible funding, IPO, acquisition, or public-market valuation source reports OpenAI at or above 1 trillion USD before 2028-01-01.",
+      "resolution_date": "2027-12-31",
+      "entities": ["OpenAI"],
+      "themes": ["ai", "private-company-valuation", "2027"],
+      "yes_price": 0.62,
+      "no_price": 0.40,
+      "bid": 0.60,
+      "ask": 0.64,
+      "volume_24h": 12000.0,
+      "liquidity_score": 0.72
+    },
+    {
+      "market_id": "polymarket:openai_valuation_500b_2027",
+      "venue": "polymarket",
+      "title": "OpenAI valuation above $500B by end of 2027",
+      "canonical_text": "OpenAI private or public market valuation is at least 500 billion USD by 2027-12-31.",
+      "resolution_criteria": "Resolves yes if a credible funding, IPO, acquisition, or public-market valuation source reports OpenAI at or above 500 billion USD before 2028-01-01.",
+      "resolution_date": "2027-12-31",
+      "entities": ["OpenAI"],
+      "themes": ["ai", "private-company-valuation", "2027"],
+      "yes_price": 0.52,
+      "no_price": 0.50,
+      "bid": 0.50,
+      "ask": 0.54,
+      "volume_24h": 8400.0,
+      "liquidity_score": 0.66
+    },
+    {
+      "market_id": "polymarket:anthropic_first_agi_2027",
+      "venue": "polymarket",
+      "title": "Anthropic is first company to announce AGI by 2027",
+      "canonical_text": "Anthropic is the first named company to announce an AGI system before 2028-01-01.",
+      "resolution_criteria": "Resolves yes if Anthropic is judged first among listed companies to announce AGI before 2028-01-01.",
+      "resolution_date": "2027-12-31",
+      "entities": ["Anthropic"],
+      "themes": ["ai", "agi", "first-company", "2027"],
+      "yes_price": 0.44,
+      "no_price": 0.58,
+      "bid": 0.42,
+      "ask": 0.46,
+      "volume_24h": 9900.0,
+      "liquidity_score": 0.70
+    }
+  ]
+}
+

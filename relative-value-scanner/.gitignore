@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+reports/*.json
+reports/*.md
+!reports/.gitkeep
+# `reports/` contains generated scan outputs; durable examples live in docs/sample_report/.

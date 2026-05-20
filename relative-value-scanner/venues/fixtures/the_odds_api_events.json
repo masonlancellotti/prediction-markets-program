@@ -1,0 +1,24 @@
+[
+  {
+    "event_id": "odds_nba_cle_team_total_91",
+    "sportsbook": "fixture_sportsbook",
+    "event_name": "Cleveland Cavaliers vs New York Knicks Cleveland team total over 91.5",
+    "american_odds": {
+      "Cleveland over 91.5 points": -120,
+      "Cleveland under 91.5 points": 100
+    },
+    "settlement_time": "2026-05-20T03:30:00Z",
+    "settlement_rule": "sportsbook grading may differ from prediction market settlement"
+  },
+  {
+    "event_id": "odds_mlb_extra_pit_stl",
+    "sportsbook": "fixture_sportsbook",
+    "event_name": "Pittsburgh Pirates vs St Louis Cardinals extra innings",
+    "american_odds": {
+      "game goes to extra innings": 750,
+      "game does not go to extra innings": -1200
+    },
+    "settlement_time": "2026-05-21T21:30:00Z",
+    "settlement_rule": "sportsbook grading may differ from prediction market settlement"
+  }
+]

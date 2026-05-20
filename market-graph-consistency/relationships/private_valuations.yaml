@@ -1,0 +1,37 @@
+{
+  "edges": [
+    {
+      "edge_id": "edge_openai_1t_subset_openai_500b",
+      "src_market_id": "polymarket:openai_valuation_1t_2027",
+      "dst_market_id": "polymarket:openai_valuation_500b_2027",
+      "relation": "SUBSET",
+      "confidence": 0.96,
+      "source": "manual",
+      "rationale": "A valuation at or above 1T USD is a subset of valuation at or above 500B USD by the same deadline.",
+      "evidence": [
+        "Both markets use OpenAI valuation before 2028.",
+        "The 1T threshold is stricter than the 500B threshold."
+      ],
+      "created_at": "2026-05-19T18:24:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_openai_1t_same_event_cross_venue",
+      "src_market_id": "polymarket:openai_valuation_1t_2027",
+      "dst_market_id": "kalshi:openai_value_above_1t_2027",
+      "relation": "SAME_EVENT_REWORDED",
+      "confidence": 0.92,
+      "source": "manual",
+      "rationale": "Both contracts ask whether OpenAI reaches roughly the same 1T USD valuation threshold before 2028.",
+      "evidence": [
+        "Same entity: OpenAI.",
+        "Same threshold: approximately 1T USD.",
+        "Same deadline: before 2028."
+      ],
+      "created_at": "2026-05-19T18:25:00+00:00",
+      "reviewed_by": "fixture-author"
+    }
+  ],
+  "exclusion_sets": []
+}
+

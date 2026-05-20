@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "rvs-polymarket-fixture-001",
+  "source": "relative-value-scanner",
+  "venue": "polymarket",
+  "as_of": "2026-05-20T14:00:00+00:00",
+  "normalized_markets": [
+    {
+      "market_id": "openai_value_over_1t_2027",
+      "title": "OpenAI valued over $1T before 2028",
+      "canonical_text": "OpenAI valuation exceeds one trillion dollars before 2028.",
+      "resolution_criteria": "Read-only local fixture row from normalized snapshot schema.",
+      "resolution_date": "2027-12-31",
+      "entities": ["OpenAI"],
+      "themes": ["ai", "valuation"],
+      "yes_price": 0.48,
+      "bid": 0.46,
+      "ask": 0.50,
+      "volume_24h": 1000.0,
+      "liquidity_score": 0.42
+    },
+    {
+      "market_id": "anthropic_best_model_2027",
+      "title": "Anthropic has best AI model in 2027",
+      "question": "Will Anthropic have the best AI model at the end of 2027?",
+      "resolution_date": "2027-12-31",
+      "entities": ["Anthropic"],
+      "tags": ["ai", "models"],
+      "probability": 0.36,
+      "best_bid": 0.34,
+      "best_ask": 0.38,
+      "volume24h": 700.0,
+      "liquidity_score": 0.31
+    }
+  ]
+}
+

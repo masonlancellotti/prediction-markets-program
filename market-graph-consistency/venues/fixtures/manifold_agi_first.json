@@ -1,0 +1,39 @@
+{
+  "source_snapshot_id": "fixture-manifold-agi-2027-001",
+  "as_of": "2026-05-19T18:10:00+00:00",
+  "markets": [
+    {
+      "market_id": "manifold:agi_by_2027",
+      "venue": "manifold",
+      "title": "Will AGI be announced by any company before 2028?",
+      "canonical_text": "At least one company announces an AGI system before 2028-01-01.",
+      "resolution_criteria": "Resolves yes if a named company publicly announces an AGI system before 2028-01-01 and the market moderator accepts the announcement.",
+      "resolution_date": "2027-12-31",
+      "entities": ["OpenAI", "Anthropic", "Microsoft"],
+      "themes": ["ai", "agi", "2027"],
+      "yes_price": 0.34,
+      "no_price": 0.68,
+      "bid": 0.32,
+      "ask": 0.36,
+      "volume_24h": 7300.0,
+      "liquidity_score": 0.62
+    },
+    {
+      "market_id": "manifold:openai_first_agi_2027",
+      "venue": "manifold",
+      "title": "OpenAI is first company to announce AGI by 2027",
+      "canonical_text": "OpenAI is the first named company to announce an AGI system before 2028-01-01.",
+      "resolution_criteria": "Resolves yes if OpenAI is judged first among listed companies to announce AGI before 2028-01-01.",
+      "resolution_date": "2027-12-31",
+      "entities": ["OpenAI"],
+      "themes": ["ai", "agi", "first-company", "2027"],
+      "yes_price": 0.46,
+      "no_price": 0.57,
+      "bid": 0.44,
+      "ask": 0.48,
+      "volume_24h": 11000.0,
+      "liquidity_score": 0.76
+    }
+  ]
+}
+
