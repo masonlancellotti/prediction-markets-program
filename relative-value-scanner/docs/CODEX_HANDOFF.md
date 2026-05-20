@@ -56,6 +56,7 @@
 - Paper candidate evaluation reads saved pairs/enriched snapshots only; it must not call live APIs or mutate input snapshots.
 - Paper candidate evaluation emits only `WATCH`, `MANUAL_REVIEW`, or `PAPER_CANDIDATE`; it must never emit `PAPER` or `POSSIBLE_ARB`.
 - Paper candidate gaps use bid/ask only, subtract per-leg fees, require fresh enriched orderbooks, and always warn that Polymarket shares and Kalshi contracts are not unit-normalized.
+- Paper candidate settlement comparison prefers normalized `end_date`, then falls back to `close_time` only when `end_date` is missing; bad present `end_date` values fail safely.
 - Paper candidate fee defaults are split by venue: Polymarket uses `NoFeeModel()`, Kalshi uses `KalshiTieredFeeModel()`.
 - The paper candidate CLI defaults to `--max-quote-age-seconds 1800` for saved-file workflows; tighten it when evaluating freshly captured snapshots.
 - Markout replay reads an existing paper candidate ledger plus later saved enriched snapshots only; it must not call live APIs or mutate the input ledger.
@@ -161,7 +162,7 @@ python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-t
 
 New command added for repeatable read-only targeted workflow. It writes labeled files under `reports/`, prints normalized/enrichment/pair/evaluator summaries, and prints the exact later markout replay command. Tests mock every pipeline step; no network is used in tests.
 Current NBA/KXNBA result: Polymarket 600 normalized, Kalshi 4 normalized, Polymarket 528/600 enriched, Kalshi 4/4 enriched, 4 pairs, evaluator counts `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0`. Top rejection reasons are `settlement_delta_exceeds_limit` and `missed_fill:settlement_delta_exceeds_limit`, both count 4.
-Current after Kalshi early-close `end_date` normalization: saved Kalshi KXNBA rows now have `end_date=2026-06-30T14:00:00Z` and `close_time=2028-06-29T14:00:00Z`. The normal and `--max-settlement-delta-seconds 43200` pipeline runs still produce 4 `WATCH` rows because the existing evaluator settlement gate intentionally uses Kalshi `close_time` before `end_date`; that logic was not changed.
+Current after evaluator settlement field fix: saved Kalshi KXNBA rows have `end_date=2026-06-30T14:00:00Z` and `close_time=2028-06-29T14:00:00Z`. The normal pipeline still produces 4 `WATCH` rows due to the default one-hour settlement window. The `--max-settlement-delta-seconds 43200` run gets past settlement and still produces 4 `WATCH` rows because two rows have `estimated_net_gap_below_minimum` and two rows have `no_positive_bid_ask_gap`.
 
 Latest printed later markout command:
 

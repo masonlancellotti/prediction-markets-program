@@ -502,6 +502,37 @@ Next exact command:
 python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba_looser_review --max-settlement-delta-seconds 43200
 ```
 
+## 2026-05-20 Evaluator Settlement End-Date Preference
+
+Completed:
+
+- Updated paper candidate evaluator settlement comparison to prefer normalized `end_date`, then fall back to `close_time` when `end_date` is missing.
+- Present but naive or unparseable `end_date` values fail safely as `settlement_time_missing_or_naive`; they do not silently fall back to `close_time`.
+- Added tests for Kalshi early-close rows with 2026 `end_date` and 2028 `close_time`, close-time fallback when `end_date` is missing, invalid `end_date`, and action safety.
+
+Commands run:
+
+- `python -m pytest tests\test_paper_candidate_evaluator.py tests\test_targeted_pipeline.py -q`
+- `python -m pytest -q`
+- `python scan.py`
+- `python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba`
+- `python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba_looser_review --max-settlement-delta-seconds 43200`
+
+Tests run:
+
+- `python -m pytest tests\test_paper_candidate_evaluator.py tests\test_targeted_pipeline.py -q`: 26 passed in 0.71s
+- `python -m pytest -q`: 157 passed in 0.58s
+
+What works:
+
+- Normal NBA/KXNBA pipeline result remains `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0` because the default settlement window is still one hour.
+- Looser 12-hour settlement review gets past settlement delta and remains `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0`.
+- Looser review reasons: 2 rows `estimated_net_gap_below_minimum`, 2 rows `no_positive_bid_ask_gap`.
+
+What remains intentionally not built:
+
+- No trading, auth/private keys/account/order logic, live scoring, `RelativeValueScanner` integration, midpoint fills, settlement-rule proof, `PAPER`, or `POSSIBLE_ARB`.
+
 ## 2026-05-20 Live Snapshot Matcher Precision Aids
 
 Completed:

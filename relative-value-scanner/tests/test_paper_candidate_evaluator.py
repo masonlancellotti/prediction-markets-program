@@ -114,6 +114,7 @@ def _evaluate(
     kalshi: dict | None = None,
     accept_unit_mismatch: bool = False,
     min_net_gap: float = 0.01,
+    max_settlement_delta_seconds: float = 3600.0,
 ) -> dict:
     return evaluate_paper_candidates(
         pairs_payload=pairs or _pairs_payload(),
@@ -123,6 +124,7 @@ def _evaluate(
         config=PaperCandidateEvaluatorConfig(
             accept_unit_mismatch=accept_unit_mismatch,
             min_net_gap=min_net_gap,
+            max_settlement_delta_seconds=max_settlement_delta_seconds,
         ),
     )
 
@@ -284,6 +286,49 @@ def test_settlement_delta_over_limit_is_watch() -> None:
 
     assert row["action"] == ACTION_WATCH
     assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
+
+
+def test_settlement_comparison_prefers_end_date_over_close_time() -> None:
+    poly = _polymarket_payload(end_date="2026-07-01T00:00:00+00:00")
+    kalshi = _kalshi_payload(
+        end_date="2026-06-30T14:00:00+00:00",
+        close_time="2028-06-29T14:00:00+00:00",
+    )
+
+    row = _first(
+        _evaluate(
+            poly=poly,
+            kalshi=kalshi,
+            max_settlement_delta_seconds=43200,
+        )
+    )
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["missed_fill_reason"] == "unit_mismatch_not_accepted"
+    assert "settlement_delta_exceeds_limit" not in row["ineligibility_reasons"]
+
+
+def test_missing_end_date_falls_back_to_close_time_for_settlement() -> None:
+    poly = _polymarket_payload(end_date="2026-07-01T00:00:00+00:00")
+    kalshi = _kalshi_payload(close_time="2026-07-01T00:00:00+00:00")
+
+    row = _first(_evaluate(poly=poly, kalshi=kalshi))
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["missed_fill_reason"] == "unit_mismatch_not_accepted"
+    assert "settlement_delta_exceeds_limit" not in row["ineligibility_reasons"]
+
+
+def test_unparseable_end_date_fails_safely_without_close_time_fallback() -> None:
+    kalshi = _kalshi_payload(
+        end_date="not-a-timestamp",
+        close_time="2026-05-20T13:00:00+00:00",
+    )
+
+    row = _first(_evaluate(kalshi=kalshi, accept_unit_mismatch=True))
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["missed_fill_reason"] == "settlement_time_missing_or_naive"
 
 
 def test_ambiguous_wording_caps_at_manual_review() -> None:

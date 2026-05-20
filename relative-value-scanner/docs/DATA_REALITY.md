@@ -50,7 +50,7 @@ Orderbook enrichment records best bid/ask, spread, depth-at-best, depth within 1
 
 `python scan.py evaluate-paper-candidates` reads saved JSON only: matched snapshot pairs plus Kalshi and Polymarket enriched snapshots. It does not call APIs, authenticate, read accounts, place orders, score through `RelativeValueScanner`, or write anything except the requested ledger JSON.
 
-The evaluator uses bid/ask only and never midpoint. It requires enriched orderbooks, fresh timezone-aware `orderbook_captured_at` values, non-null top-of-book bid/ask, minimum depth on the side that would be hit, bounded settlement-time deltas, propagated matcher warnings, and per-leg fee subtraction.
+The evaluator uses bid/ask only and never midpoint. It requires enriched orderbooks, fresh timezone-aware `orderbook_captured_at` values, non-null top-of-book bid/ask, minimum depth on the side that would be hit, bounded settlement-time deltas, propagated matcher warnings, and per-leg fee subtraction. For settlement-time comparison it prefers normalized `end_date`, then falls back to `close_time` only when `end_date` is missing; present but naive or unparseable `end_date` values fail safely.
 
 Fee models are venue-specific in this path: Polymarket currently uses no-fee comparison as an explicit placeholder, while Kalshi uses the conservative tiered estimate. This prevents accidentally applying Kalshi's fee model to the Polymarket leg.
 

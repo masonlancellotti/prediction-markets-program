@@ -241,8 +241,8 @@ class _SettlementStatus:
 
 
 def _settlement_status(polymarket: dict[str, Any], kalshi: dict[str, Any], max_delta_seconds: float) -> _SettlementStatus:
-    poly_value = polymarket.get("end_date") or polymarket.get("close_time")
-    kalshi_value = kalshi.get("close_time") or kalshi.get("end_date")
+    poly_value = _settlement_time_value(polymarket)
+    kalshi_value = _settlement_time_value(kalshi)
     poly_dt = _parse_datetime_or_none(poly_value)
     kalshi_dt = _parse_datetime_or_none(kalshi_value)
     if poly_dt is None or kalshi_dt is None:
@@ -251,6 +251,13 @@ def _settlement_status(polymarket: dict[str, Any], kalshi: dict[str, Any], max_d
     if delta > max_delta_seconds:
         return _SettlementStatus("settlement_delta_exceeds_limit")
     return _SettlementStatus(None)
+
+
+def _settlement_time_value(market: dict[str, Any]) -> str | None:
+    end_date = _string_or_none(market.get("end_date"))
+    if end_date is not None:
+        return end_date
+    return _string_or_none(market.get("close_time"))
 
 
 def _best_direction(prices: dict[str, float | None]) -> dict[str, Any]:
