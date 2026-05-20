@@ -95,6 +95,16 @@ This reads an existing paper candidate ledger plus later saved enriched snapshot
 
 Markout replay is research evidence only. It does not call live APIs, use midpoint fills, assume execution, walk books, claim profit, prove settlement equivalence, or emit `PAPER` / `POSSIBLE_ARB`. Missing, stale, too-early, or too-late windows stay null with `markout_status`.
 
+## Targeted Pipeline Runner
+
+```powershell
+python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba
+```
+
+This runs the read-only saved-file workflow for one target universe: Polymarket discovery, Kalshi discovery, orderbook enrichment, saved snapshot matching, and paper candidate evaluation. Outputs are labeled under `reports/`, for example `reports/nba_kxnba_pairs.json` and `reports/nba_kxnba_paper_candidates.json`.
+
+The runner prints normalized counts, enrichment counts, pair count, evaluator action counts, top rejection reasons, and the exact `replay-paper-candidate-markouts` command to run later after separate later snapshots have been captured. It does not sleep, trade, authenticate, score through `RelativeValueScanner`, use midpoint fills, claim profit, or emit `PAPER` / `POSSIBLE_ARB`.
+
 ## Action Ladder
 
 - `IGNORE`

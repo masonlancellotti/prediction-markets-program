@@ -66,6 +66,12 @@ Replay joins rows by Polymarket `market_id` and Kalshi `ticker`, then uses the o
 
 A filled markout is research evidence that a later saved quote was observed near the requested window. It is not guaranteed profit, not proof of executable liquidity, and not settlement-rule equivalence. If later quotes are missing, stale, too early, or too late, values stay null and `markout_status` explains why.
 
+## Targeted Pipeline Runner
+
+`python scan.py run-targeted-pipeline` is a repeatable orchestration wrapper around the saved-file workflow for one target universe. It runs read-only Polymarket discovery, read-only Kalshi discovery, saved snapshot orderbook enrichment, saved snapshot matching, and saved-file paper candidate evaluation into labeled report files.
+
+The runner does not sleep or wait for later markouts. It prints the exact markout replay command to run after separate later snapshots have been captured. It does not trade, authenticate, read accounts, place orders, score through `RelativeValueScanner`, use midpoint fills, make profit claims, or emit `PAPER` / `POSSIBLE_ARB`.
+
 ## Sportsbook Odds
 
 Sportsbook prices are reference prices only. No-vig conversion removes listed overround, but it does not make the sportsbook leg executable inside this scanner. A sportsbook/reference pair can never be `POSSIBLE_ARB`.
@@ -93,6 +99,7 @@ Fixture data is static and should not be treated as fresh. Future live adapters 
 - Orderbook enrichment is saved-file-only plus read-only book lookup; it is not integrated into scoring or live matching.
 - Paper candidate evaluation ends at `PAPER_CANDIDATE`; it is not live trading, not position tracking, not P&L, and not markout proof.
 - Markout replay is saved-file-only research evidence; it is not live trading, P&L, fill simulation, or proof that an opportunity was executable.
+- Targeted pipeline runner is convenience orchestration only; it does not change any safety gate or convert research outputs into trading outputs.
 - No real API keys.
 - No database.
 - No scheduler.

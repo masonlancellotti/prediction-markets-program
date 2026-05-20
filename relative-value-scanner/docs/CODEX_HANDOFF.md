@@ -61,13 +61,15 @@
 - Markout replay matches rows by Polymarket `market_id` and Kalshi `ticker`, reuses the original ledger bid/ask direction, and never uses midpoint prices.
 - Markout replay is research evidence only. A spread closing is not guaranteed profit, not proof of execution, and not settlement-rule equivalence.
 - Missing, stale, too-early, or too-late markout windows stay null with `markout_status`.
+- Targeted pipeline runner is orchestration only: it runs read-only discovery, enrichment, saved snapshot matching, and paper candidate evaluation into labeled report files.
+- Targeted pipeline runner must not sleep/wait, trade, authenticate, call account/order endpoints, integrate `RelativeValueScanner` scoring, or emit `PAPER`/`POSSIBLE_ARB`.
 
 ## Current Next Task
 
-Use saved later enriched snapshots to replay markouts on the paper candidate ledger, then inspect `reports\paper_candidates_ledger_marked.json`. Do not promote markout output to `PAPER`, `POSSIBLE_ARB`, or trading decisions; markouts are evidence only.
+Run the targeted pipeline for the current NBA/KXNBA universe, then use the printed markout command later after separate later snapshots are captured. Do not promote pipeline or markout output to `PAPER`, `POSSIBLE_ARB`, or trading decisions.
 
 ```powershell
-python scan.py replay-paper-candidate-markouts --ledger reports\paper_candidates_ledger.json --polymarket-enriched-later reports\polymarket_orderbook_enriched_snapshot.json --kalshi-enriched-later reports\kalshi_orderbook_enriched_snapshot.json --output reports\paper_candidates_ledger_marked.json
+python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba
 ```
 
 ## Last Known Test Command
@@ -148,3 +150,18 @@ python scan.py replay-paper-candidate-markouts --ledger reports\paper_candidates
 
 New command added for saved-file-only replay. It fills markout windows only when later enriched orderbook timestamps are within tolerance of the target window, otherwise values stay null with `markout_status`.
 Current same-file replay result: 4 candidates, 16 windows, 0 filled, 12 `no_data`, 4 `stale`, 0 `missing_market`, 0 `missing_orderbook`, output written under ignored `reports/`.
+
+## Last Known Targeted Pipeline Command
+
+```powershell
+python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba
+```
+
+New command added for repeatable read-only targeted workflow. It writes labeled files under `reports/`, prints normalized/enrichment/pair/evaluator summaries, and prints the exact later markout replay command. Tests mock every pipeline step; no network is used in tests.
+Current NBA/KXNBA result: Polymarket 600 normalized, Kalshi 4 normalized, Polymarket 528/600 enriched, Kalshi 4/4 enriched, 4 pairs, evaluator counts `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0`. Top rejection reasons are `settlement_delta_exceeds_limit` and `missed_fill:settlement_delta_exceeds_limit`, both count 4.
+
+Latest printed later markout command:
+
+```powershell
+python scan.py replay-paper-candidate-markouts --ledger C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_paper_candidates.json --polymarket-enriched-later C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_polymarket_enriched_later.json --kalshi-enriched-later C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_kalshi_enriched_later.json --output C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_paper_candidates_marked.json
+```

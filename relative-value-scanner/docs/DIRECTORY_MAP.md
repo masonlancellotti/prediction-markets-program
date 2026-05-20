@@ -2,7 +2,7 @@
 
 ## Root Files
 
-- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `match-live-snapshots`, `enrich-orderbooks`, `evaluate-paper-candidates`, and `replay-paper-candidate-markouts` read-only commands.
+- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `match-live-snapshots`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
 - `README.md`: quick-start and action ladder.
 - `requirements.txt`: test dependency list.
 - `.env.example`: documents that this scaffold is offline/read-only.

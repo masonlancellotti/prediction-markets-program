@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
+from typing import Any
 
 from relative_value.live_snapshot_matcher import match_snapshot_files
 from relative_value.markout_replay import MarkoutReplayConfig, replay_paper_candidate_markout_files
@@ -142,6 +144,22 @@ def main(argv: list[str] | None = None) -> int:
         help="Allowed timestamp distance around each markout window.",
     )
 
+    pipeline_parser = subparsers.add_parser(
+        "run-targeted-pipeline",
+        help="Run the read-only saved-file workflow for one targeted universe.",
+    )
+    pipeline_parser.add_argument("--polymarket-tag-slug", help="Polymarket Gamma tag slug, for example nba.")
+    pipeline_parser.add_argument("--polymarket-tag-id", type=int, help="Polymarket Gamma tag id.")
+    pipeline_parser.add_argument("--kalshi-series-ticker", help="Kalshi series ticker, for example KXNBA.")
+    pipeline_parser.add_argument("--kalshi-event-ticker", help="Kalshi event ticker.")
+    pipeline_parser.add_argument("--label", required=True, help="Safe label used to prefix reports output files.")
+    pipeline_parser.add_argument("--limit", type=int, default=50)
+    pipeline_parser.add_argument("--kalshi-max-pages", type=int, default=2)
+    pipeline_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    pipeline_parser.add_argument("--max-snapshot-age-hours", type=float, default=24.0)
+    pipeline_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    pipeline_parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
+
     parser.add_argument("--fixture-dir", type=Path, default=PROJECT_ROOT / "venues" / "fixtures")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
     parser.add_argument("--include-ignore", action="store_true", help="Include ignored pairs in reports.")
@@ -205,6 +223,20 @@ def main(argv: list[str] | None = None) -> int:
             args.kalshi_enriched_later,
             args.output,
             window_tolerance_seconds=args.window_tolerance_seconds,
+        )
+    if args.command == "run-targeted-pipeline":
+        return run_targeted_pipeline(
+            label=args.label,
+            output_dir=args.output_dir,
+            limit=args.limit,
+            timeout_seconds=args.timeout_seconds,
+            polymarket_tag_slug=args.polymarket_tag_slug,
+            polymarket_tag_id=args.polymarket_tag_id,
+            kalshi_series_ticker=args.kalshi_series_ticker,
+            kalshi_event_ticker=args.kalshi_event_ticker,
+            kalshi_max_pages=args.kalshi_max_pages,
+            max_snapshot_age_hours=args.max_snapshot_age_hours,
+            max_quote_age_seconds=args.max_quote_age_seconds,
         )
 
     scanner = RelativeValueScanner()
@@ -438,6 +470,244 @@ def replay_paper_candidate_markouts(
         f"output={output}"
     )
     return 0
+
+
+def run_targeted_pipeline(
+    *,
+    label: str,
+    output_dir: Path,
+    limit: int = 50,
+    timeout_seconds: float = 10.0,
+    polymarket_tag_slug: str | None = None,
+    polymarket_tag_id: int | None = None,
+    kalshi_series_ticker: str | None = None,
+    kalshi_event_ticker: str | None = None,
+    kalshi_max_pages: int = 2,
+    max_snapshot_age_hours: float = 24.0,
+    max_quote_age_seconds: float = 1800.0,
+) -> int:
+    try:
+        safe_label = _safe_pipeline_label(label)
+        _validate_pipeline_target(polymarket_tag_slug, polymarket_tag_id, kalshi_series_ticker, kalshi_event_ticker)
+    except ValueError as exc:
+        print(f"targeted_pipeline_status=FAILED message={exc}")
+        return 1
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = _targeted_pipeline_paths(output_dir, safe_label)
+
+    steps = [
+        (
+            "fetch_polymarket",
+            lambda: fetch_polymarket(
+                limit,
+                paths["polymarket_snapshot"],
+                timeout_seconds,
+                tag_slug=polymarket_tag_slug,
+                tag_id=polymarket_tag_id,
+            ),
+        ),
+        (
+            "fetch_kalshi",
+            lambda: fetch_kalshi(
+                limit,
+                paths["kalshi_snapshot"],
+                timeout_seconds,
+                series_ticker=kalshi_series_ticker,
+                event_ticker=kalshi_event_ticker,
+                max_pages=kalshi_max_pages,
+            ),
+        ),
+        (
+            "enrich_polymarket",
+            lambda: enrich_orderbooks(
+                paths["polymarket_snapshot"],
+                "polymarket",
+                paths["polymarket_enriched"],
+                timeout_seconds=timeout_seconds,
+                max_snapshot_age_hours=max_snapshot_age_hours,
+            ),
+        ),
+        (
+            "enrich_kalshi",
+            lambda: enrich_orderbooks(
+                paths["kalshi_snapshot"],
+                "kalshi",
+                paths["kalshi_enriched"],
+                timeout_seconds=timeout_seconds,
+                max_snapshot_age_hours=max_snapshot_age_hours,
+            ),
+        ),
+        (
+            "match_live_snapshots",
+            lambda: match_live_snapshots(
+                paths["polymarket_snapshot"],
+                paths["kalshi_snapshot"],
+                paths["pairs"],
+                max_snapshot_age_hours=max_snapshot_age_hours,
+            ),
+        ),
+        (
+            "evaluate_paper_candidates",
+            lambda: evaluate_paper_candidates(
+                paths["pairs"],
+                paths["polymarket_enriched"],
+                paths["kalshi_enriched"],
+                paths["paper_candidates"],
+                max_quote_age_seconds=max_quote_age_seconds,
+            ),
+        ),
+    ]
+    for step_name, step in steps:
+        result = step()
+        if result != 0:
+            print(f"targeted_pipeline_status=FAILED step={step_name}")
+            return result
+
+    try:
+        summary = _targeted_pipeline_summary(paths)
+    except ValueError as exc:
+        print(f"targeted_pipeline_status=FAILED message={exc}")
+        return 1
+
+    later_markout_command = (
+        "python scan.py replay-paper-candidate-markouts "
+        f"--ledger {paths['paper_candidates']} "
+        f"--polymarket-enriched-later {output_dir / f'{safe_label}_polymarket_enriched_later.json'} "
+        f"--kalshi-enriched-later {output_dir / f'{safe_label}_kalshi_enriched_later.json'} "
+        f"--output {output_dir / f'{safe_label}_paper_candidates_marked.json'}"
+    )
+    summary_path = output_dir / f"{safe_label}_pipeline_summary.json"
+    summary_payload = {
+        "schema_version": 1,
+        "source": "targeted_pipeline_runner",
+        "label": safe_label,
+        "paths": {name: str(path) for name, path in paths.items()},
+        "summary": summary,
+        "later_markout_command": later_markout_command,
+        "disclaimer": (
+            "Read-only saved-file pipeline. No trading, auth, orders, midpoint fills, "
+            "profit claim, executable-liquidity claim, PAPER output, or POSSIBLE_ARB output."
+        ),
+    }
+    summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    actions = summary["evaluator_counts"]
+    top_reasons = _format_top_reasons(summary["top_rejection_reasons"])
+    print(
+        "targeted_pipeline_status=OK "
+        f"label={safe_label} "
+        f"polymarket_normalized={summary['polymarket_normalized_count']} "
+        f"kalshi_normalized={summary['kalshi_normalized_count']} "
+        f"polymarket_enriched={summary['polymarket_enriched_count']}/{summary['polymarket_enrichment_market_count']} "
+        f"kalshi_enriched={summary['kalshi_enriched_count']}/{summary['kalshi_enrichment_market_count']} "
+        f"pairs={summary['pair_count']} "
+        f"watch={actions.get('WATCH', 0)} "
+        f"manual_review={actions.get('MANUAL_REVIEW', 0)} "
+        f"paper_candidate={actions.get('PAPER_CANDIDATE', 0)} "
+        f"top_rejection_reasons={top_reasons} "
+        f"summary={summary_path}"
+    )
+    print(f"later_markout_command={later_markout_command}")
+    return 0
+
+
+def _safe_pipeline_label(label: str) -> str:
+    normalized = label.strip()
+    if not normalized:
+        raise ValueError("label must not be empty")
+    if any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in normalized):
+        raise ValueError("label may contain only letters, numbers, underscores, and hyphens")
+    return normalized
+
+
+def _validate_pipeline_target(
+    polymarket_tag_slug: str | None,
+    polymarket_tag_id: int | None,
+    kalshi_series_ticker: str | None,
+    kalshi_event_ticker: str | None,
+) -> None:
+    if not polymarket_tag_slug and polymarket_tag_id is None:
+        raise ValueError("provide --polymarket-tag-slug and/or --polymarket-tag-id")
+    if not kalshi_series_ticker and not kalshi_event_ticker:
+        raise ValueError("provide --kalshi-series-ticker and/or --kalshi-event-ticker")
+
+
+def _targeted_pipeline_paths(output_dir: Path, label: str) -> dict[str, Path]:
+    return {
+        "polymarket_snapshot": output_dir / f"{label}_polymarket_snapshot.json",
+        "kalshi_snapshot": output_dir / f"{label}_kalshi_snapshot.json",
+        "polymarket_enriched": output_dir / f"{label}_polymarket_enriched.json",
+        "kalshi_enriched": output_dir / f"{label}_kalshi_enriched.json",
+        "pairs": output_dir / f"{label}_pairs.json",
+        "paper_candidates": output_dir / f"{label}_paper_candidates.json",
+    }
+
+
+def _targeted_pipeline_summary(paths: dict[str, Path]) -> dict[str, Any]:
+    polymarket_snapshot = _load_json_report(paths["polymarket_snapshot"], "polymarket_snapshot")
+    kalshi_snapshot = _load_json_report(paths["kalshi_snapshot"], "kalshi_snapshot")
+    polymarket_enriched = _load_json_report(paths["polymarket_enriched"], "polymarket_enriched")
+    kalshi_enriched = _load_json_report(paths["kalshi_enriched"], "kalshi_enriched")
+    pairs = _load_json_report(paths["pairs"], "pairs")
+    ledger = _load_json_report(paths["paper_candidates"], "paper_candidates")
+    polymarket_enrichment = polymarket_enriched.get("orderbook_enrichment") or {}
+    kalshi_enrichment = kalshi_enriched.get("orderbook_enrichment") or {}
+    return {
+        "polymarket_normalized_count": int(polymarket_snapshot.get("normalized_count") or 0),
+        "kalshi_normalized_count": int(kalshi_snapshot.get("normalized_count") or 0),
+        "polymarket_enrichment_market_count": int(polymarket_enrichment.get("market_count") or 0),
+        "polymarket_enriched_count": int(polymarket_enrichment.get("enriched_count") or 0),
+        "polymarket_unenriched_count": int(polymarket_enrichment.get("unenriched_count") or 0),
+        "kalshi_enrichment_market_count": int(kalshi_enrichment.get("market_count") or 0),
+        "kalshi_enriched_count": int(kalshi_enrichment.get("enriched_count") or 0),
+        "kalshi_unenriched_count": int(kalshi_enrichment.get("unenriched_count") or 0),
+        "pair_count": int(pairs.get("pair_count") or 0),
+        "evaluator_counts": ledger.get("counts_by_action") or {},
+        "top_rejection_reasons": _top_rejection_reasons(ledger),
+    }
+
+
+def _load_json_report(path: Path, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"{label} file not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} JSON is invalid: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} JSON must be an object")
+    return payload
+
+
+def _top_rejection_reasons(ledger_payload: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    rows = ledger_payload.get("ledger")
+    if not isinstance(rows, list):
+        return []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        reasons = row.get("ineligibility_reasons")
+        if isinstance(reasons, list):
+            for reason in reasons:
+                if reason is not None:
+                    reason_key = str(reason)
+                    counts[reason_key] = counts.get(reason_key, 0) + 1
+        missed_fill_reason = row.get("missed_fill_reason")
+        if missed_fill_reason:
+            reason_key = f"missed_fill:{missed_fill_reason}"
+            counts[reason_key] = counts.get(reason_key, 0) + 1
+    return [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+
+
+def _format_top_reasons(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "none"
+    return ",".join(f"{row['reason']}:{row['count']}" for row in rows)
 
 
 if __name__ == "__main__":

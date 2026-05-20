@@ -412,6 +412,51 @@ Next exact command:
 python scan.py replay-paper-candidate-markouts --ledger reports\paper_candidates_ledger.json --polymarket-enriched-later reports\polymarket_orderbook_enriched_snapshot.json --kalshi-enriched-later reports\kalshi_orderbook_enriched_snapshot.json --output reports\paper_candidates_ledger_marked.json
 ```
 
+## 2026-05-20 Targeted Pipeline Runner
+
+Completed:
+
+- Added `python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba`.
+- The runner writes labeled reports under `reports/`: snapshots, enriched snapshots, pairs, paper candidates, and a pipeline summary JSON.
+- The runner prints Polymarket/Kalshi normalized counts, enrichment counts, pair count, evaluator counts, top rejection reasons, and the exact later markout replay command.
+- The runner is orchestration only and reuses existing read-only saved-file steps.
+- Added no-network tests that monkeypatch every pipeline step and verify output filenames, ordering, summary fields, top rejection reasons, and unsafe-label rejection.
+
+Commands run:
+
+- `python -m pytest tests\test_targeted_pipeline.py -q`
+- `python -m pytest -q`
+- `python scan.py`
+- `python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba`
+
+Tests run:
+
+- `python -m pytest tests\test_targeted_pipeline.py -q`: 2 passed in 0.28s
+- `python -m pytest -q`: 152 passed in 0.90s
+
+What works:
+
+- A single command can rerun the current NBA/KXNBA saved-file pipeline into stable labeled files.
+- Later markout replay remains separate; the runner prints the exact command to use after later snapshots exist.
+- Current NBA/KXNBA run wrote `reports\nba_kxnba_*` outputs: Polymarket 600 normalized, Kalshi 4 normalized, Polymarket 528/600 enriched, Kalshi 4/4 enriched, 4 pairs, and evaluator counts `WATCH=4`, `MANUAL_REVIEW=0`, `PAPER_CANDIDATE=0`.
+- Top rejection reasons in the current run: `missed_fill:settlement_delta_exceeds_limit` count 4 and `settlement_delta_exceeds_limit` count 4.
+- Exact later markout command printed:
+
+```powershell
+python scan.py replay-paper-candidate-markouts --ledger C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_paper_candidates.json --polymarket-enriched-later C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_polymarket_enriched_later.json --kalshi-enriched-later C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_kalshi_enriched_later.json --output C:\Users\mason\Downloads\prediction-markets-program\relative-value-scanner\reports\nba_kxnba_paper_candidates_marked.json
+```
+
+What remains intentionally not built:
+
+- No sleep/wait loop.
+- No trading, authentication, account/order logic, scoring integration, midpoint fills, profit claim, executable-liquidity claim, or `PAPER` / `POSSIBLE_ARB` output.
+
+Next exact command:
+
+```powershell
+python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba
+```
+
 ## 2026-05-20 Live Snapshot Matcher Precision Aids
 
 Completed:
