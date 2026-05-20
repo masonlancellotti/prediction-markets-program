@@ -46,6 +46,12 @@ def _pipeline_summary(label: str, *, pair_count: int, watch_count: int, top_reas
                     "max_distance": 3600.0,
                     "median_distance": 2700.0,
                 },
+                "settlement_delta_near_pass": {
+                    "count": 1,
+                    "min_distance": 100.0,
+                    "max_distance": 100.0,
+                    "median_distance": 100.0,
+                },
             },
         },
     }
@@ -154,6 +160,12 @@ def test_multi_universe_sweep_invokes_each_manifest_row_and_writes_aggregate(mon
             "max_distance": 3600.0,
             "median_distance": 2700.0,
         },
+        "settlement_delta_near_pass": {
+            "count": 1,
+            "min_distance": 100.0,
+            "max_distance": 100.0,
+            "median_distance": 100.0,
+        },
     }
     assert summary["universes"][1]["status"] == "failed"
     assert summary["universes"][1]["failure_reason"] == "run_targeted_pipeline_returned_7"
@@ -174,6 +186,12 @@ def test_multi_universe_sweep_invokes_each_manifest_row_and_writes_aggregate(mon
             "median_distance": None,
         },
         "settlement_delta": {
+            "count": 0,
+            "min_distance": None,
+            "max_distance": None,
+            "median_distance": None,
+        },
+        "settlement_delta_near_pass": {
             "count": 0,
             "min_distance": None,
             "max_distance": None,

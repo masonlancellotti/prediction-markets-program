@@ -204,6 +204,7 @@ def _evaluate_pair(
             settlement_direction,
         )
 
+    direction = settlement_direction
     matcher_reasons = _matcher_reasons(pair)
     if matcher_reasons:
         if set(matcher_reasons) == {"ambiguous_wording"}:

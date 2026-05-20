@@ -1061,6 +1061,7 @@ def _empty_near_miss_summary() -> dict[str, Any]:
     return {
         "net_gap": _empty_distance_summary(),
         "settlement_delta": _empty_distance_summary(),
+        "settlement_delta_near_pass": _empty_distance_summary(),
     }
 
 
@@ -1072,6 +1073,10 @@ def _near_miss_summary(
     return {
         "net_gap": _net_gap_near_miss_summary(ledger_payload, min_net_gap=min_net_gap),
         "settlement_delta": _settlement_delta_near_miss_summary(
+            ledger_payload,
+            max_settlement_delta_seconds=max_settlement_delta_seconds,
+        ),
+        "settlement_delta_near_pass": _settlement_delta_near_pass_summary(
             ledger_payload,
             max_settlement_delta_seconds=max_settlement_delta_seconds,
         ),
@@ -1124,6 +1129,31 @@ def _settlement_delta_near_miss_summary(
         if settlement_delta_seconds is None:
             continue
         distances.append(round(settlement_delta_seconds - max_settlement_delta_seconds, 6))
+    if not distances:
+        return _empty_distance_summary()
+    return _distance_summary(distances)
+
+
+def _settlement_delta_near_pass_summary(
+    ledger_payload: dict[str, Any],
+    max_settlement_delta_seconds: float = 3600.0,
+) -> dict[str, Any]:
+    distances: list[float] = []
+    rows = ledger_payload.get("ledger")
+    if not isinstance(rows, list):
+        return _empty_distance_summary()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("missed_fill_reason") == "settlement_delta_exceeds_limit":
+            continue
+        gap = row.get("gap")
+        if not isinstance(gap, dict):
+            continue
+        settlement_delta_seconds = float_or_none(gap.get("settlement_delta_seconds"))
+        if settlement_delta_seconds is None:
+            continue
+        distances.append(round(max_settlement_delta_seconds - settlement_delta_seconds, 6))
     if not distances:
         return _empty_distance_summary()
     return _distance_summary(distances)

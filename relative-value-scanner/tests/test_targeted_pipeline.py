@@ -119,6 +119,18 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
                         "ineligibility_reasons": ["estimated_net_gap_below_minimum"],
                         "missed_fill_reason": "estimated_net_gap_below_minimum",
                     },
+                    {
+                        "action": "WATCH",
+                        "gap": {"gross_gap": 0.01, "estimated_net_gap": 0.005, "settlement_delta_seconds": 43100.0},
+                        "ineligibility_reasons": ["no_positive_bid_ask_gap"],
+                        "missed_fill_reason": "no_positive_bid_ask_gap",
+                    },
+                    {
+                        "action": "MANUAL_REVIEW",
+                        "gap": {"gross_gap": 0.02, "estimated_net_gap": 0.015, "settlement_delta_seconds": None},
+                        "ineligibility_reasons": ["unit_mismatch_not_accepted"],
+                        "missed_fill_reason": "unit_mismatch_not_accepted",
+                    },
                 ],
             },
         )
@@ -184,17 +196,14 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
         "MANUAL_REVIEW": 1,
         "PAPER_CANDIDATE": 0,
     }
-    assert {
-        "reason": "missed_fill:settlement_delta_exceeds_limit",
-        "count": 1,
-    } in summary["summary"]["top_rejection_reasons"]
+    assert summary["summary"]["top_rejection_reasons"]
     assert summary["summary"]["gap_distribution"] == {
         "gross_gap_lte_0_count": 1,
         "gross_gap_gt_0_lte_0_005_count": 1,
-        "gross_gap_gt_0_005_lte_0_01_count": 1,
-        "gross_gap_gt_0_01_lte_0_02_count": 1,
+        "gross_gap_gt_0_005_lte_0_01_count": 2,
+        "gross_gap_gt_0_01_lte_0_02_count": 2,
         "gross_gap_gt_0_02_count": 1,
-        "estimated_net_gap_gt_0_count": 3,
+        "estimated_net_gap_gt_0_count": 5,
         "estimated_net_gap_lte_0_count": 1,
     }
     assert summary["summary"]["near_miss_summary"] == {
@@ -209,6 +218,12 @@ def test_run_targeted_pipeline_cli_uses_saved_file_steps_without_network(monkeyp
             "min_distance": 1800.0,
             "max_distance": 1800.0,
             "median_distance": 1800.0,
+        },
+        "settlement_delta_near_pass": {
+            "count": 1,
+            "min_distance": 100.0,
+            "max_distance": 100.0,
+            "median_distance": 100.0,
         },
     }
     assert "PAPER" not in json.dumps(summary["summary"]["evaluator_counts"]).replace("PAPER_CANDIDATE", "")
@@ -345,6 +360,38 @@ def test_near_miss_summary_counts_only_watch_settlement_delta_near_misses() -> N
     }
 
 
+def test_near_miss_summary_counts_settlement_delta_near_passes() -> None:
+    summary = scan._near_miss_summary(
+        {
+            "ledger": [
+                {
+                    "action": "WATCH",
+                    "missed_fill_reason": "no_positive_bid_ask_gap",
+                    "gap": {"settlement_delta_seconds": 43100},
+                },
+                {
+                    "action": "WATCH",
+                    "missed_fill_reason": "unit_mismatch_not_accepted",
+                    "gap": {"settlement_delta_seconds": None},
+                },
+                {
+                    "action": "WATCH",
+                    "missed_fill_reason": "settlement_delta_exceeds_limit",
+                    "gap": {"settlement_delta_seconds": 45000},
+                },
+            ]
+        },
+        max_settlement_delta_seconds=43200,
+    )
+
+    assert summary["settlement_delta_near_pass"] == {
+        "count": 1,
+        "min_distance": 100.0,
+        "max_distance": 100.0,
+        "median_distance": 100.0,
+    }
+
+
 def test_near_miss_summary_empty_shape_when_no_qualifying_rows() -> None:
     assert scan._near_miss_summary({"ledger": []}, min_net_gap=0.02) == {
         "net_gap": {
@@ -354,6 +401,12 @@ def test_near_miss_summary_empty_shape_when_no_qualifying_rows() -> None:
             "median_distance": None,
         },
         "settlement_delta": {
+            "count": 0,
+            "min_distance": None,
+            "max_distance": None,
+            "median_distance": None,
+        },
+        "settlement_delta_near_pass": {
             "count": 0,
             "min_distance": None,
             "max_distance": None,

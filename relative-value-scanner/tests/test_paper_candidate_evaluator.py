@@ -141,6 +141,7 @@ def test_clean_positive_gap_caps_at_manual_review_without_unit_ack() -> None:
     assert row["opportunity_class"] == "near_equivalent_manual_review"
     assert row["gap"]["gross_gap"] == pytest.approx(0.06)
     assert row["gap"]["estimated_net_gap"] == pytest.approx(0.04)
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
     assert row["gap"]["size_unit_warning"] == UNIT_WARNING
     assert row["missed_fill_reason"] == "unit_mismatch_not_accepted"
 
@@ -158,6 +159,7 @@ def test_accept_unit_mismatch_allows_paper_candidate_but_never_paper_or_arb() ->
 
     assert row["action"] == ACTION_PAPER_CANDIDATE
     assert row["opportunity_class"] == "strict_cross_venue_equivalent"
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
     assert payload["counts_by_action"] == {
         ACTION_WATCH: 0,
         ACTION_MANUAL_REVIEW: 0,
@@ -388,6 +390,7 @@ def test_bid_ask_gap_only_never_midpoint() -> None:
 
     assert row["action"] == ACTION_WATCH
     assert row["gap"]["gross_gap"] == pytest.approx(-0.01)
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
     assert row["missed_fill_reason"] == "no_positive_bid_ask_gap"
 
 
