@@ -191,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     sweep_parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
 
+    explain_sweep_parser = subparsers.add_parser(
+        "explain-sweep-summary",
+        help="Print a human-readable explanation of a saved multi-universe sweep summary.",
+    )
+    explain_sweep_parser.add_argument("--summary", type=Path, required=True)
+
     parser.add_argument("--fixture-dir", type=Path, default=PROJECT_ROOT / "venues" / "fixtures")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
     parser.add_argument("--include-ignore", action="store_true", help="Include ignored pairs in reports.")
@@ -288,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
             min_net_gap=args.min_net_gap,
             accept_unit_mismatch=args.accept_unit_mismatch,
         )
+    if args.command == "explain-sweep-summary":
+        return explain_sweep_summary(args.summary)
 
     scanner = RelativeValueScanner()
     candidates = scanner.scan_from_adapters(build_fixture_adapters(args.fixture_dir), include_ignore=args.include_ignore)
@@ -793,6 +801,60 @@ def run_multi_universe_sweep(
     return 0 if completed_count else 1
 
 
+def explain_sweep_summary(path: Path) -> int:
+    try:
+        payload = _load_json_report(path, "sweep_summary")
+        if payload.get("schema_version") != 1:
+            raise ValueError("sweep_summary schema_version must be 1")
+        if payload.get("source") != "multi_universe_sweep":
+            raise ValueError("sweep_summary source must be multi_universe_sweep")
+    except ValueError as exc:
+        print(f"explain_sweep_summary_status=FAILED message={exc}")
+        return 1
+
+    universes = payload.get("universes")
+    universes = universes if isinstance(universes, list) else []
+    for row in universes:
+        if not isinstance(row, dict):
+            continue
+        counts = row.get("evaluator_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        gap_distribution = row.get("gap_distribution")
+        gap_distribution = gap_distribution if isinstance(gap_distribution, dict) else _empty_gap_distribution()
+        near_miss_summary = row.get("near_miss_summary")
+        near_miss_summary = near_miss_summary if isinstance(near_miss_summary, dict) else _empty_near_miss_summary()
+        print(f"Universe: {_display_value(row.get('label'))}")
+        print(f"  status: {_display_value(row.get('status'))}")
+        print(f"  polymarket_normalized_count: {_display_value(row.get('polymarket_normalized_count'))}")
+        print(f"  kalshi_normalized_count: {_display_value(row.get('kalshi_normalized_count'))}")
+        print(f"  pair_count: {_display_value(row.get('pair_count'))}")
+        print(
+            "  evaluator_counts: "
+            f"WATCH={counts.get('WATCH', 0)} "
+            f"MANUAL_REVIEW={counts.get('MANUAL_REVIEW', 0)} "
+            f"PAPER_CANDIDATE={counts.get('PAPER_CANDIDATE', 0)}"
+        )
+        print(f"  Gap > 0 total: {_gross_gap_positive_count(gap_distribution)}")
+        print(f"  Net > 0: {gap_distribution.get('estimated_net_gap_gt_0_count', 0)}")
+        print(f"  near_miss.net_gap.median_distance: {_near_miss_median(near_miss_summary, 'net_gap')}")
+        print(f"  near_miss.settlement_delta.median_distance: {_near_miss_median(near_miss_summary, 'settlement_delta')}")
+        print(
+            "  near_miss.settlement_delta_near_pass.median_distance: "
+            f"{_near_miss_median(near_miss_summary, 'settlement_delta_near_pass')}"
+        )
+        print(f"  top_rejection_reasons: {_format_top_reasons(row.get('top_rejection_reasons') or [])}")
+        print("")
+
+    print(
+        "Aggregate: "
+        f"total_universes={len(universes)} "
+        f"completed={int(payload.get('completed_count') or 0)} "
+        f"failed={int(payload.get('failed_count') or 0)}"
+    )
+    print(f"explain_sweep_summary_status=OK summary={path}")
+    return 0
+
+
 def _safe_pipeline_label(label: str) -> str:
     normalized = label.strip()
     if not normalized:
@@ -1074,6 +1136,19 @@ def _near_miss_count(near_miss_summary: dict[str, Any], key: str) -> int:
     if not isinstance(summary, dict):
         return 0
     return int(summary.get("count") or 0)
+
+
+def _near_miss_median(near_miss_summary: dict[str, Any], key: str) -> str:
+    summary = near_miss_summary.get(key)
+    if not isinstance(summary, dict):
+        return "n/a"
+    return _display_value(summary.get("median_distance"))
+
+
+def _display_value(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    return str(value)
 
 
 def _empty_distance_summary() -> dict[str, Any]:
