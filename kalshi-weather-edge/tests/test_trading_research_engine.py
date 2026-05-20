@@ -792,6 +792,59 @@ def test_recorded_replay_discovers_only_parsed_weather_tickers(tmp_path):
     assert tickers == ["KXWEATHER"]
 
 
+def test_recorded_replay_zero_overlap_warning_explains_selection(tmp_path):
+    storage = _storage(tmp_path)
+    selected_day = date(2026, 5, 2)
+    storage.upsert_live_orderbook_snapshot(
+        {
+            "market_ticker": "KXNONWEATHER",
+            "ts": datetime(2026, 5, 2, 12, tzinfo=timezone.utc),
+            "yes_best_bid": 40,
+            "yes_best_ask": 60,
+            "spread_cents": 20,
+            "source": "test",
+        }
+    )
+    storage.upsert_live_orderbook_snapshot(
+        {
+            "market_ticker": "KXWEATHER",
+            "ts": datetime(2026, 5, 1, 12, tzinfo=timezone.utc),
+            "yes_best_bid": 40,
+            "yes_best_ask": 60,
+            "spread_cents": 20,
+            "source": "test",
+        }
+    )
+    storage.insert_json(
+        "parsed_contracts",
+        {
+            "event_ticker": "E",
+            "market_ticker": "KXWEATHER",
+            "variable_type": "high_temp",
+            "contract_type": "threshold_above",
+            "threshold": 70,
+            "local_date": "2026-05-01",
+            "parse_confidence": 0.9,
+            "station_confidence": 0.9,
+        },
+        market_ticker="KXWEATHER",
+        event_ticker="E",
+        parse_confidence=0.9,
+    )
+
+    result = RecordedOrderbookReplayBuilder(storage=storage).build(start=selected_day, end=selected_day)
+
+    assert result.markets == 0
+    assert result.snapshots == 0
+    assert len(result.warnings) == 1
+    warning = result.warnings[0]
+    assert "No recorded orderbook tickers in the selected window overlap parsed weather contracts." in warning
+    assert "parsed_weather_tickers=1" in warning
+    assert "recorded_orderbook_tickers_in_window=1" in warning
+    assert "overlap_tickers=0" in warning
+    assert "latest_known_overlap_ts=2026-05-01 12:00:00.000000" in warning
+
+
 def test_missing_weather_features_keep_replay_offline():
     contract = WeatherContract(
         event_ticker="E",

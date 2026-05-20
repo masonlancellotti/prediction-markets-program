@@ -54,6 +54,8 @@ class RecordedOrderbookReplayBuilder:
         snapshots = 0
         skipped = 0
         warnings: list[str] = []
+        if not tickers:
+            warnings.append(self._zero_ticker_warning(start, end, market_ticker))
         for idx, ticker in enumerate(tickers, start=1):
             if idx == 1 or idx % 10 == 0:
                 print(f"build-recorded-replay progress markets={idx}/{len(tickers)} snapshots_written={snapshots} skipped={skipped}", flush=True)
@@ -159,6 +161,75 @@ class RecordedOrderbookReplayBuilder:
         rows.sort(key=lambda item: item[1], reverse=True)
         tickers = [ticker for ticker, _ in rows]
         return tickers[:max_markets] if max_markets is not None and max_markets > 0 else tickers
+
+    def _zero_ticker_warning(self, start: date | None, end: date | None, market_ticker: str | None) -> str:
+        clauses = []
+        params: dict[str, Any] = {}
+        if start:
+            clauses.append("date(ts) >= :start")
+            params["start"] = start.isoformat()
+        if end:
+            clauses.append("date(ts) <= :end")
+            params["end"] = end.isoformat()
+        date_where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        parsed_where = "WHERE market_ticker IS NOT NULL"
+        if market_ticker:
+            parsed_where += " AND market_ticker = :market_ticker"
+            params["market_ticker"] = market_ticker
+        parsed = self.storage.fetch_sql(
+            f"""
+            SELECT COUNT(DISTINCT market_ticker) AS parsed_weather_tickers
+            FROM parsed_contracts
+            {parsed_where}
+            """,
+            params,
+        )
+        recorded = self.storage.fetch_sql(
+            f"""
+            SELECT COUNT(DISTINCT market_ticker) AS recorded_orderbook_tickers
+            FROM orderbook_snapshots_live
+            {date_where}
+            """,
+            params,
+        )
+        overlap = self.storage.fetch_sql(
+            f"""
+            SELECT COUNT(DISTINCT o.market_ticker) AS overlap_tickers,
+                   MAX(o.ts) AS latest_window_overlap_ts
+            FROM orderbook_snapshots_live o
+            JOIN (
+                SELECT DISTINCT market_ticker
+                FROM parsed_contracts
+                {parsed_where}
+            ) p ON p.market_ticker = o.market_ticker
+            {date_where.replace("ts", "o.ts")}
+            """,
+            params,
+        )
+        latest_overlap = self.storage.fetch_sql(
+            f"""
+            SELECT MAX(o.ts) AS latest_known_overlap_ts
+            FROM orderbook_snapshots_live o
+            JOIN (
+                SELECT DISTINCT market_ticker
+                FROM parsed_contracts
+                {parsed_where}
+            ) p ON p.market_ticker = o.market_ticker
+            """,
+            params,
+        )
+        parsed_count = _frame_value(parsed, "parsed_weather_tickers", 0)
+        recorded_count = _frame_value(recorded, "recorded_orderbook_tickers", 0)
+        overlap_count = _frame_value(overlap, "overlap_tickers", 0)
+        latest_overlap_ts = _frame_value(latest_overlap, "latest_known_overlap_ts", None)
+        window = f"start={start.isoformat() if start else 'None'} end={end.isoformat() if end else 'None'}"
+        requested = f" market_ticker={market_ticker}" if market_ticker else ""
+        return (
+            "No recorded orderbook tickers in the selected window overlap parsed weather contracts. "
+            f"{window}{requested}; parsed_weather_tickers={parsed_count}; "
+            f"recorded_orderbook_tickers_in_window={recorded_count}; overlap_tickers={overlap_count}; "
+            f"latest_known_overlap_ts={latest_overlap_ts}"
+        )
 
     def _contracts(self, tickers: list[str]) -> dict[str, WeatherContract]:
         frame = self.storage.fetch_table("parsed_contracts", limit=300000)
@@ -725,6 +796,20 @@ def _parse_dt(value: Any) -> datetime | None:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
+
+
+def _frame_value(frame: pd.DataFrame, column: str, default):
+    if frame.empty or column not in frame:
+        return default
+    value = frame.iloc[0].get(column)
+    if value is None:
+        return default
+    try:
+        if value != value:
+            return default
+    except TypeError:
+        return default
+    return value
 
 
 def _weather_cache_ts(ts: datetime) -> datetime:

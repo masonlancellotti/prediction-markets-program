@@ -6,6 +6,7 @@
 - 2026-05-19 False-Arb Hardening: added polarity/threshold caps, fee models, NO-side penalty, fail-closed executable flags, and false-arb docs.
 - 2026-05-20 Pipeline Diagnostics: `summary.near_miss_summary` changed from a flat block to nested `net_gap` and `settlement_delta` blocks in targeted pipeline and sweep summaries.
 - 2026-05-20 Pipeline Diagnostics: added JSON-only `summary.near_miss_summary.settlement_delta_near_pass` for rows that carried a settlement delta and passed the settlement-delta gate.
+- 2026-05-20 Sweep Manifests: added versioned default sweep input at `reports/sweep_manifests/default.json`; it is tracked input, not generated report output.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

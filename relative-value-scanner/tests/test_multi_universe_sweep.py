@@ -62,6 +62,7 @@ def test_multi_universe_sweep_invokes_each_manifest_row_and_writes_aggregate(mon
     _write(
         manifest,
         {
+            "version": 1,
             "universes": [
                 {
                     "label": "nba_kxnba",
@@ -219,6 +220,7 @@ def test_multi_universe_sweep_exits_one_when_no_universe_completes(monkeypatch, 
     _write(
         manifest,
         {
+            "version": 1,
             "universes": [
                 {
                     "label": "nba_kxnba",

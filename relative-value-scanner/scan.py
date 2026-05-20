@@ -861,17 +861,45 @@ def _targeted_pipeline_summary(
 
 def _load_sweep_manifest(path: Path) -> list[dict[str, Any]]:
     payload = _load_json_report(path, "sweep_manifest")
+    _validate_sweep_manifest_structure(payload)
+    return payload["universes"]
+
+
+def _validate_sweep_manifest_structure(payload: dict[str, Any]) -> None:
+    if payload.get("version") != 1:
+        raise ValueError("sweep manifest version must be 1")
     universes = payload.get("universes")
     if not isinstance(universes, list):
         raise ValueError("sweep manifest must contain a universes list")
     if not universes:
         raise ValueError("sweep manifest universes list must not be empty")
-    parsed: list[dict[str, Any]] = []
+    labels: set[str] = set()
     for index, universe in enumerate(universes):
         if not isinstance(universe, dict):
             raise ValueError(f"sweep manifest universe at index {index} must be an object")
-        parsed.append(universe)
-    return parsed
+        label = universe.get("label")
+        if not isinstance(label, str) or not label:
+            raise ValueError(f"sweep manifest universe at index {index} must contain a non-empty label")
+        try:
+            safe_label = _safe_pipeline_label(label)
+        except ValueError as exc:
+            raise ValueError(f"sweep manifest universe label at index {index} is invalid: {exc}") from exc
+        if safe_label != label:
+            raise ValueError(
+                f"sweep manifest universe label at index {index} may contain only letters, numbers, underscores, and hyphens"
+            )
+        if label in labels:
+            raise ValueError(f"sweep manifest contains duplicate label: {label}")
+        labels.add(label)
+        try:
+            _validate_pipeline_target(
+                _optional_string(universe.get("polymarket_tag_slug")),
+                _optional_int(universe.get("polymarket_tag_id")),
+                _optional_string(universe.get("kalshi_series_ticker")),
+                _optional_string(universe.get("kalshi_event_ticker")),
+            )
+        except ValueError as exc:
+            raise ValueError(f"sweep manifest universe {label}: {exc}") from exc
 
 
 def _completed_sweep_row(label: str, summary_payload: dict[str, Any]) -> dict[str, Any]:

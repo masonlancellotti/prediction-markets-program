@@ -6,4 +6,6 @@ __pycache__/
 reports/*.json
 reports/*.md
 !reports/.gitkeep
+!reports/sweep_manifests/
+!reports/sweep_manifests/*.json
 # `reports/` contains generated scan outputs; durable examples live in docs/sample_report/.
