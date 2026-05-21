@@ -37,6 +37,7 @@ class PaperMarketMakingBasketConfig:
     interval_seconds: int = 30
     duration_minutes: float | None = None
     dry_run: bool = False
+    weather_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class PaperMarketMakingBasketResult:
             f"cancelled={self.summary.get('cancelled_quotes')}",
             f"fill_rate={self.summary.get('fill_rate'):.3f} avg_edge_30m={_fmt(self.summary.get('avg_future_edge_30m_cents'))} "
             f"future30_n={self.summary.get('future_edge_30m_observations')} adverse30={self.summary.get('adverse_fill_rate_30m'):.3f}",
+            f"weather_only={str(self.summary.get('weather_only')).lower()}",
             f"selector_verdict={self.summary.get('selector_verdict')} selector_fills={self.summary.get('selector_fills')} "
             f"current_targets={self.summary.get('selector_current_targets')} replay_supported_current_targets={self.summary.get('selector_replay_supported_current_targets')}",
             f"exports={self.summary.get('exports')}",
@@ -162,6 +164,7 @@ class PaperMarketMakingBasket:
             quote_spacing_seconds=config.quote_spacing_seconds,
             stale_current_seconds=config.stale_orderbook_seconds,
             require_current_setup=True,
+            weather_only=config.weather_only,
         )
         replay = MarketMakingReplayBacktester(storage=self.storage, config=replay_config).replay(
             last_days=config.last_days,
@@ -220,6 +223,7 @@ class PaperMarketMakingBasket:
         return {
             "status": status,
             "message": _basket_message(status),
+            "weather_only": bool(config.weather_only),
             "targets": len(targets),
             "strict_targets": strict,
             "exploratory_targets": exploratory,

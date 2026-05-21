@@ -54,6 +54,21 @@ def _review(analyzer_rows, evidence_rows):
     )
 
 
+def test_target_review_summary_marks_weather_only_mode():
+    result = build_target_review(
+        analyzer_markets=[_analyzer()],
+        evidence_rows=[_evidence()],
+        analyzer_summary={"market_making_verdict": "PAPER_WATCHLIST_CANDIDATES"},
+        evidence_summary={"status": "PAPER_EVIDENCE_PROMISING_NOT_READY"},
+        config=PaperMarketMakingTargetReviewConfig(weather_only=True),
+        generated_at=datetime(2026, 5, 20, 12, tzinfo=timezone.utc),
+        persist_exports=False,
+    )
+
+    assert result.summary["weather_only"] is True
+    assert "weather_only=true" in result.to_text()
+
+
 def test_positive_net30_but_too_few_fills_is_not_over_promoted():
     result = _review(
         [_analyzer()],

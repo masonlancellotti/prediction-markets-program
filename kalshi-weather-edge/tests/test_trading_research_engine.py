@@ -343,6 +343,87 @@ def test_market_making_analyzer_scores_trade_evidence(tmp_path):
     assert result.markets[0]["market_ticker"] == "M"
 
 
+def _insert_parsed_weather_contract(storage: Storage, ticker: str, *, variable_type: str = "high_temp") -> None:
+    storage.insert_json(
+        "parsed_contracts",
+        {
+            "event_ticker": ticker.rsplit("-", 1)[0],
+            "market_ticker": ticker,
+            "variable_type": variable_type,
+            "contract_type": "threshold_above",
+            "threshold": 70,
+            "local_date": "2026-05-01",
+            "parse_confidence": 0.9,
+            "station_confidence": 0.9,
+        },
+        market_ticker=ticker,
+        event_ticker=ticker.rsplit("-", 1)[0],
+        parse_confidence=0.9,
+    )
+
+
+def _insert_market_making_book_series(storage: Storage, ticker: str, base: datetime, *, status: str = "open") -> None:
+    for idx in range(6):
+        storage.upsert_live_orderbook_snapshot(
+            {
+                "market_ticker": ticker,
+                "ts": base + pd.Timedelta(minutes=idx * 5).to_pytimedelta(),
+                "yes_best_bid": 40,
+                "yes_best_ask": 60,
+                "no_best_bid": 40,
+                "no_best_ask": 60,
+                "spread_cents": 20,
+                "mid_cents": 50,
+                "depth_yes_bid_1": 10,
+                "depth_yes_ask_1": 10,
+                "depth_no_bid_1": 10,
+                "depth_no_ask_1": 10,
+                "market_status": status,
+                "source": "test",
+            }
+        )
+
+
+def test_market_making_weather_only_filters_to_parsed_weather_contracts(tmp_path):
+    storage = _storage(tmp_path)
+    base = datetime(2026, 5, 1, 12, tzinfo=timezone.utc)
+    for ticker in ["KXHIGHAUS-26MAY01-T70", "KXRAINNYC-26MAY01-T0", "KXNBA-26MAY01-BOS"]:
+        _insert_market_making_book_series(storage, ticker, base)
+    _insert_parsed_weather_contract(storage, "KXHIGHAUS-26MAY01-T70", variable_type="high_temp")
+    _insert_parsed_weather_contract(storage, "KXRAINNYC-26MAY01-T0", variable_type="precipitation")
+
+    unfiltered = MarketMakingAnalyzer(
+        storage=storage,
+        config=MarketMakingConfig(min_spread_cents=8, quote_spacing_seconds=60, weather_only=False),
+    ).analyze(last_days=30, persist_exports=False)
+    filtered = MarketMakingAnalyzer(
+        storage=storage,
+        config=MarketMakingConfig(min_spread_cents=8, quote_spacing_seconds=60, weather_only=True),
+    ).analyze(last_days=30, persist_exports=False)
+
+    assert unfiltered.summary["weather_only"] is False
+    assert unfiltered.summary["markets_analyzed"] == 3
+    assert filtered.summary["weather_only"] is True
+    assert filtered.summary["markets_analyzed"] == 2
+    assert {row["market_ticker"] for row in filtered.markets} == {"KXHIGHAUS-26MAY01-T70", "KXRAINNYC-26MAY01-T0"}
+
+
+def test_market_making_weather_only_empty_results_fail_safely(tmp_path):
+    storage = _storage(tmp_path)
+    base = datetime(2026, 5, 1, 12, tzinfo=timezone.utc)
+    _insert_market_making_book_series(storage, "KXNBA-26MAY01-BOS", base)
+
+    result = MarketMakingAnalyzer(
+        storage=storage,
+        config=MarketMakingConfig(min_spread_cents=8, quote_spacing_seconds=60, weather_only=True),
+    ).analyze(last_days=30, persist_exports=False)
+
+    assert result.summary["weather_only"] is True
+    assert result.summary["market_making_verdict"] == "NOT_READY_DATA_INCOMPLETE"
+    assert result.summary["candidate_quotes"] == 0
+    assert result.markets == []
+
+
 def test_paper_market_maker_opens_and_fills_passive_quote(tmp_path):
     storage = _storage(tmp_path)
     base = datetime(2026, 5, 1, 12, tzinfo=timezone.utc)
@@ -750,6 +831,65 @@ def test_paper_market_making_basket_includes_exploratory_current_targets(tmp_pat
     tiers = {row["market_ticker"]: row["tier"] for row in result.targets}
     assert tiers["STRICT"] == "REPLAY_SUPPORTED"
     assert tiers["EXPLORATORY"] == "EXPLORATORY_CURRENT"
+
+
+def test_paper_market_making_basket_weather_only_excludes_non_weather_targets(tmp_path):
+    storage = _storage(tmp_path)
+    base = datetime.combine(date.today(), time(12), tzinfo=timezone.utc)
+    weather_ticker = "KXHIGHAUS-26MAY01-T70"
+    non_weather_ticker = "KXNBA-26MAY01-BOS"
+    for ticker in [weather_ticker, non_weather_ticker]:
+        _insert_market_making_book_series(storage, ticker, base)
+        storage.upsert_historical_trade(
+            {
+                "market_ticker": ticker,
+                "ts": base + pd.Timedelta(minutes=1).to_pytimedelta(),
+                "trade_id": f"{ticker}-fill",
+                "price": 45,
+                "yes_price": 45,
+                "no_price": 55,
+                "count": 1,
+                "side": "yes",
+            }
+        )
+    _insert_parsed_weather_contract(storage, weather_ticker)
+
+    result = PaperMarketMakingBasket(storage=storage, now_fn=lambda: base + pd.Timedelta(minutes=40).to_pytimedelta()).run_once(
+        PaperMarketMakingBasketConfig(
+            last_days=1,
+            search_max_markets=10,
+            max_targets=5,
+            min_replay_fills=1,
+            include_exploratory=True,
+            min_spread_cents=8,
+            min_depth=1,
+            stale_orderbook_seconds=86400,
+            quote_ttl_seconds=600,
+            quote_spacing_seconds=300,
+            max_position=1,
+            weather_only=True,
+        ),
+        persist_exports=False,
+    )
+
+    assert result.summary["weather_only"] is True
+    assert {row["market_ticker"] for row in result.targets} == {weather_ticker}
+    assert all(row["market_ticker"] != non_weather_ticker for row in result.targets)
+
+
+def test_weather_only_market_making_modules_have_no_order_or_auth_calls():
+    import inspect
+    import live.paper_market_making_basket as basket_module
+    import research.market_making_analysis as analysis_module
+    import research.market_making_replay as replay_module
+
+    source = "\n".join(
+        inspect.getsource(module)
+        for module in (analysis_module, replay_module, basket_module)
+    )
+    forbidden = ("create_order", "cancel_order", "private_key", "api_secret", "account_balance")
+    for token in forbidden:
+        assert token not in source
 
 
 def test_recorded_replay_discovers_only_parsed_weather_tickers(tmp_path):

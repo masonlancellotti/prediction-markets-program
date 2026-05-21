@@ -24,6 +24,7 @@ class MarketMakingConfig:
     adverse_selection_penalty_cents: float = float(settings.passive_adverse_selection_penalty_cents)
     min_displayed_depth: float = float(settings.passive_min_displayed_depth)
     max_quotes_per_market_side: int = 300
+    weather_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class MarketMakingResult:
             f"fill_rate={self.summary.get('trade_evidence_fill_rate'):.3f}",
             f"avg_edge_30m={self.summary.get('avg_future_edge_30m_cents'):.2f} adverse_fill_rate_30m={self.summary.get('adverse_fill_rate_30m'):.3f}",
             f"data_sufficiency={self.summary.get('data_sufficiency')} paper_watchlist_candidates={self.summary.get('paper_watchlist_candidates')}",
+            f"weather_only={str(self.summary.get('weather_only')).lower()}",
         ]
         if self.markets:
             readiness_counts: dict[str, int] = {}
@@ -91,6 +93,7 @@ class MarketMakingAnalyzer:
             summary = {
                 "market_making_verdict": "NOT_READY_DATA_INCOMPLETE",
                 "message": "No live orderbook snapshots in the requested window.",
+                "weather_only": self.config.weather_only,
                 "snapshots": 0,
                 "markets_analyzed": 0,
                 "trades": 0,
@@ -127,7 +130,7 @@ class MarketMakingAnalyzer:
             reverse=True,
         )
         samples = sorted(samples, key=lambda row: (row.get("filled") is True, row.get("future_edge_30m_cents") or -999), reverse=True)
-        summary = _summary(book_stats, books, trades, ranked)
+        summary = _summary(book_stats, books, trades, ranked, weather_only=self.config.weather_only)
         if persist_exports:
             _export_market_making(ranked, samples, summary)
         return MarketMakingResult(summary, ranked, samples)
@@ -135,6 +138,8 @@ class MarketMakingAnalyzer:
     def _load_books(self, start: date | None, end: date | None) -> pd.DataFrame:
         clauses, params = _time_clauses(start, end)
         clauses.extend(["yes_best_bid IS NOT NULL", "yes_best_ask IS NOT NULL", "spread_cents IS NOT NULL"])
+        if self.config.weather_only:
+            clauses.append(weather_market_filter_clause("market_ticker"))
         return self.storage.fetch_sql(
             f"""
             SELECT market_ticker, ts, yes_best_bid, yes_best_ask, no_best_bid, no_best_ask,
@@ -150,6 +155,8 @@ class MarketMakingAnalyzer:
 
     def _load_book_stats(self, start: date | None, end: date | None) -> dict[str, int]:
         clauses, params = _time_clauses(start, end)
+        if self.config.weather_only:
+            clauses.append(weather_market_filter_clause("market_ticker"))
         frame = self.storage.fetch_sql(
             f"""
             SELECT
@@ -402,7 +409,7 @@ def _combined_market_metrics(ticker: str, books: pd.DataFrame, trades: pd.DataFr
     }
 
 
-def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFrame, markets: list[dict[str, Any]]) -> dict[str, Any]:
+def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFrame, markets: list[dict[str, Any]], weather_only: bool = False) -> dict[str, Any]:
     candidate_quotes = sum(row["candidate_quotes"] for row in markets)
     fills = sum(row["trade_evidence_fills"] for row in markets)
     candidate_markets = sum(1 for row in markets if row["candidate_quotes"] > 0)
@@ -442,6 +449,7 @@ def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFra
     return {
         "market_making_verdict": verdict,
         "message": message,
+        "weather_only": bool(weather_only),
         "data_sufficiency": sufficiency,
         "snapshots": int(book_stats.get("snapshots", 0)),
         "markets_analyzed": int(book_stats.get("markets_analyzed", 0)),
@@ -586,3 +594,8 @@ def _num(value: Any) -> float | None:
 def _int_value(value: Any) -> int:
     numeric = _num(value)
     return int(numeric) if numeric is not None else 0
+
+
+def weather_market_filter_clause(column: str = "market_ticker") -> str:
+    """Return a SQL fragment that keeps only tickers parsed as weather contracts."""
+    return f"{column} IN (SELECT DISTINCT market_ticker FROM parsed_contracts WHERE market_ticker IS NOT NULL)"

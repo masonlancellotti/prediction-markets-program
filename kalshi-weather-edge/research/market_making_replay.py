@@ -10,6 +10,7 @@ import pandas as pd
 from backtest.fees import ConservativeFixedFeeModel
 from config import PROJECT_ROOT, settings
 from data.storage import Storage
+from research.market_making_analysis import weather_market_filter_clause
 
 ReplaySide = Literal["BUY_YES", "BUY_NO"]
 
@@ -27,6 +28,7 @@ class MarketMakingReplayConfig:
     quote_spacing_seconds: int = 300
     stale_current_seconds: int = 180
     require_current_setup: bool = False
+    weather_only: bool = False
     adverse_selection_penalty_cents: float = float(settings.passive_adverse_selection_penalty_cents)
     max_quotes_per_market_side: int = 500
 
@@ -47,6 +49,7 @@ class MarketMakingReplayResult:
             f"avg_edge_30m={self.summary.get('avg_future_edge_30m_cents'):.2f} "
             f"avg_net_edge_30m={self.summary.get('avg_net_edge_30m_cents'):.2f} "
             f"adverse30={self.summary.get('adverse_fill_rate_30m'):.3f}",
+            f"weather_only={str(self.summary.get('weather_only')).lower()}",
             f"paper_test_candidates={self.summary.get('paper_test_candidates')} "
             f"current_paper_targets={self.summary.get('current_paper_targets')} "
             f"replay_supported_current_targets={self.summary.get('replay_supported_current_targets')} exports={self.summary.get('exports')}",
@@ -94,11 +97,13 @@ class MarketMakingReplayBacktester:
             selected_tickers = self._select_market_tickers(start, end, max_markets)
             if not selected_tickers:
                 summary = _empty_summary("NOT_READY_DATA_INCOMPLETE", "No recorded orderbook markets in the requested window.")
+                summary["weather_only"] = self.config.weather_only
                 return MarketMakingReplayResult(summary=summary, markets=[], fills=[])
         books = self._load_books(start, end, market_ticker, selected_tickers)
         trades = self._load_trades(start, end, market_ticker, selected_tickers)
         if books.empty:
             summary = _empty_summary("NOT_READY_DATA_INCOMPLETE", "No recorded orderbook snapshots in the requested window.")
+            summary["weather_only"] = self.config.weather_only
             return MarketMakingReplayResult(summary=summary, markets=[], fills=[])
 
         books = _prepare_books(books)
@@ -124,7 +129,7 @@ class MarketMakingReplayBacktester:
             kept_tickers = {row["market_ticker"] for row in ranked}
             fill_rows = [row for row in fill_rows if row.get("market_ticker") in kept_tickers]
         fill_rows = sorted(fill_rows, key=lambda row: row.get("net_edge_30m_cents") if row.get("net_edge_30m_cents") is not None else -999, reverse=True)
-        summary = _summary(books, trades, ranked, fill_rows)
+        summary = _summary(books, trades, ranked, fill_rows, weather_only=self.config.weather_only)
         if persist_exports:
             summary["exports"] = _export(ranked, fill_rows, summary)
         else:
@@ -251,6 +256,8 @@ class MarketMakingReplayBacktester:
     def _select_market_tickers(self, start: date | None, end: date | None, max_markets: int) -> list[str]:
         clauses, params = _time_clauses(start, end)
         clauses.extend(["yes_best_bid IS NOT NULL", "yes_best_ask IS NOT NULL", "spread_cents IS NOT NULL"])
+        if self.config.weather_only:
+            clauses.append(weather_market_filter_clause("market_ticker"))
         frame = self.storage.fetch_sql(
             f"""
             SELECT market_ticker, COUNT(*) AS snapshots
@@ -279,6 +286,8 @@ class MarketMakingReplayBacktester:
                 placeholders.append(f":{key}")
                 params[key] = ticker
             clauses.append(f"market_ticker IN ({', '.join(placeholders)})")
+        if self.config.weather_only:
+            clauses.append(weather_market_filter_clause("market_ticker"))
         return self.storage.fetch_sql(
             f"""
             SELECT market_ticker, ts, yes_best_bid, yes_best_ask, no_best_bid, no_best_ask,
@@ -495,7 +504,7 @@ def _side_metrics(
     }
 
 
-def _summary(books: pd.DataFrame, trades: pd.DataFrame, markets: list[dict[str, Any]], fills: list[dict[str, Any]]) -> dict[str, Any]:
+def _summary(books: pd.DataFrame, trades: pd.DataFrame, markets: list[dict[str, Any]], fills: list[dict[str, Any]], weather_only: bool = False) -> dict[str, Any]:
     quotes_opened = sum(row["quotes_opened"] for row in markets)
     fill_count = sum(row["fills"] for row in markets)
     cancels = sum(row["cancels"] for row in markets)
@@ -525,6 +534,7 @@ def _summary(books: pd.DataFrame, trades: pd.DataFrame, markets: list[dict[str, 
     return {
         "verdict": verdict,
         "message": message,
+        "weather_only": bool(weather_only),
         "snapshots": int(len(books)),
         "markets_analyzed": int(books["market_ticker"].nunique()) if not books.empty else 0,
         "trades": int(len(trades)),
@@ -559,6 +569,7 @@ def _empty_summary(verdict: str, message: str) -> dict[str, Any]:
     return {
         "verdict": verdict,
         "message": message,
+        "weather_only": False,
         "snapshots": 0,
         "markets_analyzed": 0,
         "trades": 0,

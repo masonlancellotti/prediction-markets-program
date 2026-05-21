@@ -28,6 +28,7 @@ class PaperMarketMakingTargetReviewConfig:
     adverse_high_threshold: float = 0.35
     adverse_caution_threshold: float = 0.20
     prefer_cached_reports: bool = True
+    weather_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class PaperMarketMakingTargetReviewResult:
             f"message={self.summary.get('message')}",
             f"rows={self.summary.get('rows')} analyzer_rows={self.summary.get('analyzer_rows')} "
             f"evidence_rows={self.summary.get('evidence_rows')} joined_rows={self.summary.get('joined_rows')}",
+            f"weather_only={str(self.summary.get('weather_only')).lower()}",
             f"priority_buckets: {count_text}",
             f"exports={self.exports}",
             f"disclaimer={DISCLAIMER}",
@@ -79,7 +81,7 @@ class PaperMarketMakingTargetReviewer:
         persist_exports: bool = True,
     ) -> PaperMarketMakingTargetReviewResult:
         config = config or PaperMarketMakingTargetReviewConfig()
-        if config.prefer_cached_reports:
+        if config.prefer_cached_reports and not config.weather_only:
             cached = _load_cached_inputs()
             if cached is not None:
                 analyzer_markets, evidence_rows, analyzer_summary, evidence_summary = cached
@@ -95,7 +97,7 @@ class PaperMarketMakingTargetReviewer:
         self.storage.init_db()
         analyzer = MarketMakingAnalyzer(
             storage=self.storage,
-            config=MarketMakingConfig(),
+            config=MarketMakingConfig(weather_only=config.weather_only),
         ).analyze(last_days=config.last_days, persist_exports=False)
         evidence = PaperMarketMakingEvidenceReporter(storage=self.storage, now_fn=self.now_fn).build(
             PaperMarketMakingEvidenceConfig(
@@ -105,9 +107,13 @@ class PaperMarketMakingTargetReviewer:
             ),
             persist_exports=False,
         )
+        evidence_rows = evidence.rows
+        if config.weather_only:
+            weather_tickers = _weather_tickers(self.storage)
+            evidence_rows = [row for row in evidence_rows if str(row.get("market_ticker") or "") in weather_tickers]
         return build_target_review(
             analyzer_markets=analyzer.markets,
-            evidence_rows=evidence.rows,
+            evidence_rows=evidence_rows,
             analyzer_summary={**analyzer.summary, "target_review_input_source": "rebuilt_from_db"},
             evidence_summary={**evidence.summary, "target_review_input_source": "rebuilt_from_db"},
             config=config,
@@ -295,6 +301,7 @@ def _summary(
         "message": message,
         "generated_at": generated_at.isoformat(),
         "last_days": config.last_days,
+        "weather_only": bool(config.weather_only),
         "rows": len(rows),
         "analyzer_rows": len(analyzer_markets),
         "evidence_rows": len(evidence_rows),
@@ -345,6 +352,19 @@ def _load_cached_inputs() -> tuple[list[dict[str, Any]], list[dict[str, Any]], d
     if not isinstance(evidence_summary, dict):
         evidence_summary = {}
     return analyzer_markets, evidence_rows, analyzer_summary, evidence_summary
+
+
+def _weather_tickers(storage: Storage) -> set[str]:
+    frame = storage.fetch_sql(
+        """
+        SELECT DISTINCT market_ticker
+        FROM parsed_contracts
+        WHERE market_ticker IS NOT NULL
+        """
+    )
+    if frame.empty:
+        return set()
+    return {str(value) for value in frame["market_ticker"].dropna().tolist()}
 
 
 def _markdown(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str:

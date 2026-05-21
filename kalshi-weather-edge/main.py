@@ -211,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     market_making.add_argument("--min-spread-cents", type=float, default=float(settings.passive_min_spread_cents))
     market_making.add_argument("--fill-horizon-minutes", type=int, default=30)
     market_making.add_argument("--quote-spacing-seconds", type=int, default=300)
+    market_making.add_argument("--weather-only", action="store_true", help="Restrict analysis to tickers with parsed weather contracts.")
     market_making.add_argument("--no-export", action="store_true")
     market_making_replay = sub.add_parser("backtest-market-making", help="Replay the paper market-maker loop over recorded books/trades; never sends orders")
     market_making_replay.add_argument("--start")
@@ -229,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     market_making_replay.add_argument("--quote-spacing-seconds", type=int, default=300)
     market_making_replay.add_argument("--stale-current-seconds", type=int, default=180, help="Maximum latest-book age for current paper target recommendations.")
     market_making_replay.add_argument("--require-current-setup", action="store_true", help="Only print/export candidates whose latest book currently qualifies for the paper-maker filters.")
+    market_making_replay.add_argument("--weather-only", action="store_true", help="Restrict replay screening to tickers with parsed weather contracts.")
     market_making_replay.add_argument("--max-quotes-per-market-side", type=int, default=500)
     market_making_replay.add_argument("--no-export", action="store_true")
     universe = sub.add_parser("rank-market-universe", help="Discover/probe open Kalshi markets and rank recorder usefulness")
@@ -320,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     paper_mm_basket.add_argument("--duration-minutes", type=float, default=None)
     paper_mm_basket.add_argument("--once", action="store_true")
     paper_mm_basket.add_argument("--dry-run", action="store_true")
+    paper_mm_basket.add_argument("--weather-only", action="store_true", help="Restrict basket target selection to tickers with parsed weather contracts.")
     paper_mm_basket.add_argument("--no-export", action="store_true")
     paper_mm_evidence = sub.add_parser("paper-market-making-evidence", help="Read-only cumulative paper market-making evidence report; never sends real orders")
     paper_mm_evidence.add_argument("--stale-open-seconds", type=int, default=600)
@@ -334,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     paper_mm_target_review.add_argument("--too-few-fills-threshold", type=int, default=5)
     paper_mm_target_review.add_argument("--adverse-high-threshold", type=float, default=0.35)
     paper_mm_target_review.add_argument("--adverse-caution-threshold", type=float, default=0.20)
+    paper_mm_target_review.add_argument("--weather-only", action="store_true", help="Restrict target review to tickers with parsed weather contracts.")
     paper_mm_target_review.add_argument("--no-export", action="store_true")
     weather_coverage = sub.add_parser("weather-replay-coverage", help="Read-only report of parsed weather ticker overlap with recorded orderbooks")
     weather_coverage.add_argument("--last-days", type=int, default=7)
@@ -552,6 +556,7 @@ def main(argv: list[str] | None = None) -> int:
             interval_seconds=args.interval_seconds,
             duration_minutes=args.duration_minutes,
             dry_run=args.dry_run,
+            weather_only=args.weather_only,
         )
         print(PaperMarketMakingBasket().run(cfg, persist_exports=not args.no_export, once=args.once or args.duration_minutes is None).to_text())
         return 0
@@ -572,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
             too_few_fills_threshold=args.too_few_fills_threshold,
             adverse_high_threshold=args.adverse_high_threshold,
             adverse_caution_threshold=args.adverse_caution_threshold,
+            weather_only=args.weather_only,
         )
         print(PaperMarketMakingTargetReviewer().build(cfg, persist_exports=not args.no_export).to_text())
         return 0
@@ -634,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
             min_spread_cents=args.min_spread_cents,
             fill_horizon_minutes=args.fill_horizon_minutes,
             quote_spacing_seconds=args.quote_spacing_seconds,
+            weather_only=args.weather_only,
         )
         print(MarketMakingAnalyzer(config=cfg).analyze(last_days=args.last_days, persist_exports=not args.no_export).to_text())
         return 0
@@ -650,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
             quote_spacing_seconds=args.quote_spacing_seconds,
             stale_current_seconds=args.stale_current_seconds,
             require_current_setup=args.require_current_setup,
+            weather_only=args.weather_only,
             max_quotes_per_market_side=args.max_quotes_per_market_side,
         )
         result = MarketMakingReplayBacktester(config=cfg).replay(
