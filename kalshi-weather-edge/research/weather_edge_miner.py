@@ -19,6 +19,7 @@ from research.edge_types import ALREADY_GUARANTEED_OR_IMPOSSIBLE_EDGE, FAIR_VALU
 @dataclass(frozen=True)
 class WeatherEdgeMiningConfig:
     target: str | None = None
+    market_ticker: str | None = None
     contract_type: str | None = None
     action: str | None = None
     city: str | None = None
@@ -52,6 +53,7 @@ class WeatherEdgeMiningResult:
             f"rows={self.summary.get('rows_scanned')} markets={self.summary.get('markets_scanned')} "
             f"eligible_rows={self.summary.get('eligible_rows')} signals={self.summary.get('signals')} "
             f"settled_signals={self.summary.get('settled_signals')}",
+            f"market_ticker_filter={self.summary.get('market_ticker_filter')}",
             f"net_pnl={self.summary.get('net_pnl_cents'):.2f} fees={self.summary.get('fees_cents'):.2f} "
             f"win_rate={self.summary.get('win_rate'):.3f} avg_edge_after_buffers={self.summary.get('avg_edge_after_buffers_cents'):.2f}",
             f"future_mid_30m_beat_rate={_fmt_rate(self.summary.get('future_mid_30m_beat_rate'))} "
@@ -117,22 +119,27 @@ class WeatherEdgeMiner:
         start: date | None = None,
         end: date | None = None,
         last_days: int | None = 3,
+        market_ticker: str | None = None,
         persist_exports: bool = True,
     ) -> WeatherEdgeMiningResult:
-        snapshots = self._load_snapshots(start=start, end=end, last_days=last_days)
+        ticker_filter = market_ticker or self.config.market_ticker
+        snapshots = self._load_snapshots(start=start, end=end, last_days=last_days, market_ticker=ticker_filter)
         signals = self._mine_signals(snapshots)
-        summary = self._summary(snapshots, signals)
+        summary = self._summary(snapshots, signals, market_ticker=ticker_filter)
         if persist_exports:
             summary["exports"] = self._export(summary, signals)
         else:
             summary["exports"] = None
         return WeatherEdgeMiningResult(summary=summary, signals=signals)
 
-    def _load_snapshots(self, *, start: date | None, end: date | None, last_days: int | None) -> pd.DataFrame:
+    def _load_snapshots(self, *, start: date | None, end: date | None, last_days: int | None, market_ticker: str | None = None) -> pd.DataFrame:
         self.storage.init_db()
         start, end = _date_window(start, end, last_days)
         clauses = ["variable_type IN ('high_temp', 'low_temp')"]
         params: dict[str, Any] = {}
+        if market_ticker:
+            clauses.append("market_ticker = :market_ticker")
+            params["market_ticker"] = market_ticker
         if start:
             clauses.append("date(ts) >= :start")
             params["start"] = start.isoformat()
@@ -277,7 +284,7 @@ class WeatherEdgeMiner:
         final_yes_mid = _yes_mid_from_row(future.iloc[-1])
         _set_future_mid(signal, final_yes_mid, "final")
 
-    def _summary(self, snapshots: pd.DataFrame, signals: list[dict[str, Any]]) -> dict[str, Any]:
+    def _summary(self, snapshots: pd.DataFrame, signals: list[dict[str, Any]], market_ticker: str | None = None) -> dict[str, Any]:
         settled = [row for row in signals if row.get("settled")]
         gross = sum(float(row.get("gross_pnl_cents") or 0.0) for row in settled)
         fees = sum(float(row.get("fees_cents") or 0.0) for row in settled)
@@ -292,6 +299,7 @@ class WeatherEdgeMiner:
             "message": message,
             "rows_scanned": int(len(snapshots)),
             "markets_scanned": int(snapshots["market_ticker"].nunique()) if not snapshots.empty else 0,
+            "market_ticker_filter": market_ticker,
             "eligible_rows": int(_eligible_count(snapshots, self.config)),
             "signals": len(signals),
             "settled_signals": len(settled),

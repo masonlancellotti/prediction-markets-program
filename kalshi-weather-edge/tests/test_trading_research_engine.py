@@ -913,6 +913,87 @@ def test_weather_edge_miner_finds_executable_settled_signal(tmp_path):
     assert result.signals[0]["hypothesis"] == "weather_locked"
 
 
+def _insert_weather_edge_signal_row(storage: Storage, ticker: str, *, ts: datetime | None = None) -> None:
+    ts = ts or datetime(2026, 5, 1, 19, tzinfo=timezone.utc)
+    storage.upsert_recorded_orderbook_replay_snapshot(
+        {
+            "market_ticker": ticker,
+            "event_ticker": "KXHIGHNY-26MAY01",
+            "ts": ts,
+            "city": "New York",
+            "station_code": "KNYC",
+            "local_date": "2026-05-01",
+            "variable_type": "high_temp",
+            "contract_type": "threshold_above",
+            "threshold": 70,
+            "comparator": "gte",
+            "yes_best_bid": 1,
+            "yes_best_ask": 2,
+            "no_best_bid": 25,
+            "no_best_ask": 30,
+            "current_temp_asof": 75,
+            "max_temp_so_far_asof": 75,
+            "min_temp_so_far_asof": 60,
+            "forecast_high_remaining_f": 76,
+            "local_hour": 15,
+            "is_threshold_already_hit_asof": 1,
+            "minutes_to_close": 60,
+            "latest_observation_recorded_at": datetime(2026, 5, 1, 18, 30, tzinfo=timezone.utc),
+            "latest_forecast_recorded_at": datetime(2026, 5, 1, 18, 0, tzinfo=timezone.utc),
+            "weather_asof_quality_score": 0.9,
+            "data_quality_score": 0.9,
+            "settlement_confidence": 0.9,
+            "yes_result": 1,
+            "parser_version": "test",
+            "settlement_version": "test",
+        }
+    )
+
+
+def test_weather_edge_miner_without_market_ticker_keeps_unfiltered_behavior(tmp_path):
+    storage = _storage(tmp_path)
+    _insert_weather_edge_signal_row(storage, "KXHIGHNY-26MAY01-T70")
+    _insert_weather_edge_signal_row(storage, "KXHIGHBOS-26MAY01-T70")
+
+    result = WeatherEdgeMiner(
+        storage=storage,
+        config=WeatherEdgeMiningConfig(min_edge_after_buffers_cents=5, min_data_quality=0.5, min_fair_confidence=0.5),
+    ).mine(last_days=30, persist_exports=False)
+
+    assert result.summary["signals"] == 2
+    assert result.summary["markets_scanned"] == 2
+    assert result.summary["market_ticker_filter"] is None
+    assert {row["market_ticker"] for row in result.signals} == {"KXHIGHNY-26MAY01-T70", "KXHIGHBOS-26MAY01-T70"}
+
+
+def test_weather_edge_miner_market_ticker_filter_analyzes_only_that_ticker(tmp_path):
+    storage = _storage(tmp_path)
+    _insert_weather_edge_signal_row(storage, "KXHIGHNY-26MAY01-T70")
+    _insert_weather_edge_signal_row(storage, "KXHIGHBOS-26MAY01-T70")
+
+    result = WeatherEdgeMiner(
+        storage=storage,
+        config=WeatherEdgeMiningConfig(min_edge_after_buffers_cents=5, min_data_quality=0.5, min_fair_confidence=0.5),
+    ).mine(last_days=30, market_ticker="KXHIGHBOS-26MAY01-T70", persist_exports=False)
+
+    assert result.summary["signals"] == 1
+    assert result.summary["markets_scanned"] == 1
+    assert result.summary["market_ticker_filter"] == "KXHIGHBOS-26MAY01-T70"
+    assert result.signals[0]["market_ticker"] == "KXHIGHBOS-26MAY01-T70"
+
+
+def test_weather_edge_miner_unknown_market_ticker_returns_empty_result(tmp_path):
+    storage = _storage(tmp_path)
+    _insert_weather_edge_signal_row(storage, "KXHIGHNY-26MAY01-T70")
+
+    result = WeatherEdgeMiner(storage=storage).mine(last_days=30, market_ticker="UNKNOWN", persist_exports=False)
+
+    assert result.summary["rows_scanned"] == 0
+    assert result.summary["signals"] == 0
+    assert result.summary["market_ticker_filter"] == "UNKNOWN"
+    assert result.summary["verdict"] == "NO_MINED_WEATHER_SIGNALS"
+
+
 def test_passive_verdict_requires_ten_fills_for_approx_candidate():
     # Fewer than 10 fills → NOT_READY_NO_EDGE even if EV is positive
     rows_few = [{"conservative_fills": 5, "estimated_ev_after_adverse_penalty": 3.0}]

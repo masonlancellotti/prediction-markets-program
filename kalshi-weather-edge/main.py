@@ -250,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     weather_mine.add_argument("--start")
     weather_mine.add_argument("--end")
     weather_mine.add_argument("--last-days", type=int, default=3)
+    weather_mine.add_argument("--market-ticker", help="Restrict recorded replay mining to one market ticker.")
     weather_mine.add_argument("--target", choices=["range-bucket-buy-no"], help="Preset focused research slice. Current preset isolates range-bucket BUY_NO signals.")
     weather_mine.add_argument("--contract-type", choices=["threshold_above", "threshold_below", "range_bucket"])
     weather_mine.add_argument("--action", choices=["BUY_YES", "BUY_NO"])
@@ -692,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
             action = "BUY_NO"
         cfg = WeatherEdgeMiningConfig(
             target=args.target,
+            market_ticker=args.market_ticker,
             contract_type=contract_type,
             action=action,
             city=args.city,
@@ -716,6 +718,7 @@ def main(argv: list[str] | None = None) -> int:
                 start=_date_arg(args.start),
                 end=_date_arg(args.end),
                 last_days=args.last_days,
+                market_ticker=args.market_ticker,
                 persist_exports=not args.no_export,
             )
             .to_text()
