@@ -59,6 +59,47 @@ _STOPWORDS = {
     "will",
     "yes",
 }
+_LEAGUE_STAGE_SCOPE_PHRASES = (
+    "american league championship series",
+    "american league championship",
+    "national league championship series",
+    "national league championship",
+    "league championship series",
+    "league championship",
+    "conference championship",
+    "afc championship",
+    "nfc championship",
+    "conference finals",
+    "conference final",
+    "division series",
+    "semifinal",
+    "wild card",
+    "wildcard",
+    "alcs",
+    "alds",
+    "nlcs",
+    "nlds",
+    "champions league group stage",
+    "champions league round of 16",
+    "copa america group stage",
+)
+_OVERALL_FINAL_SCOPE_PHRASES = (
+    "world series",
+    "pro baseball championship",
+    "super bowl",
+    "stanley cup",
+    "world cup",
+    "mls cup",
+    "nba finals",
+    "nhl finals",
+    "premier league title",
+    "la liga title",
+    "bundesliga title",
+    "serie a title",
+    "champions league title",
+    "copa america",
+    "euro championship",
+)
 
 
 @dataclass(frozen=True)
@@ -256,44 +297,9 @@ def _sports_guardrail_text(market: dict[str, Any]) -> str:
 
 
 def _sports_competition_scope(text: str) -> str | None:
-    if _has_any_phrase(
-        text,
-        (
-            "american league championship series",
-            "american league championship",
-            "national league championship series",
-            "national league championship",
-            "league championship series",
-            "league championship",
-            "conference championship",
-            "afc championship",
-            "nfc championship",
-            "conference finals",
-            "division series",
-            "semifinals",
-            "semifinal",
-            "wild card",
-            "wildcard",
-            "alcs",
-            "alds",
-            "nlcs",
-            "nlds",
-        ),
-    ):
+    if _has_any_phrase(text, _LEAGUE_STAGE_SCOPE_PHRASES):
         return "league_championship"
-    if _has_any_phrase(
-        text,
-        (
-            "world series",
-            "pro baseball championship",
-            "super bowl",
-            "stanley cup",
-            "world cup",
-            "mls cup",
-            "nba finals",
-            "nhl finals",
-        ),
-    ):
+    if _has_any_phrase(text, _OVERALL_FINAL_SCOPE_PHRASES):
         return "overall_championship"
     if "championship" in _TOKEN_RE.findall(text):
         return "overall_championship"

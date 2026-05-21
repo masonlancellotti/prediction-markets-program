@@ -298,6 +298,27 @@ def test_nhl_conference_finals_vs_stanley_cup_scope_mismatch(tmp_path: Path) -> 
     assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
 
 
+def test_singular_conference_final_vs_stanley_cup_scope_mismatch(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Carolina Hurricanes win the 2026 NHL Conference Final?",
+        "Will Carolina Hurricanes win the 2026 Stanley Cup?",
+        event_title="NHL futures",
+        event_slug="nhl-futures",
+        series_ticker="KXNHL",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+
+
 def test_nba_conference_finals_vs_nba_finals_scope_mismatch(tmp_path: Path) -> None:
     poly, kalshi = _sports_snapshots(
         "Will Boston Celtics win the 2026 NBA Eastern Conference Finals?",
@@ -335,6 +356,69 @@ def test_mlb_alds_vs_world_series_scope_mismatch(tmp_path: Path) -> None:
     pair = payload["pairs"][0]
     assert pair["action"] == "WATCH"
     assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+
+
+def test_premier_league_title_vs_champions_league_group_stage_scope_mismatch(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Arsenal win the 2026 Premier League title?",
+        "Will Arsenal win the 2026 Champions League group stage?",
+        event_title="Arsenal UEFA soccer futures",
+        event_slug="uefa-soccer-futures",
+        series_ticker="KXUEFA",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+
+
+def test_champions_league_round_of_16_vs_title_scope_mismatch(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Arsenal win the 2026 Champions League round of 16?",
+        "Will Arsenal win the 2026 Champions League title?",
+        event_title="Arsenal UEFA soccer futures",
+        event_slug="uefa-soccer-futures",
+        series_ticker="KXUEFA",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+
+
+def test_same_team_premier_league_title_future_can_match_normally(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Arsenal win the 2026 Premier League title?",
+        "Will Arsenal win the 2026 Premier League title?",
+        event_title="Arsenal UEFA soccer futures",
+        event_slug="uefa-soccer-futures",
+        series_ticker="KXUEFA",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "MANUAL_REVIEW"
+    assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
 
 
 def test_same_team_super_bowl_future_can_match_normally(tmp_path: Path) -> None:
