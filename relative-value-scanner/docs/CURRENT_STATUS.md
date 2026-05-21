@@ -15,6 +15,7 @@
 - 2026-05-21 Sports Guardrails: refactored scope phrase lists into constants and added international soccer protections for Premier League, La Liga, Bundesliga, Serie A, Champions League, Copa America, and Euro Championship scope mismatches.
 - 2026-05-21 Relationship Layer: added deterministic `contract_relationship` report objects for matcher pairs and paper-candidate ledger rows; this is review/debugging evidence only, not trade permission.
 - 2026-05-21 Relationship Layer: changed no-evidence fallback to conservative `NEAR_EQUIVALENT`/`same_payoff=false` and made settlement/source/threshold blockers outrank unit warnings.
+- 2026-05-21 Source Taxonomy: added a non-networked source registry and `docs/SOURCE_TAXONOMY.md` so executable, reference-only, signal-only, and planned sources have explicit output policies before broader API expansion.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

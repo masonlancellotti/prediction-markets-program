@@ -15,7 +15,10 @@
 
 1. Kalshi and other prediction-market exchange quotes as executable research candidates.
 2. Polymarket-style exchange quotes as read-only comparison candidates.
-3. Sportsbook odds only as non-executable reference prices.
+3. Reference-only sources, including sportsbook odds, only as non-executable `WATCH`/diagnostic inputs.
+4. Signal-only sources, including planned Manifold and Metaculus support, only for discovery and semantic clustering.
+
+Weather remains the only proprietary edge domain for now because it has external observations, forecasts, settlement labels, and replay data. This repo remains infrastructure for matching, normalization, reference comparison, source taxonomy, and fake-edge prevention.
 
 ## Long-Term Goal
 

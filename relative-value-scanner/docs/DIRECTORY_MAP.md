@@ -16,6 +16,7 @@
 - `reference_odds.py`: American odds and no-vig sportsbook conversion.
 - `fees.py`: fee model interface plus flat, Kalshi-tiered, and no-fee implementations.
 - `contract_relationship.py`: deterministic contract-relationship classification constants and report shape for review/debugging only.
+- `source_registry.py`: non-networked source taxonomy and output-policy registry for executable, reference-only, and signal-only sources.
 - `matching.py`: match confidence and settlement mismatch risk.
 - `scoring.py`: action ladder and POSSIBLE_ARB hard gates.
 - `scanner.py`: deterministic pairwise scanner and default suppression of redundant opposite-side sportsbook reference rows.
@@ -48,6 +49,7 @@
 - `test_orderbook_enrichment.py`: mocked orderbook parser, client, failure-mode, and CLI tests.
 - `test_paper_candidate_evaluator.py`: local JSON evaluator tests for gates, fee subtraction, unit mismatch cap, ledger shape, CLI success/failure, and no-midpoint behavior.
 - `test_markout_replay.py`: local JSON markout replay tests for window filling, no-midpoint logic, stale/missing statuses, fee reuse, no disallowed actions, input non-mutation, and CLI wiring.
+- `test_source_registry.py`: source taxonomy tests proving executable, reference-only, signal-only, planned, and unknown-source behavior.
 
 ## `reports/`
 
@@ -79,7 +81,11 @@ Design note for the read-only orderbook/depth enrichment layer and its limits.
 
 ## `docs/PAPER_CANDIDATE_LEDGER.md`
 
-Design note for the saved-file-only paper candidate evaluator and ledger limits.
+Design note for saved-file paper-candidate review ledgers and their limits.
+
+## `docs/SOURCE_TAXONOMY.md`
+
+Design note for source types, planned source entries, and source-specific output policy.
 
 ## `docs/MARKOUT_REPLAY.md`
 

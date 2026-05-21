@@ -6,6 +6,14 @@ Exchange quotes can indicate executable market prices only if the venue adapter 
 
 Adapters must normalize top-of-book size into `liquidity_top_contracts`, measured in contracts. Do not pass raw USD, USDC, or venue notional into this field.
 
+## Source Taxonomy
+
+Every source must be classified before it affects scanner output. `EXECUTABLE_VENUE` sources may participate in candidate pairs only when implemented and still subject to relationship, settlement, freshness, fee, and liquidity gates. `REFERENCE_ONLY` sources may inform `WATCH` rows and diagnostics only. `SIGNAL_ONLY` sources may help discovery or semantic clustering only.
+
+Kalshi and Polymarket are implemented read-only executable venues in this repo. ForecastEx/IBKR is a planned executable venue but is not implemented because it likely requires auth/account/instrument work. Manifold and Metaculus are signal-only planned sources. The Odds API and sportsbooks are reference-only.
+
+More APIs increase candidate volume and fake-edge risk. Semantic similarity is not settlement equivalence, LLM classification may assist later review but cannot approve trades, and source type must be checked before candidate evaluation.
+
 ## Polymarket Live Discovery
 
 `python scan.py fetch-polymarket` uses Polymarket's public Gamma discovery API for active, not-closed events and markets. Normalized rows are filtered by default to exclude closed, archived, inactive, not-accepting-orders-or-unknown, and clearly past-end-date markets; the raw response remains in the snapshot for audit. It does not authenticate, connect a wallet, call trading endpoints, place orders, or score live markets against Kalshi.

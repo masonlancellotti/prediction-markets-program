@@ -7,6 +7,8 @@
 - Do not use Robinhood private, reverse-engineered, or browser automation APIs.
 - Do not execute Polymarket trades.
 - Do not execute IBKR trades.
+- Do not implement ForecastEx/IBKR live fetching, auth, account, instrument, or execution logic yet.
+- Do not treat Manifold or Metaculus as executable venues.
 - Do not add a database, scheduler, or web dashboard yet.
 - Do not import from `../kalshi-weather-edge`.
 - Do not call sportsbook odds executable.

@@ -54,6 +54,18 @@ Common normalized market fields, when available, are `venue`, `event_id`, `event
 
 Venue-specific fields are allowed, but consumers should rely only on the documented common fields unless explicitly handling a venue-specific field.
 
+## Source Taxonomy
+
+`relative_value/source_registry.py` defines source types before any broader API expansion:
+
+- `EXECUTABLE_VENUE`
+- `REFERENCE_ONLY`
+- `SIGNAL_ONLY`
+
+Kalshi and Polymarket are implemented read-only executable venues for candidate-pair research. ForecastEx/IBKR is listed as a planned executable venue but cannot create candidates yet. Manifold and Metaculus are signal-only, while The Odds API and sportsbooks are reference-only. Reference-only sources may inform `WATCH`/diagnostics only; signal-only sources may inform discovery or semantic clustering only. Neither can create `PAPER_CANDIDATE` by itself.
+
+See `docs/SOURCE_TAXONOMY.md` for the planned registry and output policy.
+
 ## Live Snapshot Matching Prototype
 
 ```powershell
