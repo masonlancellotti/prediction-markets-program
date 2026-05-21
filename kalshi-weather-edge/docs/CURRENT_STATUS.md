@@ -150,6 +150,29 @@ Later on 2026-05-18, the paper target loop was tightened after `KXNBAGAME-26MAY2
 13. For broad weather mining, run `python main.py mine-weather-edge --last-days 3` after replay is built. If signals appear with `settled_signals=0`, build exact settlements for that date window before trusting P&L.
 14. For the current best weather hypothesis, run `python main.py mine-weather-edge --last-days 7 --target range-bucket-buy-no` and inspect both settlement P&L and `future_mid_*_beat_rate`. Do not paper trade it unless future-mid confirmation improves on new dates.
 
+## 2026-05-21 Weather Recorder Coverage Note
+
+`build-recorded-replay` can still build known historical weather overlap, but recent bounded weather-only runs selected zero markets because current orderbook recording was focused on ranked/all-market universes and no longer overlapped parsed weather contracts. The weather-only orderbook recorder now supports:
+
+```powershell
+python main.py record-orderbooks --weather-only --persist-weather-markets --interval-seconds 30 --max-markets 100 --duration-hours 6
+```
+
+Recommended weather replay refresh sequence:
+
+```powershell
+python main.py load-markets --max-pages 3 --max-series 25
+python main.py record-orderbooks --weather-only --persist-weather-markets --interval-seconds 30 --max-markets 100 --duration-hours 6
+python main.py build-recorded-replay --last-days 1 --recorded-weather-only --max-markets 25
+```
+
+Two read-only diagnostics were added:
+
+- `python main.py weather-replay-coverage --last-days 7` reports parsed weather tickers, daily recorded-orderbook overlap, latest known overlap, missing weather tickers, and a small replay command likely to work.
+- `python main.py paper-market-making-drilldown --ticker <ticker> --side BUY_YES|BUY_NO` prints all local paper quote rows for one market/side with markouts, fees, net markouts, current unrealized P&L, and quote-level warnings.
+
+These commands are research-only. They do not place or cancel orders, use account/auth state, change readiness gates, or promote any strategy to real-money readiness.
+
 ## 2026-05-19 Codex Cycle
 
 Baseline checks: `python -m pytest -q` passed (`94 passed, 2 warnings`) before changes. `project-status` showed live orderbooks/trades fresh, `market_making_summary_warning=null`, `stale_strategy_sweeps=833`, and `clean_strategy_sweeps_current_version=357`. `trading-readiness --last-days 7` remained `NOT_READY_NO_EDGE` and requested `python main.py analyze-market-making --last-days 7`.

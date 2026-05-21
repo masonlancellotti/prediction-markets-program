@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from backtest.execution import NormalizedOrderBook
-from live.orderbook_recorder import extract_multi_orderbooks, normalize_live_orderbook_snapshot
+from live.orderbook_recorder import LiveOrderbookRecorder, extract_multi_orderbooks, normalize_live_orderbook_snapshot
 
 
 def test_live_orderbook_snapshot_math_and_depth():
@@ -75,3 +75,59 @@ def test_extract_multi_orderbooks_falls_back_to_requested_order():
     rows = extract_multi_orderbooks(payload, ["REQUESTED"])
 
     assert rows == [("REQUESTED", {"yes": [[42, 10]], "no": [[53, 7]]})]
+
+
+class FakeMarketLoader:
+    def __init__(self):
+        self.active_weather_calls = []
+        self.active_market_calls = []
+
+    def load_active_weather_markets(self, **kwargs):
+        self.active_weather_calls.append(kwargs)
+        return [{"ticker": "KXWEATHER-TEST"}]
+
+    def load_active_markets(self, **kwargs):
+        self.active_market_calls.append(kwargs)
+        return [{"ticker": "KXALL-TEST"}]
+
+
+def _recorder_with_fake_loader() -> tuple[LiveOrderbookRecorder, FakeMarketLoader]:
+    recorder = LiveOrderbookRecorder()
+    loader = FakeMarketLoader()
+    recorder.loader = loader
+    return recorder, loader
+
+
+def test_weather_only_recorder_persists_weather_markets_when_enabled():
+    recorder, loader = _recorder_with_fake_loader()
+
+    tickers = recorder._active_tickers(
+        weather_only=True,
+        max_markets=5,
+        persist_weather_markets=True,
+    )
+
+    assert tickers == ["KXWEATHER-TEST"]
+    assert loader.active_weather_calls[0]["persist"] is True
+
+
+def test_weather_only_recorder_default_does_not_persist_weather_markets():
+    recorder, loader = _recorder_with_fake_loader()
+
+    recorder._active_tickers(weather_only=True, max_markets=5)
+
+    assert loader.active_weather_calls[0]["persist"] is False
+
+
+def test_all_market_recorder_ignores_persist_weather_markets_flag():
+    recorder, loader = _recorder_with_fake_loader()
+
+    tickers = recorder._active_tickers(
+        weather_only=False,
+        max_markets=5,
+        persist_weather_markets=True,
+    )
+
+    assert tickers == ["KXALL-TEST"]
+    assert loader.active_weather_calls == []
+    assert loader.active_market_calls[0]["persist"] is True

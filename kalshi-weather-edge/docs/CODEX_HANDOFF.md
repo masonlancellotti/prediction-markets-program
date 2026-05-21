@@ -315,3 +315,25 @@ Do not mistake exploratory basket targets for live-ready edge. Exploratory targe
 Current paper-fill truth layer: query `paper_market_making_quotes WHERE status='FILLED'`. As of the latest user output, there are two paper fills: `KXNBATEAMTOTAL-26MAY19CLENYK-NYK100 BUY_NO` with `future_edge_30m_cents=14`, and `KXNBATEAMTOTAL-26MAY19CLENYK-CLE91 BUY_NO` with no 30-minute markout yet and negative current mark. Basket final summaries may undercount fills after candidate refresh; fix cumulative basket reporting before relying on final basket summaries.
 
 Folder move request: user wants the repo under `C:\Users\mason\prediction-markets-program\kalshi-fair-value-and-liquidity-edge`. Only do this after all Python writers are stopped. Do not move while orderbook/weather recorders or paper loops are running.
+
+## 2026-05-21 Weather Replay Coverage Fix
+
+Recent `build-recorded-replay --last-days N --recorded-weather-only` smoke runs returned zero markets because recent `orderbook_snapshots_live` rows did not overlap parsed weather-contract tickers. The older weather overlap stopped at `2026-05-16 22:14:00`; recent orderbook recording had been focused on ranked/all-market universes. Weather-only orderbook recording now has an opt-in persistence flag so discovered active weather markets are also saved/parsed for replay eligibility:
+
+```powershell
+python main.py load-markets --max-pages 3 --max-series 25
+python main.py record-orderbooks --weather-only --persist-weather-markets --interval-seconds 30 --max-markets 100 --duration-hours 6
+python main.py weather-replay-coverage --last-days 7
+python main.py build-recorded-replay --last-days 1 --recorded-weather-only --max-markets 25
+```
+
+`--persist-weather-markets` does not broaden weather filters and does not touch trading/readiness gates. It only keeps parsed weather contracts aligned with the weather orderbooks being recorded.
+
+New read-only diagnostics:
+
+```powershell
+python main.py weather-replay-coverage --last-days 7
+python main.py paper-market-making-drilldown --ticker KXPRIMARYTURNOUT-KY4R26-120000 --side BUY_YES
+```
+
+`weather-replay-coverage` explains parsed-weather/orderbook overlap by day and suggests the smallest replay command expected to produce >0 markets. `paper-market-making-drilldown` prints per-quote paper evidence for one ticker/side. Both are research-only and make no order/auth/account calls.

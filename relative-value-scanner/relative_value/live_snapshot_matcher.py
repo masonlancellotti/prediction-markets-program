@@ -173,6 +173,7 @@ def _pair_candidate(
     reasons.extend(f"kalshi_snapshot_{reason}" for reason in snapshot_issues["kalshi"])
     reasons.extend(_market_ineligibility_reasons("polymarket", polymarket))
     reasons.extend(_market_ineligibility_reasons("kalshi", kalshi))
+    reasons.extend(_sports_equivalence_reasons(polymarket, kalshi))
     if _numeric_tokens(poly_question) != _numeric_tokens(kalshi_question):
         reasons.append("ambiguous_wording")
     action = "WATCH" if reasons else "MANUAL_REVIEW"
@@ -221,6 +222,78 @@ def _market_ineligibility_reasons(prefix: str, market: dict[str, Any]) -> list[s
     if market.get("liquidity") is None:
         reasons.append(f"{prefix}_missing_liquidity_units")
     return reasons
+
+
+def _sports_equivalence_reasons(polymarket: dict[str, Any], kalshi: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    poly_text = _sports_guardrail_text(polymarket)
+    kalshi_text = _sports_guardrail_text(kalshi)
+    poly_scope = _sports_competition_scope(poly_text)
+    kalshi_scope = _sports_competition_scope(kalshi_text)
+    if {poly_scope, kalshi_scope} == {"league_championship", "overall_championship"}:
+        reasons.append("sports_competition_scope_mismatch")
+    poly_team = _los_angeles_baseball_team(poly_text)
+    kalshi_team = _los_angeles_baseball_team(kalshi_text)
+    if poly_team is not None and kalshi_team is not None and poly_team != kalshi_team:
+        reasons.append("sports_team_alias_mismatch")
+    return reasons
+
+
+def _sports_guardrail_text(market: dict[str, Any]) -> str:
+    raw = market.get("raw")
+    raw = raw if isinstance(raw, dict) else {}
+    fields = [
+        market.get("question"),
+        market.get("title"),
+        market.get("event_title"),
+        market.get("market_id"),
+        market.get("ticker"),
+        raw.get("event_slug"),
+        raw.get("series_ticker"),
+        raw.get("event_ticker"),
+    ]
+    return " ".join(str(field or "") for field in fields).lower()
+
+
+def _sports_competition_scope(text: str) -> str | None:
+    if _has_any_phrase(
+        text,
+        (
+            "american league championship series",
+            "american league championship",
+            "national league championship series",
+            "national league championship",
+            "league championship series",
+            "league championship",
+            "conference championship",
+            "alcs",
+            "nlcs",
+        ),
+    ):
+        return "league_championship"
+    if _has_any_phrase(text, ("world series", "pro baseball championship")):
+        return "overall_championship"
+    if "championship" in _TOKEN_RE.findall(text):
+        return "overall_championship"
+    return None
+
+
+def _los_angeles_baseball_team(text: str) -> str | None:
+    tokens = set(_TOKEN_RE.findall(text))
+    if _has_any_phrase(text, ("los angeles dodgers",)) or "dodgers" in tokens or "lad" in tokens:
+        return "dodgers"
+    if (
+        _has_any_phrase(text, ("los angeles angels", "los angeles a"))
+        or "angels" in tokens
+        or "laa" in tokens
+    ):
+        return "angels"
+    return None
+
+
+def _has_any_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    normalized = " ".join(_TOKEN_RE.findall(text))
+    return any(phrase in normalized for phrase in phrases)
 
 
 def _snapshot_freshness_reasons(

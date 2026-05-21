@@ -203,6 +203,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     explain_pipeline_parser.add_argument("--summary", type=Path, required=True)
 
+    explain_candidates_parser = subparsers.add_parser(
+        "explain-paper-candidates",
+        help="Print a human-readable explanation of saved paper-candidate ledger rows.",
+    )
+    explain_candidates_parser.add_argument("--ledger", type=Path, required=True)
+    explain_candidates_parser.add_argument("--action", choices=["PAPER_CANDIDATE", "MANUAL_REVIEW", "WATCH"])
+    explain_candidates_parser.add_argument("--limit", type=int)
+
     parser.add_argument("--fixture-dir", type=Path, default=PROJECT_ROOT / "venues" / "fixtures")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
     parser.add_argument("--include-ignore", action="store_true", help="Include ignored pairs in reports.")
@@ -304,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
         return explain_sweep_summary(args.summary)
     if args.command == "explain-pipeline-summary":
         return explain_pipeline_summary(args.summary)
+    if args.command == "explain-paper-candidates":
+        return explain_paper_candidates(args.ledger, action=args.action, limit=args.limit)
 
     scanner = RelativeValueScanner()
     candidates = scanner.scan_from_adapters(build_fixture_adapters(args.fixture_dir), include_ignore=args.include_ignore)
@@ -917,6 +927,96 @@ def explain_pipeline_summary(path: Path) -> int:
     return 0
 
 
+def explain_paper_candidates(path: Path, action: str | None = None, limit: int | None = None) -> int:
+    try:
+        payload = _load_json_report(path, "paper_candidates")
+        if payload.get("schema_version") != 1:
+            raise ValueError("paper_candidates schema_version must be 1")
+        if payload.get("source") != "paper_candidate_evaluator":
+            raise ValueError("paper_candidates source must be paper_candidate_evaluator")
+        ledger = payload.get("ledger")
+        if not isinstance(ledger, list):
+            raise ValueError("paper_candidates ledger must be a list")
+    except ValueError as exc:
+        print(f"explain_paper_candidates_status=FAILED message={exc}")
+        return 1
+
+    rows = [row for row in ledger if isinstance(row, dict)]
+    if action:
+        rows = [row for row in rows if row.get("action") == action]
+    rows = sorted(rows, key=_paper_candidate_sort_key)
+    if limit is not None:
+        rows = rows[: max(limit, 0)]
+
+    print("Paper candidate ledger explanation: research review only; PAPER_CANDIDATE is not a trade signal.")
+    for row in rows:
+        polymarket = row.get("polymarket")
+        kalshi = row.get("kalshi")
+        gap = row.get("gap")
+        markouts = row.get("markouts")
+        polymarket = polymarket if isinstance(polymarket, dict) else {}
+        kalshi = kalshi if isinstance(kalshi, dict) else {}
+        gap = gap if isinstance(gap, dict) else {}
+        print(f"Candidate: {_display_value(row.get('candidate_id'))}")
+        print(f"  action: {_display_value(row.get('action'))}")
+        print(f"  opportunity_class: {_display_value(row.get('opportunity_class'))}")
+        print(
+            "  Polymarket: "
+            f"market_id={_display_value(polymarket.get('market_id'))} "
+            f"question={_display_value(polymarket.get('question'))} "
+            f"venue={_display_value(polymarket.get('venue'))}"
+        )
+        print(
+            "    would_enter: "
+            f"side={_display_value(polymarket.get('would_enter_side'))} "
+            f"price={_display_value(polymarket.get('would_enter_price'))}"
+        )
+        print(
+            "    quote: "
+            f"best_bid={_display_value(polymarket.get('best_bid'))} "
+            f"best_ask={_display_value(polymarket.get('best_ask'))}"
+        )
+        print(
+            "    depth: "
+            f"best_bid={_display_value(polymarket.get('depth_at_best_bid'))} "
+            f"best_ask={_display_value(polymarket.get('depth_at_best_ask'))}"
+        )
+        print(
+            "  Kalshi: "
+            f"ticker={_display_value(kalshi.get('ticker'))} "
+            f"question={_display_value(kalshi.get('question'))} "
+            f"venue={_display_value(kalshi.get('venue'))}"
+        )
+        print(
+            "    would_enter: "
+            f"side={_display_value(kalshi.get('would_enter_side'))} "
+            f"price={_display_value(kalshi.get('would_enter_price'))}"
+        )
+        print(
+            "    quote: "
+            f"best_bid={_display_value(kalshi.get('best_bid'))} "
+            f"best_ask={_display_value(kalshi.get('best_ask'))}"
+        )
+        print(
+            "    depth: "
+            f"best_bid={_display_value(kalshi.get('depth_at_best_bid'))} "
+            f"best_ask={_display_value(kalshi.get('depth_at_best_ask'))}"
+        )
+        print(f"  gross_gap: {_display_value(gap.get('gross_gap'))}")
+        print(f"  polymarket_fee: {_display_value(gap.get('polymarket_fee'))}")
+        print(f"  kalshi_fee: {_display_value(gap.get('kalshi_fee'))}")
+        print(f"  estimated_net_gap: {_display_value(gap.get('estimated_net_gap'))}")
+        print(f"  settlement_delta_seconds: {_display_value(gap.get('settlement_delta_seconds'))}")
+        print(f"  size_unit_warning: {_display_value(gap.get('size_unit_warning'))}")
+        print(f"  missed_fill_reason: {_display_value(row.get('missed_fill_reason'))}")
+        print(f"  ineligibility_reasons: {_format_reason_list(row.get('ineligibility_reasons'))}")
+        print(f"  markouts: {_format_markout_summary(markouts)}")
+        print("")
+
+    print(f"explain_paper_candidates_status=OK candidates_shown={len(rows)} ledger={path}")
+    return 0
+
+
 def _safe_pipeline_label(label: str) -> str:
     normalized = label.strip()
     if not normalized:
@@ -1211,6 +1311,33 @@ def _display_value(value: Any) -> str:
     if value is None:
         return "n/a"
     return str(value)
+
+
+def _paper_candidate_sort_key(row: dict[str, Any]) -> tuple[int, str]:
+    action_order = {"PAPER_CANDIDATE": 0, "MANUAL_REVIEW": 1, "WATCH": 2}
+    return (action_order.get(str(row.get("action")), 99), str(row.get("candidate_id") or ""))
+
+
+def _format_reason_list(value: Any) -> str:
+    if not isinstance(value, list) or not value:
+        return "none"
+    return ",".join(str(reason) for reason in value if reason is not None) or "none"
+
+
+def _format_markout_summary(value: Any) -> str:
+    if not isinstance(value, dict) or not value:
+        return "none"
+    parts: list[str] = []
+    for window, markout in value.items():
+        if not isinstance(markout, dict):
+            parts.append(f"{window}:present")
+            continue
+        status = markout.get("markout_status")
+        if status is None:
+            has_observation = any(item is not None for item in markout.values())
+            status = "present" if has_observation else "placeholder"
+        parts.append(f"{window}:{status}")
+    return ", ".join(parts)
 
 
 def _empty_distance_summary() -> dict[str, Any]:

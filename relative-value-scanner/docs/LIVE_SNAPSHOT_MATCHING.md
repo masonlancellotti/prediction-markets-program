@@ -36,6 +36,8 @@ The matcher can add small precision aids after question/event text matching:
 
 Both bonuses require at least reasonable question overlap first. Shared timing or shared event keywords cannot turn a very weak text match into a candidate, and neither signal proves equivalent settlement rules.
 
+Sports futures require competition-scope equivalence. ALCS, NLCS, league, or conference championship markets are not equivalent to overall championship, World Series, or generic championship markets. City/team aliases are treated conservatively; for example Los Angeles Dodgers/LAD and Los Angeles Angels/LAA/Los Angeles A mismatches are review blockers.
+
 ## Output
 
 The output file is `reports/live_snapshot_pairs.json` by default.
@@ -66,6 +68,8 @@ Reasons include:
 - `kalshi_snapshot_stale_captured_at`
 - `polymarket_closed_inactive_market`
 - `kalshi_closed_inactive_market`
+- `sports_competition_scope_mismatch`
+- `sports_team_alias_mismatch`
 
 These are review blockers or caution flags, not trading signals.
 

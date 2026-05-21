@@ -75,6 +75,16 @@ def _write(path: Path, payload: dict) -> Path:
     return path
 
 
+def _baseball_snapshots(poly_question: str, kalshi_question: str) -> tuple[dict, dict]:
+    poly = _polymarket_snapshot(poly_question)
+    kalshi = _kalshi_snapshot(kalshi_question)
+    poly["normalized_markets"][0]["event_title"] = "MLB futures"
+    poly["normalized_markets"][0]["raw"] = {"event_slug": "mlb-futures"}
+    kalshi["normalized_markets"][0]["event_title"] = "MLB futures"
+    kalshi["normalized_markets"][0]["raw"] = {"series_ticker": "KXMLB"}
+    return poly, kalshi
+
+
 def test_valid_schema_v1_snapshots_load(tmp_path: Path) -> None:
     poly_path = _write(tmp_path / "poly.json", _polymarket_snapshot())
     kalshi_path = _write(tmp_path / "kalshi.json", _kalshi_snapshot())
@@ -145,6 +155,86 @@ def test_event_title_similarity_constrains_otherwise_similar_questions(tmp_path:
     )
 
     assert payload["pair_count"] == 0
+
+
+def test_baseball_alcs_vs_overall_championship_is_ineligible(tmp_path: Path) -> None:
+    poly, kalshi = _baseball_snapshots(
+        "Will Tampa Bay Rays win the 2026 American League Championship Series?",
+        "Will Tampa Bay win the 2026 Pro Baseball Championship?",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    assert "PAPER_CANDIDATE" not in json.dumps(payload)
+    assert "POSSIBLE_ARB" not in json.dumps(payload)
+
+
+def test_baseball_dodgers_vs_los_angeles_a_alias_mismatch_is_ineligible(tmp_path: Path) -> None:
+    poly, kalshi = _baseball_snapshots(
+        "Will Los Angeles Dodgers win the 2026 National League Championship Series?",
+        "Will Los Angeles A win the 2026 Pro Baseball Championship?",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    assert "sports_team_alias_mismatch" in pair["ineligibility_reasons"]
+    assert "PAPER_CANDIDATE" not in json.dumps(payload)
+    assert "POSSIBLE_ARB" not in json.dumps(payload)
+
+
+def test_baseball_nlcs_vs_overall_championship_is_ineligible(tmp_path: Path) -> None:
+    poly, kalshi = _baseball_snapshots(
+        "Will San Diego Padres win the 2026 National League Championship Series?",
+        "Will San Diego win the 2026 Pro Baseball Championship?",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    assert "PAPER_CANDIDATE" not in json.dumps(payload)
+    assert "POSSIBLE_ARB" not in json.dumps(payload)
+
+
+def test_same_team_same_competition_baseball_future_can_match_normally(tmp_path: Path) -> None:
+    poly, kalshi = _baseball_snapshots(
+        "Will San Diego Padres win the 2026 National League Championship Series?",
+        "Will San Diego Padres win the 2026 NLCS?",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "MANUAL_REVIEW"
+    assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
+    assert "sports_team_alias_mismatch" not in pair["ineligibility_reasons"]
 
 
 def test_weak_text_matches_do_not_become_candidate_pairs(tmp_path: Path) -> None:

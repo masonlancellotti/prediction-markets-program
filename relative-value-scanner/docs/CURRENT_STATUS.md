@@ -9,6 +9,8 @@
 - 2026-05-20 Sweep Manifests: added versioned default sweep input at `reports/sweep_manifests/default.json`; it is tracked input, not generated report output.
 - 2026-05-20 Sweep Diagnostics: added `python scan.py explain-sweep-summary --summary <path>` to print read-only explanations of saved multi-universe sweep summaries.
 - 2026-05-20 Pipeline Diagnostics: added `python scan.py explain-pipeline-summary --summary <path>` to print read-only explanations of saved targeted pipeline summaries.
+- 2026-05-20 Ledger Diagnostics: added `python scan.py explain-paper-candidates --ledger <path>` to inspect saved paper-candidate ledger rows from stdout only.
+- 2026-05-20 Sports Guardrails: added matcher reasons for sports competition-scope mismatches and Los Angeles baseball alias mismatches so ALCS/NLCS rows cannot be treated as overall championship equivalents.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

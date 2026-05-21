@@ -29,6 +29,7 @@ from live.scanner import LiveScanner
 from maintenance import ProjectMaintenance
 from research.liquidity_analysis import LiquidityAnalyzer
 from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingConfig
+from research.paper_market_making_drilldown import PaperMarketMakingDrilldownConfig, PaperMarketMakingDrilldownReporter
 from research.paper_market_making_evidence import PaperMarketMakingEvidenceConfig, PaperMarketMakingEvidenceReporter
 from research.paper_market_making_target_review import PaperMarketMakingTargetReviewConfig, PaperMarketMakingTargetReviewer
 from research.market_making_replay import MarketMakingReplayBacktester, MarketMakingReplayConfig
@@ -37,6 +38,7 @@ from research.opportunity_ranker import OpportunityRanker
 from research.signal_validation import SignalValidator
 from research.trading_readiness import TradingReadiness
 from research.weather_edge_miner import WeatherEdgeMiner, WeatherEdgeMiningConfig
+from research.weather_replay_coverage import WeatherReplayCoverageConfig, WeatherReplayCoverageReporter
 
 
 def configure_logging() -> None:
@@ -137,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     recorder.add_argument("--no-batch-orderbooks", action="store_true", help="Disable the multi-orderbook endpoint and fall back to one request per market.")
     recorder.add_argument("--max-trade-pages", type=int, default=1, help="Maximum global /markets/trades pages per all-market recorder cycle.")
     recorder.add_argument("--from-universe", choices=["high", "medium", "recordable", "all"], help="Record tickers from the latest ranked market universe instead of raw /markets pages.")
+    recorder.add_argument("--persist-weather-markets", action="store_true", help="When recording --weather-only, persist discovered weather markets/parsed contracts so recorded orderbooks remain replay-eligible.")
     recorder.add_argument("--once", action="store_true", help="Record one cycle and exit. Mainly useful for smoke tests.")
     station_resolve = sub.add_parser("resolve-active-weather-stations", help="Map active Kalshi weather markets to likely settlement stations")
     station_resolve.add_argument("--max-markets", type=int, default=None)
@@ -331,6 +334,13 @@ def main(argv: list[str] | None = None) -> int:
     paper_mm_target_review.add_argument("--adverse-high-threshold", type=float, default=0.35)
     paper_mm_target_review.add_argument("--adverse-caution-threshold", type=float, default=0.20)
     paper_mm_target_review.add_argument("--no-export", action="store_true")
+    weather_coverage = sub.add_parser("weather-replay-coverage", help="Read-only report of parsed weather ticker overlap with recorded orderbooks")
+    weather_coverage.add_argument("--last-days", type=int, default=7)
+    weather_coverage.add_argument("--no-export", action="store_true")
+    paper_mm_drilldown = sub.add_parser("paper-market-making-drilldown", help="Read-only paper quote/fill drilldown for one market/side")
+    paper_mm_drilldown.add_argument("--ticker", required=True)
+    paper_mm_drilldown.add_argument("--side", choices=["BUY_YES", "BUY_NO"], required=True)
+    paper_mm_drilldown.add_argument("--stale-open-seconds", type=int, default=600)
 
     args = parser.parse_args(argv)
     if args.command == "init-db":
@@ -449,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
             batch_orderbooks=not args.no_batch_orderbooks,
             max_global_trade_pages=args.max_trade_pages,
             universe_priority=args.from_universe,
+            persist_weather_markets=args.persist_weather_markets,
             once=args.once,
         )
         print(result.to_dict())
@@ -562,6 +573,18 @@ def main(argv: list[str] | None = None) -> int:
             adverse_caution_threshold=args.adverse_caution_threshold,
         )
         print(PaperMarketMakingTargetReviewer().build(cfg, persist_exports=not args.no_export).to_text())
+        return 0
+    if args.command == "weather-replay-coverage":
+        cfg = WeatherReplayCoverageConfig(last_days=args.last_days)
+        print(WeatherReplayCoverageReporter().build(cfg, persist_exports=not args.no_export).to_text())
+        return 0
+    if args.command == "paper-market-making-drilldown":
+        cfg = PaperMarketMakingDrilldownConfig(
+            ticker=args.ticker,
+            side=args.side,
+            stale_open_seconds=args.stale_open_seconds,
+        )
+        print(PaperMarketMakingDrilldownReporter().build(cfg).to_text())
         return 0
     if args.command == "project-status":
         print(ProjectMaintenance().project_status().to_text())

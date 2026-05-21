@@ -83,6 +83,7 @@ class LiveOrderbookRecorder:
         batch_orderbooks: bool = True,
         max_global_trade_pages: int = 1,
         universe_priority: str | None = None,
+        persist_weather_markets: bool = False,
         once: bool = False,
     ) -> OrderbookRecordResult:
         interval_seconds = interval_seconds or self.cfg.orderbook_record_interval_seconds
@@ -157,7 +158,12 @@ class LiveOrderbookRecorder:
                     if universe_priority:
                         tickers = self._universe_tickers(universe_priority, max_markets=max_markets)
                     else:
-                        tickers = self._active_tickers(weather_only=weather_only, max_markets=max_markets, max_market_pages=max_market_pages)
+                        tickers = self._active_tickers(
+                            weather_only=weather_only,
+                            max_markets=max_markets,
+                            max_market_pages=max_market_pages,
+                            persist_weather_markets=persist_weather_markets,
+                        )
                     self._update_state(
                         started_at=started_at,
                         last_heartbeat_at=last_heartbeat_at,
@@ -301,7 +307,13 @@ class LiveOrderbookRecorder:
             warnings=warnings[:50],
         )
 
-    def _active_tickers(self, weather_only: bool, max_markets: int, max_market_pages: int | None = None) -> list[str]:
+    def _active_tickers(
+        self,
+        weather_only: bool,
+        max_markets: int,
+        max_market_pages: int | None = None,
+        persist_weather_markets: bool = False,
+    ) -> list[str]:
         now = datetime.now(timezone.utc)
         if self._next_market_refresh_at and now < self._next_market_refresh_at and self._cached_tickers:
             LOGGER.info("using cached market list age=%.1fs failure_backoff_active=true", _age_seconds(now, self._cached_tickers_at))
@@ -321,7 +333,11 @@ class LiveOrderbookRecorder:
                     max_markets=max_markets,
                 )
             else:
-                markets = self.loader.load_active_weather_markets(persist=False, max_pages=1, max_series=max(1, min(max_markets, 25)))
+                markets = self.loader.load_active_weather_markets(
+                    persist=persist_weather_markets,
+                    max_pages=1,
+                    max_series=max(1, min(max_markets, 25)),
+                )
             self._cached_tickers = [str(market.get("ticker")) for market in markets[:max_markets] if market.get("ticker")]
             # Index full market payloads by ticker so each orderbook snapshot
             # can be enriched with last_price/volume/open_interest/liquidity

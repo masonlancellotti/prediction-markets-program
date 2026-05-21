@@ -364,6 +364,18 @@ def test_other_matcher_ineligibility_reason_is_watch() -> None:
     assert row["ineligibility_reasons"] == ["kalshi_closed_inactive_market"]
 
 
+@pytest.mark.parametrize(
+    "reason",
+    ["sports_competition_scope_mismatch", "sports_team_alias_mismatch"],
+)
+def test_sports_equivalence_guardrail_reasons_block_paper_candidate(reason: str) -> None:
+    row = _first(_evaluate(pairs=_pairs_payload([reason]), accept_unit_mismatch=True))
+
+    assert row["action"] == ACTION_WATCH
+    assert row["missed_fill_reason"] == "matcher_ineligibility_reason"
+    assert row["ineligibility_reasons"] == [reason]
+
+
 def test_reference_venue_forces_reference_only_watch() -> None:
     poly = _polymarket_payload(venue="sportsbook_reference")
 
