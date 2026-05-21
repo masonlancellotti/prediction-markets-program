@@ -266,12 +266,34 @@ def _sports_competition_scope(text: str) -> str | None:
             "league championship series",
             "league championship",
             "conference championship",
+            "afc championship",
+            "nfc championship",
+            "conference finals",
+            "division series",
+            "semifinals",
+            "semifinal",
+            "wild card",
+            "wildcard",
             "alcs",
+            "alds",
             "nlcs",
+            "nlds",
         ),
     ):
         return "league_championship"
-    if _has_any_phrase(text, ("world series", "pro baseball championship")):
+    if _has_any_phrase(
+        text,
+        (
+            "world series",
+            "pro baseball championship",
+            "super bowl",
+            "stanley cup",
+            "world cup",
+            "mls cup",
+            "nba finals",
+            "nhl finals",
+        ),
+    ):
         return "overall_championship"
     if "championship" in _TOKEN_RE.findall(text):
         return "overall_championship"

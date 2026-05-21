@@ -85,6 +85,23 @@ def _baseball_snapshots(poly_question: str, kalshi_question: str) -> tuple[dict,
     return poly, kalshi
 
 
+def _sports_snapshots(
+    poly_question: str,
+    kalshi_question: str,
+    *,
+    event_title: str,
+    event_slug: str,
+    series_ticker: str,
+) -> tuple[dict, dict]:
+    poly = _polymarket_snapshot(poly_question)
+    kalshi = _kalshi_snapshot(kalshi_question)
+    poly["normalized_markets"][0]["event_title"] = event_title
+    poly["normalized_markets"][0]["raw"] = {"event_slug": event_slug}
+    kalshi["normalized_markets"][0]["event_title"] = event_title
+    kalshi["normalized_markets"][0]["raw"] = {"series_ticker": series_ticker}
+    return poly, kalshi
+
+
 def test_valid_schema_v1_snapshots_load(tmp_path: Path) -> None:
     poly_path = _write(tmp_path / "poly.json", _polymarket_snapshot())
     kalshi_path = _write(tmp_path / "kalshi.json", _kalshi_snapshot())
@@ -235,6 +252,128 @@ def test_same_team_same_competition_baseball_future_can_match_normally(tmp_path:
     assert pair["action"] == "MANUAL_REVIEW"
     assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
     assert "sports_team_alias_mismatch" not in pair["ineligibility_reasons"]
+
+
+def test_nfl_afc_championship_vs_super_bowl_scope_mismatch(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Kansas City Chiefs win the 2026 AFC Championship?",
+        "Will Kansas City Chiefs win the 2026 Super Bowl?",
+        event_title="NFL futures",
+        event_slug="nfl-futures",
+        series_ticker="KXNFL",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    assert "PAPER_CANDIDATE" not in json.dumps(payload)
+    assert "POSSIBLE_ARB" not in json.dumps(payload)
+
+
+def test_nhl_conference_finals_vs_stanley_cup_scope_mismatch(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Edmonton Oilers win the 2026 NHL Conference Finals?",
+        "Will Edmonton Oilers win the 2026 Stanley Cup?",
+        event_title="NHL futures",
+        event_slug="nhl-futures",
+        series_ticker="KXNHL",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+
+
+def test_nba_conference_finals_vs_nba_finals_scope_mismatch(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Boston Celtics win the 2026 NBA Eastern Conference Finals?",
+        "Will Boston Celtics win the 2026 NBA Finals?",
+        event_title="NBA futures",
+        event_slug="nba-futures",
+        series_ticker="KXNBA",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+
+
+def test_mlb_alds_vs_world_series_scope_mismatch(tmp_path: Path) -> None:
+    poly, kalshi = _baseball_snapshots(
+        "Will New York Yankees win the 2026 ALDS?",
+        "Will New York Yankees win the 2026 World Series?",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+
+
+def test_same_team_super_bowl_future_can_match_normally(tmp_path: Path) -> None:
+    poly, kalshi = _sports_snapshots(
+        "Will Kansas City Chiefs win the 2026 Super Bowl?",
+        "Will Kansas City Chiefs win the 2026 Super Bowl?",
+        event_title="NFL futures",
+        event_slug="nfl-futures",
+        series_ticker="KXNFL",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "MANUAL_REVIEW"
+    assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
+
+
+def test_same_team_alcs_future_can_match_normally(tmp_path: Path) -> None:
+    poly, kalshi = _baseball_snapshots(
+        "Will Tampa Bay Rays win the 2026 ALCS?",
+        "Will Tampa Bay Rays win the 2026 American League Championship Series?",
+    )
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "MANUAL_REVIEW"
+    assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
 
 
 def test_weak_text_matches_do_not_become_candidate_pairs(tmp_path: Path) -> None:

@@ -36,7 +36,7 @@ Venue-specific fields are allowed for audit/debugging, but consumers must rely o
 
 Deadline closeness and shared tokens such as NBA, election, BTC, CPI, or Fed are review aids only. They do not prove settlement-rule equivalence, executable liquidity, fee-adjusted value, or arb.
 
-Sports futures also require competition-scope equivalence. ALCS, NLCS, conference, or league championship markets are not equivalent to overall championship or World Series-style markets, and city/team aliases such as Dodgers/LAD versus Angels/LAA/Los Angeles A are handled conservatively.
+Sports futures also require competition-scope equivalence. ALCS, NLCS, ALDS, NLDS, AFC/NFC championship, conference finals, division series, semifinals, wild card, conference, or league championship markets are not equivalent to overall championship markets such as World Series, Super Bowl, Stanley Cup, World Cup, MLS Cup, NBA Finals, or NHL Finals, and city/team aliases such as Dodgers/LAD versus Angels/LAA/Los Angeles A are handled conservatively.
 
 This path does not call live APIs, does not use `RelativeValueScanner`, does not produce `PAPER`, `PAPER_CANDIDATE`, or `POSSIBLE_ARB`, and does not claim executable liquidity. `liquidity` and `volume` remain venue metadata until units and orderbook depth are explicitly normalized.
 

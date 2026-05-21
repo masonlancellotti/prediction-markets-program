@@ -36,7 +36,7 @@ The matcher can add small precision aids after question/event text matching:
 
 Both bonuses require at least reasonable question overlap first. Shared timing or shared event keywords cannot turn a very weak text match into a candidate, and neither signal proves equivalent settlement rules.
 
-Sports futures require competition-scope equivalence. ALCS, NLCS, league, or conference championship markets are not equivalent to overall championship, World Series, or generic championship markets. City/team aliases are treated conservatively; for example Los Angeles Dodgers/LAD and Los Angeles Angels/LAA/Los Angeles A mismatches are review blockers.
+Sports futures require competition-scope equivalence. ALCS, NLCS, ALDS, NLDS, AFC/NFC championship, conference finals, division series, semifinals, wild card, league, or conference championship markets are not equivalent to overall championship markets such as World Series, Super Bowl, Stanley Cup, World Cup, MLS Cup, NBA Finals, NHL Finals, or generic championship markets. City/team aliases are treated conservatively; for example Los Angeles Dodgers/LAD and Los Angeles Angels/LAA/Los Angeles A mismatches are review blockers.
 
 ## Output
 
