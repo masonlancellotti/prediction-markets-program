@@ -16,6 +16,7 @@
 - 2026-05-21 Relationship Layer: added deterministic `contract_relationship` report objects for matcher pairs and paper-candidate ledger rows; this is review/debugging evidence only, not trade permission.
 - 2026-05-21 Relationship Layer: changed no-evidence fallback to conservative `NEAR_EQUIVALENT`/`same_payoff=false` and made settlement/source/threshold blockers outrank unit warnings.
 - 2026-05-21 Source Taxonomy: added a non-networked source registry and `docs/SOURCE_TAXONOMY.md` so executable, reference-only, signal-only, and planned sources have explicit output policies before broader API expansion.
+- 2026-05-21 Sportsbook References: added read-only `fetch-the-odds-api` reference snapshots with no-vig normalization; sportsbook rows remain non-executable diagnostics only.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

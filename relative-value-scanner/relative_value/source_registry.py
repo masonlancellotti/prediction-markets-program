@@ -120,9 +120,9 @@ SOURCE_REGISTRY: dict[str, SourceEntry] = {
         source_id="the_odds_api",
         display_name="The Odds API / Sportsbooks",
         source_type=SourceType.REFERENCE_ONLY,
-        implementation_status=ImplementationStatus.FIXTURE_ONLY,
+        implementation_status=ImplementationStatus.IMPLEMENTED_READ_ONLY,
         allowed_effects=_REFERENCE_EFFECTS,
-        notes="Sportsbook odds are reference prices only and cannot create tradable candidates.",
+        notes="Read-only sportsbook reference snapshots exist; odds are reference prices only and cannot create tradable candidates.",
     ),
     "sportsbooks": SourceEntry(
         source_id="sportsbooks",

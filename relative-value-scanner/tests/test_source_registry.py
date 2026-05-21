@@ -84,4 +84,5 @@ def test_source_registry_report_serializes_policy_fields() -> None:
     assert kalshi["source_type"] == "EXECUTABLE_VENUE"
     assert kalshi["can_create_candidate_pair"] is True
     assert odds["source_type"] == "REFERENCE_ONLY"
+    assert odds["implementation_status"] == "IMPLEMENTED_READ_ONLY"
     assert odds["can_create_candidate_pair"] is False

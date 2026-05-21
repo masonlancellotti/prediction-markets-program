@@ -2,7 +2,7 @@
 
 ## Root Files
 
-- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `match-live-snapshots`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
+- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `match-live-snapshots`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
 - `README.md`: quick-start and action ladder.
 - `requirements.txt`: test dependency list.
 - `.env.example`: documents that this scaffold is offline/read-only.
@@ -32,7 +32,7 @@
 - `kalshi.py`: Kalshi fixture adapter plus public read-only market discovery client, targeted `series_ticker`/`event_ticker`/cursor controls, live/useful filters, skip counters, and schema-versioned snapshot normalizer.
 - `polymarket.py`: Polymarket fixture adapter plus public read-only Gamma discovery client, targeted `tag_slug`/`tag_id` controls, market filters, overlapping skip counters, and schema-versioned snapshot normalizer with `outcome_yes_token_price` plus Gamma `best_bid`/`best_ask` fields.
 - `orderbooks.py`: public read-only Kalshi and Polymarket orderbook clients plus depth metric parsers.
-- `the_odds_api.py`: sportsbook fixture adapter using no-vig conversion.
+- `the_odds_api.py`: sportsbook fixture adapter plus read-only The Odds API reference snapshot client and no-vig normalization.
 - `fixtures/`: offline sample data.
 
 ## `tests/`
@@ -50,6 +50,7 @@
 - `test_paper_candidate_evaluator.py`: local JSON evaluator tests for gates, fee subtraction, unit mismatch cap, ledger shape, CLI success/failure, and no-midpoint behavior.
 - `test_markout_replay.py`: local JSON markout replay tests for window filling, no-midpoint logic, stale/missing statuses, fee reuse, no disallowed actions, input non-mutation, and CLI wiring.
 - `test_source_registry.py`: source taxonomy tests proving executable, reference-only, signal-only, planned, and unknown-source behavior.
+- `test_the_odds_api_live.py`: mocked The Odds API reference snapshot tests; no real API key or network required.
 
 ## `reports/`
 
@@ -64,6 +65,7 @@ Generated scan outputs:
 - `polymarket_orderbook_enriched_snapshot.json`
 - `paper_candidates_ledger.json`
 - `paper_candidates_ledger_marked.json`
+- `the_odds_api_reference_snapshot.json`
 
 These report files are generated artifacts and are ignored by `.gitignore`.
 

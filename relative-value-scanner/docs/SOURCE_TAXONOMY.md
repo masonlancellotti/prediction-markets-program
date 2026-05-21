@@ -21,7 +21,7 @@ This taxonomy is infrastructure only. It does not add API fetchers, authenticati
 | ForecastEx / IBKR | `EXECUTABLE_VENUE` | Planned, not implemented | No candidate-pair impact yet because auth/account/instrument work is not in scope. |
 | Manifold | `SIGNAL_ONLY` | Planned, not implemented | Discovery and semantic clustering only. |
 | Metaculus | `SIGNAL_ONLY` | Planned, not implemented | Discovery and semantic clustering only. |
-| The Odds API / sportsbooks | `REFERENCE_ONLY` | Fixture/reference only | `WATCH` diagnostics only. |
+| The Odds API / sportsbooks | `REFERENCE_ONLY` | Implemented read-only reference snapshots | `WATCH` diagnostics only. |
 
 ## Output Policy
 

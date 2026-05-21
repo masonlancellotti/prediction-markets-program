@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -28,7 +29,7 @@ from venues.polymarket import (
     PolymarketMarketFilterOptions,
     write_polymarket_market_snapshot,
 )
-from venues.the_odds_api import FixtureTheOddsApiAdapter
+from venues.the_odds_api import FixtureTheOddsApiAdapter, TheOddsApiReadOnlyClient, write_the_odds_api_reference_snapshot
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -89,6 +90,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Include markets with parseable close times before the fetch timestamp.",
     )
+
+    odds_parser = subparsers.add_parser(
+        "fetch-the-odds-api",
+        help="Fetch a read-only sportsbook reference odds snapshot from The Odds API.",
+    )
+    odds_parser.add_argument("--sport-key", required=True, help="The Odds API sport key, for example basketball_nba.")
+    odds_parser.add_argument("--regions", default="us")
+    odds_parser.add_argument("--markets", default="h2h,spreads,totals")
+    odds_parser.add_argument("--odds-format", default="american")
+    odds_parser.add_argument("--api-key", help="The Odds API key. Prefer --api-key-env for local use.")
+    odds_parser.add_argument("--api-key-env", default="THE_ODDS_API_KEY")
+    odds_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    odds_parser.add_argument("--stale-after-seconds", type=int, default=900)
+    odds_parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "reports" / "the_odds_api_reference_snapshot.json")
 
     match_parser = subparsers.add_parser(
         "match-live-snapshots",
@@ -238,6 +253,18 @@ def main(argv: list[str] | None = None) -> int:
             max_pages=args.max_pages,
             include_closed=args.include_closed,
             include_past_close_time=args.include_past_close_time,
+        )
+    if args.command == "fetch-the-odds-api":
+        return fetch_the_odds_api(
+            sport_key=args.sport_key,
+            regions=args.regions,
+            markets=args.markets,
+            odds_format=args.odds_format,
+            api_key=args.api_key,
+            api_key_env=args.api_key_env,
+            timeout_seconds=args.timeout_seconds,
+            stale_after_seconds=args.stale_after_seconds,
+            output=args.output,
         )
     if args.command == "match-live-snapshots":
         return match_live_snapshots(
@@ -409,6 +436,48 @@ def fetch_kalshi(
         f"skipped_inactive={snapshot['skipped_inactive_count']} "
         f"skipped_past_close_time={snapshot['skipped_past_close_time_count']} "
         f"(skip counters can overlap) output={output}"
+    )
+    return 0
+
+
+def fetch_the_odds_api(
+    *,
+    sport_key: str,
+    regions: str,
+    markets: str,
+    odds_format: str,
+    api_key: str | None,
+    api_key_env: str,
+    timeout_seconds: float,
+    stale_after_seconds: int,
+    output: Path,
+) -> int:
+    resolved_api_key = api_key or os.environ.get(api_key_env)
+    if not resolved_api_key:
+        print(f"the_odds_api_fetch_status=FAILED message=missing API key; pass --api-key or set {api_key_env}")
+        return 1
+    try:
+        snapshot = TheOddsApiReadOnlyClient(
+            api_key=resolved_api_key,
+            timeout_seconds=timeout_seconds,
+        ).fetch_reference_snapshot(
+            sport_key=sport_key,
+            regions=regions,
+            markets=markets,
+            odds_format=odds_format,
+            stale_after_seconds=stale_after_seconds,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"the_odds_api_fetch_status=FAILED message={exc}")
+        return 1
+
+    write_the_odds_api_reference_snapshot(snapshot, output)
+    print(
+        "the_odds_api_fetch_status=OK "
+        f"record_count={snapshot['record_count']} "
+        f"normalized={snapshot['normalized_count']} "
+        f"skipped={snapshot['skipped_count']} "
+        f"output={output}"
     )
     return 0
 

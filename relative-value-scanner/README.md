@@ -46,6 +46,16 @@ Optional `--series-ticker` and `--event-ticker` filters are passed through to th
 
 The snapshot keeps Kalshi market discovery fields such as YES `best_bid`/`best_ask`, per-outcome `outcome_yes_token_price`, volume, liquidity dollars, close time, and raw payload. These fields are not orderbook-depth proof and are not fed into scanner scoring yet. The command does not authenticate, call order/account endpoints, or emit `POSSIBLE_ARB`.
 
+## Live Read-Only Sportsbook Reference Discovery
+
+```powershell
+python scan.py fetch-the-odds-api --sport-key basketball_nba --markets h2h,spreads,totals --output reports\the_odds_api_reference_snapshot.json
+```
+
+This writes a `schema_version=1` reference-only snapshot from The Odds API. The API key is read from `THE_ODDS_API_KEY` by default or from `--api-key`; tests use mocked HTTP and do not require a real key. Rows include event title, bookmaker, market type, American odds, implied probability, no-vig probability when calculable, retrieval/stale timestamps, and provenance metadata.
+
+The Odds API and sportsbook rows are `REFERENCE_ONLY`, `is_executable=false`, and `usable_for_trade_decision=false`. No-vig odds are diagnostics, not guaranteed edge. They can inform `WATCH`/diagnostics only and cannot create `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
+
 ## Snapshot Schema V1
 
 Both live discovery commands write `schema_version: 1` snapshots. Common top-level fields are `schema_version`, `source`, `captured_at`, `event_count` when available, `market_count`, `normalized_count`, and `normalized_markets`.
