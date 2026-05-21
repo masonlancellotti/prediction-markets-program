@@ -197,6 +197,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     explain_sweep_parser.add_argument("--summary", type=Path, required=True)
 
+    explain_pipeline_parser = subparsers.add_parser(
+        "explain-pipeline-summary",
+        help="Print a human-readable explanation of a saved targeted pipeline summary.",
+    )
+    explain_pipeline_parser.add_argument("--summary", type=Path, required=True)
+
     parser.add_argument("--fixture-dir", type=Path, default=PROJECT_ROOT / "venues" / "fixtures")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
     parser.add_argument("--include-ignore", action="store_true", help="Include ignored pairs in reports.")
@@ -296,6 +302,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "explain-sweep-summary":
         return explain_sweep_summary(args.summary)
+    if args.command == "explain-pipeline-summary":
+        return explain_pipeline_summary(args.summary)
 
     scanner = RelativeValueScanner()
     candidates = scanner.scan_from_adapters(build_fixture_adapters(args.fixture_dir), include_ignore=args.include_ignore)
@@ -852,6 +860,60 @@ def explain_sweep_summary(path: Path) -> int:
         f"failed={int(payload.get('failed_count') or 0)}"
     )
     print(f"explain_sweep_summary_status=OK summary={path}")
+    return 0
+
+
+def explain_pipeline_summary(path: Path) -> int:
+    try:
+        payload = _load_json_report(path, "pipeline_summary")
+        if payload.get("schema_version") != 1:
+            raise ValueError("pipeline_summary schema_version must be 1")
+        if payload.get("source") != "targeted_pipeline_runner":
+            raise ValueError("pipeline_summary source must be targeted_pipeline_runner")
+        summary = payload.get("summary")
+        if not isinstance(summary, dict):
+            raise ValueError("pipeline_summary summary must be an object")
+    except ValueError as exc:
+        print(f"explain_pipeline_summary_status=FAILED message={exc}")
+        return 1
+
+    counts = summary.get("evaluator_counts")
+    counts = counts if isinstance(counts, dict) else {}
+    gap_distribution = summary.get("gap_distribution")
+    gap_distribution = gap_distribution if isinstance(gap_distribution, dict) else _empty_gap_distribution()
+    near_miss_summary = summary.get("near_miss_summary")
+    near_miss_summary = near_miss_summary if isinstance(near_miss_summary, dict) else _empty_near_miss_summary()
+    print(f"Pipeline: {_display_value(payload.get('label'))}")
+    print(f"  polymarket_normalized_count: {_display_value(summary.get('polymarket_normalized_count'))}")
+    print(f"  kalshi_normalized_count: {_display_value(summary.get('kalshi_normalized_count'))}")
+    print(
+        "  polymarket_enriched: "
+        f"{_display_value(summary.get('polymarket_enriched_count'))}/"
+        f"{_display_value(summary.get('polymarket_enrichment_market_count'))}"
+    )
+    print(
+        "  kalshi_enriched: "
+        f"{_display_value(summary.get('kalshi_enriched_count'))}/"
+        f"{_display_value(summary.get('kalshi_enrichment_market_count'))}"
+    )
+    print(f"  pair_count: {_display_value(summary.get('pair_count'))}")
+    print(
+        "  evaluator_counts: "
+        f"WATCH={counts.get('WATCH', 0)} "
+        f"MANUAL_REVIEW={counts.get('MANUAL_REVIEW', 0)} "
+        f"PAPER_CANDIDATE={counts.get('PAPER_CANDIDATE', 0)}"
+    )
+    print(f"  Gap > 0 total: {_gross_gap_positive_count(gap_distribution)}")
+    print(f"  Net > 0: {gap_distribution.get('estimated_net_gap_gt_0_count', 0)}")
+    print(f"  near_miss.net_gap.median_distance: {_near_miss_median(near_miss_summary, 'net_gap')}")
+    print(f"  near_miss.settlement_delta.median_distance: {_near_miss_median(near_miss_summary, 'settlement_delta')}")
+    print(
+        "  near_miss.settlement_delta_near_pass.median_distance: "
+        f"{_near_miss_median(near_miss_summary, 'settlement_delta_near_pass')}"
+    )
+    print(f"  top_rejection_reasons: {_format_top_reasons(summary.get('top_rejection_reasons') or [])}")
+    print(f"  later_markout_command: {_display_value(payload.get('later_markout_command'))}")
+    print(f"explain_pipeline_summary_status=OK summary={path}")
     return 0
 
 

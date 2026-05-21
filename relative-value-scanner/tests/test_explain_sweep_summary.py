@@ -133,6 +133,28 @@ def test_explain_sweep_summary_rejects_wrong_schema_version(tmp_path: Path, caps
     assert "explain_sweep_summary_status=FAILED message=sweep_summary schema_version must be 1" in capsys.readouterr().out
 
 
+def test_explain_sweep_summary_rejects_wrong_source(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "wrong_source_sweep_summary.json"
+    payload = _summary_payload()
+    payload["source"] = "targeted_pipeline_runner"
+    _write(path, payload)
+
+    result = scan.main(["explain-sweep-summary", "--summary", str(path)])
+
+    assert result == 1
+    assert "source must be multi_universe_sweep" in capsys.readouterr().out
+
+
+def test_explain_sweep_summary_rejects_non_object_json(tmp_path: Path, capsys) -> None:
+    path = tmp_path / "bad_sweep_summary.json"
+    _write(path, [])
+
+    result = scan.main(["explain-sweep-summary", "--summary", str(path)])
+
+    assert result == 1
+    assert "JSON must be an object" in capsys.readouterr().out
+
+
 def test_explain_sweep_summary_missing_file_returns_clear_error(tmp_path: Path, capsys) -> None:
     path = tmp_path / "missing_sweep_summary.json"
 
