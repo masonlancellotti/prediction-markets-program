@@ -38,6 +38,8 @@ Deadline closeness and shared tokens such as NBA, election, BTC, CPI, or Fed are
 
 Sports futures also require competition-scope equivalence. ALCS, NLCS, ALDS, NLDS, AFC/NFC championship, conference final(s), division series, semifinal, wild card, conference, league, Champions League group stage, Champions League round of 16, or Copa America group stage markets are not equivalent to overall championship markets such as World Series, Super Bowl, Stanley Cup, World Cup, MLS Cup, NBA Finals, NHL Finals, Premier League title, La Liga title, Bundesliga title, Serie A title, Champions League title, Copa America, or Euro Championship, and city/team aliases such as Dodgers/LAD versus Angels/LAA/Los Angeles A are handled conservatively.
 
+Matched pairs include a deterministic `contract_relationship` block for safer review. It can label obvious non-equivalence such as tournament-stage mismatch, team-alias mismatch, ambiguous wording, and settlement-window mismatch, but it does not prove settlement equivalence or authorize any candidate. No known mismatch falls back to `NEAR_EQUIVALENT`, not affirmative same-payoff equivalence. LLMs may later assist this classification, but they cannot approve candidates alone.
+
 This path does not call live APIs, does not use `RelativeValueScanner`, does not produce `PAPER`, `PAPER_CANDIDATE`, or `POSSIBLE_ARB`, and does not claim executable liquidity. `liquidity` and `volume` remain venue metadata until units and orderbook depth are explicitly normalized.
 
 ## Read-Only Orderbook Enrichment
@@ -57,6 +59,8 @@ The evaluator uses bid/ask only and never midpoint. It requires enriched orderbo
 Fee models are venue-specific in this path: Polymarket currently uses no-fee comparison as an explicit placeholder, while Kalshi uses the conservative tiered estimate. This prevents accidentally applying Kalshi's fee model to the Polymarket leg.
 
 Polymarket shares and Kalshi contracts are not unit-normalized. The ledger always records `polymarket_shares_vs_kalshi_contracts_not_normalized`; without `--accept-unit-mismatch`, this caps otherwise clean rows at `MANUAL_REVIEW`.
+
+Paper ledger `contract_relationship` fields are research/debugging evidence only. The evaluator re-classifies from matcher relationship-level blocking reasons and adds the unit normalization warning only where relevant; it does not copy matcher confidence/source through. Sportsbook and reference odds are not executable prices, and a positive semantic match or relationship label is never a profit, fill, or live-trading claim.
 
 Markout windows are placeholders only. Null `t_plus_30s`, `t_plus_5m`, `t_plus_30m`, and `t_plus_2h` fields are not evidence. A future saved-snapshot markout pass must fill them before any paper result is interpreted.
 

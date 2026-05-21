@@ -5,6 +5,14 @@ from pathlib import Path
 
 import pytest
 import scan
+from relative_value.contract_relationship import (
+    RELATIONSHIP_DIFFERENT_TIME_WINDOW,
+    RELATIONSHIP_DIFFERENT_SETTLEMENT_SOURCE,
+    RELATIONSHIP_DIFFERENT_THRESHOLD,
+    RELATIONSHIP_DIFFERENT_UNIT,
+    RELATIONSHIP_NEAR_EQUIVALENT,
+    classify_contract_relationship,
+)
 from relative_value.paper_candidate_evaluator import (
     ACTION_MANUAL_REVIEW,
     ACTION_PAPER_CANDIDATE,
@@ -144,6 +152,10 @@ def test_clean_positive_gap_caps_at_manual_review_without_unit_ack() -> None:
     assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
     assert row["gap"]["size_unit_warning"] == UNIT_WARNING
     assert row["missed_fill_reason"] == "unit_mismatch_not_accepted"
+    relationship = row["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_DIFFERENT_UNIT
+    assert relationship["same_payoff"] is False
+    assert UNIT_WARNING in relationship["blocking_reasons"]
 
 
 def test_default_fees_are_split_by_venue() -> None:
@@ -153,6 +165,21 @@ def test_default_fees_are_split_by_venue() -> None:
     assert row["gap"]["kalshi_fee"] > 0.0
 
 
+@pytest.mark.parametrize(
+    ("reason", "expected_relationship"),
+    [
+        ("different_settlement_source", RELATIONSHIP_DIFFERENT_SETTLEMENT_SOURCE),
+        ("different_threshold", RELATIONSHIP_DIFFERENT_THRESHOLD),
+    ],
+)
+def test_specific_relationship_reasons_outrank_unit_warning(reason: str, expected_relationship: str) -> None:
+    relationship = classify_contract_relationship([reason], unit_mismatch_reason=UNIT_WARNING).to_report_dict()
+
+    assert relationship["relationship"] == expected_relationship
+    assert reason in relationship["blocking_reasons"]
+    assert UNIT_WARNING in relationship["blocking_reasons"]
+
+
 def test_accept_unit_mismatch_allows_paper_candidate_but_never_paper_or_arb() -> None:
     payload = _evaluate(accept_unit_mismatch=True)
     row = _first(payload)
@@ -160,6 +187,8 @@ def test_accept_unit_mismatch_allows_paper_candidate_but_never_paper_or_arb() ->
     assert row["action"] == ACTION_PAPER_CANDIDATE
     assert row["opportunity_class"] == "strict_cross_venue_equivalent"
     assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
+    assert row["contract_relationship"]["relationship"] == RELATIONSHIP_DIFFERENT_UNIT
+    assert UNIT_WARNING in row["contract_relationship"]["blocking_reasons"]
     assert payload["counts_by_action"] == {
         ACTION_WATCH: 0,
         ACTION_MANUAL_REVIEW: 0,
@@ -190,6 +219,11 @@ def test_missing_enriched_join_is_watch() -> None:
     assert row["action"] == ACTION_WATCH
     assert row["opportunity_class"] == "ineligible"
     assert row["ineligibility_reasons"] == ["missing_kalshi_enriched_market"]
+    relationship = row["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_NEAR_EQUIVALENT
+    assert relationship["same_payoff"] is False
+    assert relationship["manual_review_required"] is True
+    assert relationship["blocking_reasons"] == []
 
 
 def test_unenriched_orderbook_is_watch() -> None:
@@ -290,6 +324,11 @@ def test_settlement_delta_over_limit_is_watch() -> None:
     assert row["action"] == ACTION_WATCH
     assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
     assert row["gap"]["settlement_delta_seconds"] == pytest.approx(7201.0)
+    relationship = row["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_DIFFERENT_TIME_WINDOW
+    assert relationship["same_payoff"] is False
+    assert "settlement_delta_exceeds_limit" in relationship["blocking_reasons"]
+    assert UNIT_WARNING in relationship["blocking_reasons"]
 
 
 def test_settlement_delta_seconds_is_null_when_settlement_check_is_skipped() -> None:

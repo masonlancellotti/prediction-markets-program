@@ -64,6 +64,8 @@ This reads saved schema-v1 snapshot files only. It emits tentative `WATCH` or `M
 
 The matcher uses strict question/event text overlap, then may add small saved-file-only aids for close settlement times and shared event/league keywords such as NBA, election, BTC, CPI, or Fed. These aids help surface review candidates; they are not settlement-rule proof and cannot produce trading actions.
 
+Each matched pair now includes a deterministic `contract_relationship` block. It classifies relationship evidence such as sports scope mismatch, team-alias mismatch, ambiguous wording, and settlement-window mismatch as review metadata only. Absence of a known mismatch is reported conservatively as `NEAR_EQUIVALENT` with `same_payoff=false`; semantic similarity is not settlement equivalence, and a future LLM reviewer may assist classification but cannot approve candidates by itself.
+
 ## Read-Only Orderbook Enrichment
 
 ```powershell
@@ -84,6 +86,8 @@ python scan.py evaluate-paper-candidates --pairs reports\live_snapshot_pairs.jso
 This reads saved JSON only and emits a manual paper-candidate ledger with actions limited to `WATCH`, `MANUAL_REVIEW`, and `PAPER_CANDIDATE`. It never emits `PAPER` or `POSSIBLE_ARB`, never uses midpoint prices, never fetches live data, and always records the unresolved Polymarket-shares versus Kalshi-contracts unit warning.
 
 Use `--accept-unit-mismatch` only to allow otherwise clean positive bid/ask gaps to reach `PAPER_CANDIDATE`; without it, the unit mismatch caps action at `MANUAL_REVIEW`. The CLI default freshness window is 1800 seconds for saved-file workflows. Polymarket fees default to no-fee comparison, while Kalshi uses the conservative tiered estimate. Markout fields are null placeholders for a future saved-snapshot replay pass.
+
+Paper ledger rows also carry `contract_relationship` for debugging and future gating. The evaluator re-classifies from relationship-level matcher blocking reasons plus the unresolved Polymarket-shares versus Kalshi-contracts warning when that warning is relevant; it does not copy matcher confidence/source through. Sportsbook or reference odds remain non-executable reference prices.
 
 ## Saved-File Markout Replay
 

@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from relative_value.contract_relationship import classify_contract_relationship
+
 
 SUPPORTED_SCHEMA_VERSION = 1
 DEFAULT_MAX_SNAPSHOT_AGE_HOURS = 24.0
@@ -214,9 +216,12 @@ def _pair_candidate(
     reasons.extend(f"kalshi_snapshot_{reason}" for reason in snapshot_issues["kalshi"])
     reasons.extend(_market_ineligibility_reasons("polymarket", polymarket))
     reasons.extend(_market_ineligibility_reasons("kalshi", kalshi))
-    reasons.extend(_sports_equivalence_reasons(polymarket, kalshi))
+    relationship_reasons = _sports_equivalence_reasons(polymarket, kalshi)
+    reasons.extend(relationship_reasons)
     if _numeric_tokens(poly_question) != _numeric_tokens(kalshi_question):
+        relationship_reasons.append("ambiguous_wording")
         reasons.append("ambiguous_wording")
+    contract_relationship = classify_contract_relationship(relationship_reasons)
     action = "WATCH" if reasons else "MANUAL_REVIEW"
     return {
         "action": action,
@@ -244,6 +249,7 @@ def _pair_candidate(
             "kalshi_close_time": kalshi.get("close_time") or kalshi.get("end_date"),
         },
         "ineligibility_reasons": sorted(set(reasons)),
+        "contract_relationship": contract_relationship.to_report_dict(),
         "notes": "Manual review only. This prototype makes no arb, profit, executable-liquidity, or trading claim.",
     }
 

@@ -53,6 +53,12 @@ Promotion is deterministic and conservative:
 - per-venue, per-leg fee estimates are subtracted
 - unit mismatch warning is always emitted
 
+## Contract Relationship
+
+Ledger rows include a deterministic `contract_relationship` object re-classified from matcher relationship-level blocking reasons and, where relevant, the unresolved Polymarket-shares versus Kalshi-contracts unit warning. The evaluator does not copy matcher confidence/source through. It is designed so future gates can require `relationship == EQUIVALENT`, `same_payoff == true`, and no `blocking_reasons`, but today it is observability only and does not change evaluator thresholds or action promotion.
+
+This relationship layer is not trade permission. Semantic similarity is not settlement equivalence, sportsbook/reference odds are not executable prices, and a future LLM reviewer may help classify contracts but cannot approve candidates by itself.
+
 ## Markout Replay
 
 The evaluator initializes `t_plus_30s`, `t_plus_5m`, `t_plus_30m`, and `t_plus_2h` markouts as null placeholders. Use `replay-paper-candidate-markouts` to fill those windows from later saved enriched snapshots:

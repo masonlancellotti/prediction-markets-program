@@ -38,6 +38,8 @@ Both bonuses require at least reasonable question overlap first. Shared timing o
 
 Sports futures require competition-scope equivalence. ALCS, NLCS, ALDS, NLDS, AFC/NFC championship, conference final(s), division series, semifinal, wild card, league, conference, Champions League group stage, Champions League round of 16, or Copa America group stage markets are not equivalent to overall championship markets such as World Series, Super Bowl, Stanley Cup, World Cup, MLS Cup, NBA Finals, NHL Finals, Premier League title, La Liga title, Bundesliga title, Serie A title, Champions League title, Copa America, Euro Championship, or generic championship markets. City/team aliases are treated conservatively; for example Los Angeles Dodgers/LAD and Los Angeles Angels/LAA/Los Angeles A mismatches are review blockers.
 
+Each emitted pair includes a deterministic `contract_relationship` object with `relationship`, `same_payoff`, `confidence`, `blocking_reasons`, `manual_review_required`, and `source=deterministic_rules`. Absence of a known mismatch is not treated as proof; it remains `NEAR_EQUIVALENT` with `same_payoff=false`. This is observability for review and future gating only: relationship classification is not trade permission, semantic similarity is not settlement equivalence, and a future LLM can assist classification but cannot approve candidates alone.
+
 ## Output
 
 The output file is `reports/live_snapshot_pairs.json` by default.
@@ -49,6 +51,7 @@ Each pair includes:
 - Similarity score.
 - Matched fields used for review, including `question_similarity`, `event_title_similarity`, `settlement_time_delta_seconds`, `settlement_time_bonus`, `settlement_time_warning`, `shared_event_tokens`, `event_keyword_bonus`, and `final_similarity_score`.
 - Ineligibility reasons.
+- Contract relationship classification for review/debugging.
 - `action` limited to `WATCH` or `MANUAL_REVIEW`.
 
 The matcher never emits `PAPER`, `PAPER_CANDIDATE`, or `POSSIBLE_ARB`.

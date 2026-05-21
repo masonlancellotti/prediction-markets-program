@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from relative_value._numeric import float_or_none
+from relative_value.contract_relationship import classify_contract_relationship, report_blocking_reasons
 from relative_value.fees import FeeModel, KalshiTieredFeeModel, NoFeeModel
 
 
@@ -375,10 +376,43 @@ def _ledger_row(
             "size_unit_warning": UNIT_WARNING,
         },
         "ineligibility_reasons": sorted(set(reasons)),
+        "contract_relationship": _contract_relationship_row(pair, reasons, missed_fill_reason),
         "missed_fill_reason": missed_fill_reason,
         "markouts": _empty_markouts(),
         "disclaimer": DISCLAIMER,
     }
+
+
+def _contract_relationship_row(pair: dict[str, Any], reasons: list[str], missed_fill_reason: str | None) -> dict[str, Any]:
+    relationship_reasons = report_blocking_reasons(pair.get("contract_relationship"))
+    relationship_reasons.extend(reasons)
+    unit_mismatch_reason = UNIT_WARNING if _unit_warning_is_relationship_relevant(missed_fill_reason, relationship_reasons) else None
+    return classify_contract_relationship(
+        relationship_reasons,
+        unit_mismatch_reason=unit_mismatch_reason,
+    ).to_report_dict()
+
+
+def _unit_warning_is_relationship_relevant(missed_fill_reason: str | None, relationship_reasons: list[str]) -> bool:
+    if missed_fill_reason is None:
+        return True
+    if missed_fill_reason in {
+        "unit_mismatch_not_accepted",
+        "settlement_delta_exceeds_limit",
+        "settlement_time_missing_or_naive",
+        "ambiguous_wording",
+        "matcher_ineligibility_reason",
+    }:
+        return True
+    return bool(
+        {
+            "sports_competition_scope_mismatch",
+            "sports_team_alias_mismatch",
+            "different_threshold",
+            "different_settlement_source",
+        }
+        & set(relationship_reasons)
+    )
 
 
 def _venue_row(venue: str, market: dict[str, Any], enrichment: dict[str, Any], direction: dict[str, Any]) -> dict[str, Any]:

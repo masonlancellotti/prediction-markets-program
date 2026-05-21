@@ -15,6 +15,7 @@
 - `normalize.py`: text and datetime normalization helpers.
 - `reference_odds.py`: American odds and no-vig sportsbook conversion.
 - `fees.py`: fee model interface plus flat, Kalshi-tiered, and no-fee implementations.
+- `contract_relationship.py`: deterministic contract-relationship classification constants and report shape for review/debugging only.
 - `matching.py`: match confidence and settlement mismatch risk.
 - `scoring.py`: action ladder and POSSIBLE_ARB hard gates.
 - `scanner.py`: deterministic pairwise scanner and default suppression of redundant opposite-side sportsbook reference rows.

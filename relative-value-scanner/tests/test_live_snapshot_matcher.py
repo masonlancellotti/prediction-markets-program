@@ -3,6 +3,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import scan
+from relative_value.contract_relationship import (
+    RELATIONSHIP_AMBIGUOUS,
+    RELATIONSHIP_MUTUALLY_EXCLUSIVE,
+    RELATIONSHIP_NEAR_EQUIVALENT,
+    RELATIONSHIP_SOURCE_DETERMINISTIC_RULES,
+    RELATIONSHIP_SUBSET,
+)
 from relative_value.live_snapshot_matcher import _event_keyword_tokens, load_snapshot, match_snapshot_files
 
 
@@ -144,6 +151,12 @@ def test_closed_inactive_markets_are_marked_ineligible(tmp_path: Path) -> None:
     assert pair["action"] == "WATCH"
     assert "polymarket_closed_inactive_market" in pair["ineligibility_reasons"]
     assert "kalshi_closed_inactive_market" in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_NEAR_EQUIVALENT
+    assert relationship["same_payoff"] is False
+    assert relationship["manual_review_required"] is True
+    assert relationship["confidence"] <= 0.5
+    assert relationship["blocking_reasons"] == []
 
 
 def test_clean_pair_with_liquidity_can_reach_manual_review(tmp_path: Path) -> None:
@@ -157,6 +170,11 @@ def test_clean_pair_with_liquidity_can_reach_manual_review(tmp_path: Path) -> No
     pair = payload["pairs"][0]
     assert pair["action"] == "MANUAL_REVIEW"
     assert pair["ineligibility_reasons"] == []
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_NEAR_EQUIVALENT
+    assert relationship["same_payoff"] is False
+    assert relationship["manual_review_required"] is True
+    assert relationship["confidence"] <= 0.5
 
 
 def test_event_title_similarity_constrains_otherwise_similar_questions(tmp_path: Path) -> None:
@@ -190,6 +208,12 @@ def test_baseball_alcs_vs_overall_championship_is_ineligible(tmp_path: Path) -> 
     pair = payload["pairs"][0]
     assert pair["action"] == "WATCH"
     assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_SUBSET
+    assert relationship["same_payoff"] is False
+    assert relationship["source"] == RELATIONSHIP_SOURCE_DETERMINISTIC_RULES
+    assert "sports_competition_scope_mismatch" in relationship["blocking_reasons"]
+    json.dumps(relationship)
     assert "PAPER_CANDIDATE" not in json.dumps(payload)
     assert "POSSIBLE_ARB" not in json.dumps(payload)
 
@@ -210,7 +234,12 @@ def test_baseball_dodgers_vs_los_angeles_a_alias_mismatch_is_ineligible(tmp_path
     pair = payload["pairs"][0]
     assert pair["action"] == "WATCH"
     assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_MUTUALLY_EXCLUSIVE
+    assert relationship["same_payoff"] is False
+    assert "sports_competition_scope_mismatch" in relationship["blocking_reasons"]
     assert "sports_team_alias_mismatch" in pair["ineligibility_reasons"]
+    assert "sports_team_alias_mismatch" in relationship["blocking_reasons"]
     assert "PAPER_CANDIDATE" not in json.dumps(payload)
     assert "POSSIBLE_ARB" not in json.dumps(payload)
 
@@ -231,6 +260,10 @@ def test_baseball_nlcs_vs_overall_championship_is_ineligible(tmp_path: Path) -> 
     pair = payload["pairs"][0]
     assert pair["action"] == "WATCH"
     assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_SUBSET
+    assert relationship["same_payoff"] is False
+    assert "sports_competition_scope_mismatch" in relationship["blocking_reasons"]
     assert "PAPER_CANDIDATE" not in json.dumps(payload)
     assert "POSSIBLE_ARB" not in json.dumps(payload)
 
@@ -251,6 +284,10 @@ def test_same_team_same_competition_baseball_future_can_match_normally(tmp_path:
     pair = payload["pairs"][0]
     assert pair["action"] == "MANUAL_REVIEW"
     assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_NEAR_EQUIVALENT
+    assert relationship["same_payoff"] is False
+    assert relationship["blocking_reasons"] == []
     assert "sports_team_alias_mismatch" not in pair["ineligibility_reasons"]
 
 
@@ -377,6 +414,10 @@ def test_premier_league_title_vs_champions_league_group_stage_scope_mismatch(tmp
     pair = payload["pairs"][0]
     assert pair["action"] == "WATCH"
     assert "sports_competition_scope_mismatch" in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_SUBSET
+    assert relationship["same_payoff"] is False
+    assert "sports_competition_scope_mismatch" in relationship["blocking_reasons"]
 
 
 def test_champions_league_round_of_16_vs_title_scope_mismatch(tmp_path: Path) -> None:
@@ -419,6 +460,10 @@ def test_same_team_premier_league_title_future_can_match_normally(tmp_path: Path
     pair = payload["pairs"][0]
     assert pair["action"] == "MANUAL_REVIEW"
     assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_NEAR_EQUIVALENT
+    assert relationship["same_payoff"] is False
+    assert relationship["blocking_reasons"] == []
 
 
 def test_same_team_super_bowl_future_can_match_normally(tmp_path: Path) -> None:
@@ -458,6 +503,27 @@ def test_same_team_alcs_future_can_match_normally(tmp_path: Path) -> None:
     pair = payload["pairs"][0]
     assert pair["action"] == "MANUAL_REVIEW"
     assert "sports_competition_scope_mismatch" not in pair["ineligibility_reasons"]
+
+
+def test_ambiguous_wording_has_ambiguous_contract_relationship(tmp_path: Path) -> None:
+    poly = _polymarket_snapshot("Will New York Knicks win game 1?")
+    kalshi = _kalshi_snapshot("Will New York Knicks win game 2?")
+
+    payload = match_snapshot_files(
+        _write(tmp_path / "poly.json", poly),
+        _write(tmp_path / "kalshi.json", kalshi),
+        now=NOW,
+    )
+
+    assert payload["pair_count"] == 1
+    pair = payload["pairs"][0]
+    assert pair["action"] == "WATCH"
+    assert "ambiguous_wording" in pair["ineligibility_reasons"]
+    relationship = pair["contract_relationship"]
+    assert relationship["relationship"] == RELATIONSHIP_AMBIGUOUS
+    assert relationship["same_payoff"] is False
+    assert relationship["manual_review_required"] is True
+    assert relationship["blocking_reasons"] == ["ambiguous_wording"]
 
 
 def test_weak_text_matches_do_not_become_candidate_pairs(tmp_path: Path) -> None:
