@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from backtest.recorded_replay import RecordedOrderbookReplayBuilder
@@ -59,6 +59,89 @@ class DailyWeatherEvidenceResult:
             for warning in warnings[:10]:
                 lines.append(f"- {warning}")
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class DailyWeatherEvidenceRangeConfig:
+    start: date
+    end: date
+    max_markets: int = 25
+    min_settlement_confidence: float = 0.85
+    min_edge_after_buffers_cents: float = 5.0
+    trading_readiness_last_days: int = 7
+    force_rebuild_replay: bool = False
+
+
+@dataclass(frozen=True)
+class DailyWeatherEvidenceRangeResult:
+    summary: dict[str, Any]
+    days: list[dict[str, Any]]
+    exports: dict[str, str] | None
+
+    def to_text(self) -> str:
+        lines = [
+            f"daily_weather_evidence_range_status={self.summary.get('status')}",
+            f"message={self.summary.get('message')}",
+            f"window={self.summary.get('start')}..{self.summary.get('end')} days_analyzed={self.summary.get('days_analyzed')}",
+            f"days_with_replay_snapshots={self.summary.get('days_with_replay_snapshots')} "
+            f"days_with_enough_labels={self.summary.get('days_with_enough_labels')} "
+            f"days_with_positive_miner_net_pnl={self.summary.get('days_with_positive_miner_net_pnl')} "
+            f"days_failing_stress={self.summary.get('days_failing_stress')} "
+            f"days_review_or_no_edge={self.summary.get('days_review_or_no_edge')}",
+            f"exports={self.exports}",
+            "Daily rows:",
+        ]
+        for row in self.days:
+            lines.append(
+                f"- {row.get('date')} status={row.get('status')} "
+                f"high_confidence_labels={row.get('high_confidence_labels')} "
+                f"overlap_tickers={row.get('overlap_tickers')} "
+                f"replay_snapshots={row.get('replay_snapshots')} "
+                f"markets={row.get('markets')} "
+                f"miner_signals={row.get('miner_signals')} "
+                f"settled_signals={row.get('settled_signals')} "
+                f"net_pnl={_fmt(row.get('net_pnl_cents'))} "
+                f"stress={row.get('stress_verdict')} "
+                f"weather_market_making={row.get('weather_market_making_verdict')} "
+                f"trading_readiness={row.get('trading_readiness_status')}"
+            )
+        return "\n".join(lines)
+
+
+class DailyWeatherEvidenceRangeReporter:
+    """Research-only multi-day summary built from daily weather evidence reports."""
+
+    def __init__(self, daily_reporter: Any | None = None):
+        self.daily_reporter = daily_reporter or DailyWeatherEvidenceReporter()
+
+    def build(
+        self,
+        config: DailyWeatherEvidenceRangeConfig,
+        *,
+        persist_exports: bool = True,
+    ) -> DailyWeatherEvidenceRangeResult:
+        if config.end < config.start:
+            raise ValueError("--end must be on or after --start")
+        rows: list[dict[str, Any]] = []
+        for day in _date_range(config.start, config.end):
+            try:
+                daily = self.daily_reporter.build(
+                    DailyWeatherEvidenceConfig(
+                        day=day,
+                        max_markets=config.max_markets,
+                        min_settlement_confidence=config.min_settlement_confidence,
+                        min_edge_after_buffers_cents=config.min_edge_after_buffers_cents,
+                        trading_readiness_last_days=config.trading_readiness_last_days,
+                        force_rebuild_replay=config.force_rebuild_replay,
+                    ),
+                    persist_exports=False,
+                )
+                rows.append(_range_row(daily.summary))
+            except Exception as exc:
+                rows.append(_error_range_row(day, exc))
+        summary = _range_summary(config, rows)
+        exports = _export_range(summary, rows) if persist_exports else None
+        return DailyWeatherEvidenceRangeResult(summary=summary, days=rows, exports=exports)
 
 
 class DailyWeatherEvidenceReporter:
@@ -327,6 +410,166 @@ def _export(summary: dict[str, Any]) -> dict[str, str]:
     json_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     md_path.write_text(_markdown(summary), encoding="utf-8")
     return {"json": str(json_path), "markdown": str(md_path)}
+
+
+def _date_range(start: date, end: date) -> list[date]:
+    return [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+
+
+def _range_row(summary: dict[str, Any]) -> dict[str, Any]:
+    coverage = summary.get("coverage") or {}
+    replay = summary.get("recorded_replay") or {}
+    miner = summary.get("miner") or {}
+    mm = summary.get("weather_market_making") or {}
+    readiness = summary.get("trading_readiness") or {}
+    return {
+        "date": summary.get("date"),
+        "status": summary.get("status"),
+        "high_confidence_labels": int(coverage.get("high_confidence_settlement_label_tickers") or 0),
+        "overlap_tickers": int(coverage.get("overlap_tickers") or 0),
+        "replay_snapshots": int(replay.get("snapshots") or 0),
+        "markets": int(replay.get("markets") or 0),
+        "miner_signals": int(miner.get("signals") or 0),
+        "settled_signals": int(miner.get("settled_signals") or 0),
+        "net_pnl_cents": float(miner.get("net_pnl_cents") or 0.0),
+        "stress_verdict": miner.get("stress_verdict"),
+        "weather_market_making_verdict": mm.get("market_making_verdict"),
+        "trading_readiness_status": readiness.get("status"),
+        "research_only": bool(summary.get("research_only")),
+        "error": None,
+        "is_error": False,
+    }
+
+
+def _error_range_row(day: date, exc: Exception) -> dict[str, Any]:
+    return {
+        "date": day.isoformat(),
+        "status": "DAILY_WEATHER_EVIDENCE_ERROR",
+        "high_confidence_labels": 0,
+        "overlap_tickers": 0,
+        "replay_snapshots": 0,
+        "markets": 0,
+        "miner_signals": 0,
+        "settled_signals": 0,
+        "net_pnl_cents": None,
+        "stress_verdict": None,
+        "weather_market_making_verdict": None,
+        "trading_readiness_status": None,
+        "research_only": True,
+        "error": str(exc),
+        "is_error": True,
+    }
+
+
+def _range_summary(config: DailyWeatherEvidenceRangeConfig, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    valid_rows = [row for row in rows if not row.get("is_error")]
+    positive_days = sum(1 for row in valid_rows if float(row.get("net_pnl_cents") or 0.0) > 0.0)
+    failing_stress = sum(1 for row in valid_rows if _is_stress_failure(row))
+    review_or_no_edge = sum(
+        1
+        for row in valid_rows
+        if str(row.get("status") or "") in {
+            "DAILY_WEATHER_EVIDENCE_RESEARCH_ONLY_REVIEW",
+            "DAILY_WEATHER_EVIDENCE_RESEARCH_ONLY_NO_EDGE",
+            "DAILY_WEATHER_EVIDENCE_RESEARCH_ONLY_STRESS_FAILED",
+            "DAILY_WEATHER_EVIDENCE_RESEARCH_ONLY_SMALL_SAMPLE",
+        }
+    )
+    statuses = _counts(rows, "status")
+    return {
+        "schema_version": 1,
+        "source": "daily_weather_evidence_range",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "start": config.start.isoformat(),
+        "end": config.end.isoformat(),
+        "status": "DAILY_WEATHER_EVIDENCE_RANGE_RESEARCH_ONLY",
+        "message": "Multi-day daily weather evidence summary is research-only and does not change readiness gates.",
+        "research_only": True,
+        "days_analyzed": len(rows),
+        "days_with_errors": sum(1 for row in rows if row.get("is_error")),
+        "days_with_replay_snapshots": sum(1 for row in valid_rows if int(row.get("replay_snapshots") or 0) > 0),
+        "days_with_enough_labels": sum(1 for row in valid_rows if int(row.get("high_confidence_labels") or 0) > 0),
+        "days_with_positive_miner_net_pnl": positive_days,
+        "days_failing_stress": failing_stress,
+        "days_review_or_no_edge": review_or_no_edge,
+        "counts_by_status": statuses,
+        "config": {
+            "max_markets": config.max_markets,
+            "min_settlement_confidence": config.min_settlement_confidence,
+            "min_edge_after_buffers_cents": config.min_edge_after_buffers_cents,
+            "trading_readiness_last_days": config.trading_readiness_last_days,
+            "force_rebuild_replay": config.force_rebuild_replay,
+        },
+        "disclaimer": (
+            "Research-only multi-day weather evidence. It summarizes saved labels/replay/mining/market-making evidence, "
+            "does not trade, and does not promote paper or live readiness."
+        ),
+    }
+
+
+def _is_stress_failure(row: dict[str, Any]) -> bool:
+    if int(row.get("settled_signals") or 0) <= 0:
+        return False
+    verdict = str(row.get("stress_verdict") or "").strip().lower()
+    return verdict not in {"", "passes basic stress", "no settled signals"}
+
+
+def _counts(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(key) or "UNKNOWN")
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _export_range(summary: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, str]:
+    reports = PROJECT_ROOT / "reports"
+    reports.mkdir(exist_ok=True)
+    start = str(summary.get("start"))
+    end = str(summary.get("end"))
+    json_path = reports / f"daily_weather_evidence_range_{start}_{end}.json"
+    md_path = reports / f"daily_weather_evidence_range_{start}_{end}.md"
+    payload = {
+        "summary": summary,
+        "days": rows,
+    }
+    json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    md_path.write_text(_markdown_range(summary, rows), encoding="utf-8")
+    return {"json": str(json_path), "markdown": str(md_path)}
+
+
+def _markdown_range(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+    lines = [
+        "# Daily Weather Evidence Range",
+        "",
+        str(summary.get("disclaimer")),
+        "",
+        "## Summary",
+        "",
+        f"- Window: {summary.get('start')} to {summary.get('end')}",
+        f"- Status: `{summary.get('status')}`",
+        f"- Days analyzed: {summary.get('days_analyzed')}",
+        f"- Days with errors: {summary.get('days_with_errors')}",
+        f"- Days with replay snapshots: {summary.get('days_with_replay_snapshots')}",
+        f"- Days with enough labels: {summary.get('days_with_enough_labels')}",
+        f"- Days with positive miner net P&L: {summary.get('days_with_positive_miner_net_pnl')}",
+        f"- Days failing stress: {summary.get('days_failing_stress')}",
+        f"- Days with review/no-edge status: {summary.get('days_review_or_no_edge')}",
+        "",
+        "## Daily Rows",
+        "",
+        "| Date | Status | Labels | Overlap | Replay Snapshots | Markets | Signals | Settled | Net P&L | Stress | Market-Making | Readiness | Error |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row.get('date')} | `{row.get('status')}` | {row.get('high_confidence_labels')} | "
+            f"{row.get('overlap_tickers')} | {row.get('replay_snapshots')} | {row.get('markets')} | "
+            f"{row.get('miner_signals')} | {row.get('settled_signals')} | {_fmt(row.get('net_pnl_cents'))} | "
+            f"{row.get('stress_verdict')} | `{row.get('weather_market_making_verdict')}` | "
+            f"`{row.get('trading_readiness_status')}` | {row.get('error') or ''} |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _markdown(summary: dict[str, Any]) -> str:

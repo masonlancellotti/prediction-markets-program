@@ -8,7 +8,12 @@ from datetime import timezone
 
 from config import settings
 from data.storage import Storage
-from research.daily_weather_evidence import DailyWeatherEvidenceConfig, DailyWeatherEvidenceReporter
+from research.daily_weather_evidence import (
+    DailyWeatherEvidenceConfig,
+    DailyWeatherEvidenceRangeConfig,
+    DailyWeatherEvidenceRangeReporter,
+    DailyWeatherEvidenceReporter,
+)
 
 
 @dataclass
@@ -248,3 +253,192 @@ def test_daily_weather_evidence_skips_replay_build_when_rows_already_exist(tmp_p
     assert result.summary["recorded_replay"]["snapshots"] == 1
     assert result.summary["recorded_replay"]["markets"] == 1
     assert "replay_build_skipped_existing_snapshots_present" in result.summary["recorded_replay"]["warnings"]
+
+
+class FakeDailyReporter:
+    def __init__(self, summaries: dict[str, dict]):
+        self.summaries = summaries
+        self.calls = []
+
+    def build(self, config, *, persist_exports: bool):
+        self.calls.append((config, persist_exports))
+        summary = self.summaries[config.day.isoformat()]
+        if isinstance(summary, Exception):
+            raise summary
+        return type("Result", (), {"summary": summary, "exports": None})()
+
+
+def _daily_summary(
+    day: str,
+    *,
+    status: str = "DAILY_WEATHER_EVIDENCE_RESEARCH_ONLY_NO_EDGE",
+    labels: int = 1,
+    overlap: int = 2,
+    snapshots: int = 10,
+    markets: int = 1,
+    signals: int = 1,
+    settled: int = 1,
+    net: float = -1.0,
+    stress: str | None = "fails 2x fees",
+    mm: str = "RESEARCH_READY_NO_PAPER_EDGE_YET",
+    readiness: str = "NOT_READY_NO_EDGE",
+) -> dict:
+    return {
+        "date": day,
+        "status": status,
+        "research_only": True,
+        "coverage": {
+            "high_confidence_settlement_label_tickers": labels,
+            "overlap_tickers": overlap,
+        },
+        "recorded_replay": {
+            "snapshots": snapshots,
+            "markets": markets,
+        },
+        "miner": {
+            "signals": signals,
+            "settled_signals": settled,
+            "net_pnl_cents": net,
+            "stress_verdict": stress,
+        },
+        "weather_market_making": {
+            "market_making_verdict": mm,
+        },
+        "trading_readiness": {
+            "status": readiness,
+        },
+    }
+
+
+def test_daily_weather_evidence_range_aggregates_multiple_days():
+    reporter = FakeDailyReporter(
+        {
+            "2026-05-20": _daily_summary("2026-05-20", net=12.0, stress="passes basic stress", status="DAILY_WEATHER_EVIDENCE_RESEARCH_ONLY_SMALL_SAMPLE"),
+            "2026-05-21": _daily_summary("2026-05-21", net=-67.0, stress="fails 2x fees"),
+        }
+    )
+
+    result = DailyWeatherEvidenceRangeReporter(daily_reporter=reporter).build(
+        DailyWeatherEvidenceRangeConfig(start=date(2026, 5, 20), end=date(2026, 5, 21)),
+        persist_exports=False,
+    )
+
+    assert result.summary["days_analyzed"] == 2
+    assert result.summary["days_with_replay_snapshots"] == 2
+    assert result.summary["days_with_enough_labels"] == 2
+    assert result.summary["days_with_positive_miner_net_pnl"] == 1
+    assert result.summary["days_failing_stress"] == 1
+    assert result.summary["days_review_or_no_edge"] == 2
+    assert result.days[0]["date"] == "2026-05-20"
+    assert result.days[1]["net_pnl_cents"] == -67.0
+
+
+def test_daily_weather_evidence_range_no_replay_day_does_not_crash():
+    reporter = FakeDailyReporter(
+        {
+            "2026-05-20": _daily_summary(
+                "2026-05-20",
+                status="DAILY_WEATHER_EVIDENCE_NO_REPLAY_SNAPSHOTS",
+                snapshots=0,
+                markets=0,
+                signals=0,
+                settled=0,
+                net=0.0,
+                stress=None,
+            ),
+            "2026-05-21": _daily_summary("2026-05-21"),
+        }
+    )
+
+    result = DailyWeatherEvidenceRangeReporter(daily_reporter=reporter).build(
+        DailyWeatherEvidenceRangeConfig(start=date(2026, 5, 20), end=date(2026, 5, 21)),
+        persist_exports=False,
+    )
+
+    assert result.summary["days_analyzed"] == 2
+    assert result.summary["days_with_replay_snapshots"] == 1
+    assert result.days[0]["replay_snapshots"] == 0
+
+
+def test_daily_weather_evidence_range_no_settled_signals_is_not_stress_failure():
+    reporter = FakeDailyReporter(
+        {
+            "2026-05-20": _daily_summary(
+                "2026-05-20",
+                status="DAILY_WEATHER_EVIDENCE_NO_REPLAY_READY_LABELS",
+                settled=0,
+                net=0.0,
+                stress="no settled signals",
+            ),
+            "2026-05-21": _daily_summary("2026-05-21", settled=1, stress="fails 2x fees"),
+        }
+    )
+
+    result = DailyWeatherEvidenceRangeReporter(daily_reporter=reporter).build(
+        DailyWeatherEvidenceRangeConfig(start=date(2026, 5, 20), end=date(2026, 5, 21)),
+        persist_exports=False,
+    )
+
+    assert result.summary["days_failing_stress"] == 1
+
+
+def test_daily_weather_evidence_range_daily_error_does_not_abort_and_skips_aggregates():
+    reporter = FakeDailyReporter(
+        {
+            "2026-05-20": RuntimeError("boom for one day"),
+            "2026-05-21": _daily_summary("2026-05-21", net=5.0, stress="passes basic stress"),
+        }
+    )
+
+    result = DailyWeatherEvidenceRangeReporter(daily_reporter=reporter).build(
+        DailyWeatherEvidenceRangeConfig(start=date(2026, 5, 20), end=date(2026, 5, 21)),
+        persist_exports=False,
+    )
+
+    assert result.summary["days_analyzed"] == 2
+    assert result.summary["days_with_errors"] == 1
+    assert result.summary["days_with_positive_miner_net_pnl"] == 1
+    assert result.summary["days_failing_stress"] == 0
+    assert result.days[0]["status"] == "DAILY_WEATHER_EVIDENCE_ERROR"
+    assert result.days[0]["error"] == "boom for one day"
+    assert result.days[1]["status"] == "DAILY_WEATHER_EVIDENCE_RESEARCH_ONLY_NO_EDGE"
+
+
+def test_daily_weather_evidence_range_force_rebuild_replay_is_explicit():
+    reporter = FakeDailyReporter({"2026-05-21": _daily_summary("2026-05-21")})
+
+    DailyWeatherEvidenceRangeReporter(daily_reporter=reporter).build(
+        DailyWeatherEvidenceRangeConfig(start=date(2026, 5, 21), end=date(2026, 5, 21)),
+        persist_exports=False,
+    )
+    assert reporter.calls[-1][0].force_rebuild_replay is False
+
+    DailyWeatherEvidenceRangeReporter(daily_reporter=reporter).build(
+        DailyWeatherEvidenceRangeConfig(start=date(2026, 5, 21), end=date(2026, 5, 21), force_rebuild_replay=True),
+        persist_exports=False,
+    )
+    assert reporter.calls[-1][0].force_rebuild_replay is True
+    assert all(call[1] is False for call in reporter.calls)
+
+
+def test_daily_weather_evidence_range_exports_json_and_markdown(tmp_path, monkeypatch):
+    import research.daily_weather_evidence as daily_mod
+    import json
+
+    monkeypatch.setattr(daily_mod, "PROJECT_ROOT", tmp_path)
+    reporter = FakeDailyReporter({"2026-05-21": RuntimeError("exported error row")})
+
+    result = DailyWeatherEvidenceRangeReporter(daily_reporter=reporter).build(
+        DailyWeatherEvidenceRangeConfig(start=date(2026, 5, 21), end=date(2026, 5, 21)),
+        persist_exports=True,
+    )
+
+    assert result.exports is not None
+    json_path = tmp_path / "reports" / "daily_weather_evidence_range_2026-05-21_2026-05-21.json"
+    md_path = tmp_path / "reports" / "daily_weather_evidence_range_2026-05-21_2026-05-21.md"
+    assert json_path.exists()
+    assert md_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["days"][0]["status"] == "DAILY_WEATHER_EVIDENCE_ERROR"
+    assert payload["days"][0]["error"] == "exported error row"
+    assert "exported error row" in md_path.read_text(encoding="utf-8")
