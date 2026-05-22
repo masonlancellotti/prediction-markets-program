@@ -59,6 +59,10 @@ class PaperMarketMakingBasketResult:
             f"weather_only={str(self.summary.get('weather_only')).lower()}",
             f"selector_verdict={self.summary.get('selector_verdict')} selector_fills={self.summary.get('selector_fills')} "
             f"current_targets={self.summary.get('selector_current_targets')} replay_supported_current_targets={self.summary.get('selector_replay_supported_current_targets')}",
+            f"target_hygiene=raw={self.summary.get('raw_candidate_targets')} "
+            f"expired_removed={self.summary.get('expired_or_stale_targets_removed')} "
+            f"survived={self.summary.get('survived_expiry_filter')} "
+            f"final={self.summary.get('final_candidate_targets')} verdict={self.summary.get('target_hygiene_verdict')}",
             f"exports={self.summary.get('exports')}",
         ]
         lines.append("Targets:")
@@ -173,8 +177,14 @@ class PaperMarketMakingBasket:
         )
         strict: list[dict[str, Any]] = []
         exploratory: list[dict[str, Any]] = []
+        raw_candidate_targets = 0
+        expired_or_stale_removed: list[str] = []
         for row in replay.markets:
             if not row.get("current_setup_ok"):
+                continue
+            raw_candidate_targets += 1
+            if row.get("market_likely_expired"):
+                expired_or_stale_removed.append(str(row.get("market_ticker")))
                 continue
             replay_fills = int(row.get("fills") or 0)
             net_30 = float(row.get("avg_net_edge_30m_cents") or 0.0)
@@ -193,6 +203,18 @@ class PaperMarketMakingBasket:
         selector_summary = dict(replay.summary)
         selector_summary["strict_selected"] = len([row for row in selected if row["tier"] == "REPLAY_SUPPORTED"])
         selector_summary["exploratory_selected"] = len([row for row in selected if row["tier"] == "EXPLORATORY_CURRENT"])
+        selector_summary["raw_candidate_targets"] = int(raw_candidate_targets)
+        expired_removed_count = int(len(set(expired_or_stale_removed)))
+        selector_summary["expired_or_stale_targets_removed"] = expired_removed_count
+        selector_summary["survived_expiry_filter"] = max(0, int(raw_candidate_targets) - expired_removed_count)
+        selector_summary["final_candidate_targets"] = int(len(selected))
+        selector_summary["expired_target_tickers_removed"] = sorted(set(expired_or_stale_removed))
+        if raw_candidate_targets == 0:
+            selector_summary["target_hygiene_verdict"] = "NO_RAW_CANDIDATES"
+        elif raw_candidate_targets > 0 and not selected:
+            selector_summary["target_hygiene_verdict"] = "NO_VALID_TARGETS_AFTER_EXPIRY_FILTER"
+        else:
+            selector_summary["target_hygiene_verdict"] = "TARGET_HYGIENE_OK"
         return selected, selector_summary
 
     def _summary(
@@ -239,6 +261,12 @@ class PaperMarketMakingBasket:
             "selector_fills": selector_summary.get("fills"),
             "selector_current_targets": selector_summary.get("current_paper_targets"),
             "selector_replay_supported_current_targets": selector_summary.get("replay_supported_current_targets"),
+            "raw_candidate_targets": selector_summary.get("raw_candidate_targets", 0),
+            "expired_or_stale_targets_removed": selector_summary.get("expired_or_stale_targets_removed", 0),
+            "survived_expiry_filter": selector_summary.get("survived_expiry_filter", 0),
+            "final_candidate_targets": selector_summary.get("final_candidate_targets", len(targets)),
+            "expired_target_tickers_removed": selector_summary.get("expired_target_tickers_removed", []),
+            "target_hygiene_verdict": selector_summary.get("target_hygiene_verdict"),
             "config": config.__dict__,
         }
 
@@ -258,6 +286,7 @@ def _target_from_replay_row(row: dict[str, Any]) -> dict[str, Any]:
         "current_spread_cents": _num(row.get("current_spread_cents")),
         "current_limit_price_cents": _num(row.get("current_limit_price_cents")),
         "current_setup_reason": row.get("current_setup_reason"),
+        "market_likely_expired": bool(row.get("market_likely_expired")),
         "selection_reason": "",
     }
 

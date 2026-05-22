@@ -539,7 +539,7 @@ def _summary(
             "message": mm_summary.get("message"),
             "weather_only": bool(mm_summary.get("weather_only")),
             "snapshots": int(mm_summary.get("snapshots") or 0),
-            "markets_analyzed": int(mm_summary.get("markets_analyzed") or 0),
+            "markets_in_snapshot_window": int(mm_summary.get("markets_in_snapshot_window") or 0),
             "candidate_markets": int(mm_summary.get("candidate_markets") or 0),
             "trade_evidence_fills": int(mm_summary.get("trade_evidence_fills") or 0),
             "trade_evidence_fill_rate": float(mm_summary.get("trade_evidence_fill_rate") or 0.0),

@@ -29,6 +29,7 @@ from live.scanner import LiveScanner
 from maintenance import ProjectMaintenance
 from research.liquidity_analysis import LiquidityAnalyzer
 from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingConfig
+from research.market_making_snapshot import MarketMakingSnapshotBuilder, MarketMakingSnapshotConfig
 from research.paper_market_making_drilldown import PaperMarketMakingDrilldownConfig, PaperMarketMakingDrilldownReporter
 from research.paper_market_making_evidence import PaperMarketMakingEvidenceConfig, PaperMarketMakingEvidenceReporter
 from research.paper_market_making_target_review import PaperMarketMakingTargetReviewConfig, PaperMarketMakingTargetReviewer
@@ -46,6 +47,7 @@ from research.market_making_replay import MarketMakingReplayBacktester, MarketMa
 from research.market_universe import MarketUniverseBuilder, MarketUniverseConfig
 from research.opportunity_ranker import OpportunityRanker
 from research.signal_validation import SignalValidator
+from research.source_smoke import SourceSmokeReporter
 from research.trading_readiness import TradingReadiness
 from research.weather_edge_miner import WeatherEdgeMiner, WeatherEdgeMiningConfig
 from research.weather_replay_coverage import WeatherReplayCoverageConfig, WeatherReplayCoverageReporter
@@ -183,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     collector.add_argument("--no-batch-orderbooks", action="store_true", help="Disable the multi-orderbook endpoint in the orderbook recorder.")
     collector.add_argument("--max-trade-pages", type=int, default=1, help="Maximum global /markets/trades pages per all-market recorder cycle.")
     sub.add_parser("project-status", help="Print durable handoff/project status")
+    sub.add_parser("source-smoke", help="Safe read-only smoke report for live sources, DB tables, and readiness wiring")
     reparse = sub.add_parser("reparse-contracts", help="Reparse stored markets with current parser semantics")
     reparse.add_argument("--weather-only", action="store_true")
     reparse.add_argument("--parser-version", default=None)
@@ -222,7 +225,17 @@ def main(argv: list[str] | None = None) -> int:
     market_making.add_argument("--fill-horizon-minutes", type=int, default=30)
     market_making.add_argument("--quote-spacing-seconds", type=int, default=300)
     market_making.add_argument("--weather-only", action="store_true", help="Restrict analysis to tickers with parsed weather contracts.")
+    market_making.add_argument("--max-markets", type=int, default=None, help="Optional diagnostic cap on distinct markets loaded for analysis; defaults to full window.")
+    market_making.add_argument("--max-snapshots", type=int, default=None, help="Optional diagnostic cap on latest two-sided orderbook rows loaded for analysis; defaults to full window.")
+    market_making.add_argument("--profile-runtime", action="store_true", help="Include per-stage runtime timings in the exported summary.")
     market_making.add_argument("--no-export", action="store_true")
+    mm_snapshot = sub.add_parser("build-market-making-snapshot", help="Build venue-agnostic market-making snapshot from local read-only research data")
+    mm_snapshot.add_argument("--venue", choices=["kalshi"], required=True)
+    mm_snapshot.add_argument("--start")
+    mm_snapshot.add_argument("--end")
+    mm_snapshot.add_argument("--last-days", type=int, default=7)
+    mm_snapshot.add_argument("--max-output-markets", type=int, default=1000, help="Maximum detailed market rows to serialize; summary counts still cover the full window.")
+    mm_snapshot.add_argument("--no-export", action="store_true")
     market_making_replay = sub.add_parser("backtest-market-making", help="Replay the paper market-maker loop over recorded books/trades; never sends orders")
     market_making_replay.add_argument("--start")
     market_making_replay.add_argument("--end")
@@ -684,6 +697,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "project-status":
         print(ProjectMaintenance().project_status().to_text())
         return 0
+    if args.command == "source-smoke":
+        print(SourceSmokeReporter().build().to_text())
+        return 0
     if args.command == "reparse-contracts":
         print(ProjectMaintenance().reparse_contracts(weather_only=args.weather_only).to_text())
         return 0
@@ -729,8 +745,21 @@ def main(argv: list[str] | None = None) -> int:
             fill_horizon_minutes=args.fill_horizon_minutes,
             quote_spacing_seconds=args.quote_spacing_seconds,
             weather_only=args.weather_only,
+            max_markets=args.max_markets,
+            max_snapshots=args.max_snapshots,
+            profile_runtime=args.profile_runtime,
         )
         print(MarketMakingAnalyzer(config=cfg).analyze(last_days=args.last_days, persist_exports=not args.no_export).to_text())
+        return 0
+    if args.command == "build-market-making-snapshot":
+        cfg = MarketMakingSnapshotConfig(venue=args.venue, max_output_markets=args.max_output_markets)
+        result = MarketMakingSnapshotBuilder(config=cfg).build(
+            start=_date_arg(args.start),
+            end=_date_arg(args.end),
+            last_days=args.last_days,
+            persist_exports=not args.no_export,
+        )
+        print(result.to_text())
         return 0
     if args.command == "backtest-market-making":
         cfg = MarketMakingReplayConfig(

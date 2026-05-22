@@ -10,7 +10,7 @@ import pandas as pd
 from backtest.fees import ConservativeFixedFeeModel
 from config import PROJECT_ROOT, settings
 from data.storage import Storage
-from research.market_making_analysis import weather_market_filter_clause
+from research.market_making_analysis import _market_likely_expired, weather_market_filter_clause
 
 ReplaySide = Literal["BUY_YES", "BUY_NO"]
 
@@ -292,7 +292,7 @@ class MarketMakingReplayBacktester:
             f"""
             SELECT market_ticker, ts, yes_best_bid, yes_best_ask, no_best_bid, no_best_ask,
                    spread_cents, mid_cents, depth_yes_bid_1, depth_yes_ask_1,
-                   depth_no_bid_1, depth_no_ask_1, market_status
+                   depth_no_bid_1, depth_no_ask_1, market_status, market_close_time
             FROM orderbook_snapshots_live
             WHERE {' AND '.join(clauses)}
             ORDER BY market_ticker, ts
@@ -344,6 +344,7 @@ class MarketMakingReplayBacktester:
             "avg_net_edge_30m_cents": best["avg_net_edge_30m_cents"],
             "adverse_fill_rate_30m": best["adverse_fill_rate_30m"],
             "score": best["score"],
+            "market_likely_expired": bool(_market_likely_expired(books)),
             "readiness": _readiness(best),
             "side_json": json.dumps(side_rows, default=str),
         }

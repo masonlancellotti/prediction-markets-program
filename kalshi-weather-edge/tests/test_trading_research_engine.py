@@ -402,9 +402,9 @@ def test_market_making_weather_only_filters_to_parsed_weather_contracts(tmp_path
     ).analyze(last_days=30, persist_exports=False)
 
     assert unfiltered.summary["weather_only"] is False
-    assert unfiltered.summary["markets_analyzed"] == 3
+    assert unfiltered.summary["markets_in_snapshot_window"] == 3
     assert filtered.summary["weather_only"] is True
-    assert filtered.summary["markets_analyzed"] == 2
+    assert filtered.summary["markets_in_snapshot_window"] == 2
     assert {row["market_ticker"] for row in filtered.markets} == {"KXHIGHAUS-26MAY01-T70", "KXRAINNYC-26MAY01-T0"}
 
 
@@ -1500,7 +1500,7 @@ def test_market_making_to_text_shows_edge_net_and_readiness_buckets():
         "market_making_verdict": "COLLECT_MORE_TRADE_EVIDENCE",
         "message": "test",
         "snapshots": 100,
-        "markets_analyzed": 1,
+        "markets_in_snapshot_window": 1,
         "two_sided_markets": 1,
         "two_sided_snapshots": 80,
         "trades": 10,
@@ -1715,7 +1715,7 @@ def test_mm_summary_includes_paper_watchlist_tickers():
             "readiness": "PAPER_WATCHLIST",
         },
     ]
-    book_stats = {"snapshots": 50000, "two_sided_snapshots": 40000, "markets_analyzed": 1, "two_sided_markets": 1}
+    book_stats = {"snapshots": 50000, "two_sided_snapshots": 40000, "markets_in_snapshot_window": 1, "two_sided_markets": 1}
     result = _summary(book_stats, pd.DataFrame({"market_ticker": ["KXTEST-01"]}), pd.DataFrame({"market_ticker": ["KXTEST-01"]}), markets)
     assert "paper_watchlist_tickers" in result
     tickers = result["paper_watchlist_tickers"]

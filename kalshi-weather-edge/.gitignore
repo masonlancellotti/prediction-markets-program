@@ -1,5 +1,9 @@
 .venv/
 .env
+.env.local
+.env.*
+*.env
+!.env.example
 *.db
 *.db-shm
 *.db-wal

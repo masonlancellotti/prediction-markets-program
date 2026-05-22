@@ -25,7 +25,10 @@ Copy-Item .env.example .env
 python main.py init-db
 ```
 
-Public-data mode does not require Kalshi credentials.
+`.env.example` is a template only. Keep real `.env` files local and uncommitted,
+and never paste API keys, private keys, account identifiers, tokens, or
+credentials into ChatGPT, Claude, Codex, or git history. Public-data mode does
+not require Kalshi credentials.
 
 ## Configuration
 

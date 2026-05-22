@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +13,22 @@ from config import PROJECT_ROOT, settings
 from data.storage import Storage
 
 QuoteSide = Literal["BUY_YES", "BUY_NO"]
+
+_EVENT_DATE_SERIES_PREFIXES = ("KXNBA", "KXMLB", "KXNFL", "KXNHL")
+_MONTHS = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
 
 
 @dataclass(frozen=True)
@@ -25,6 +42,9 @@ class MarketMakingConfig:
     min_displayed_depth: float = float(settings.passive_min_displayed_depth)
     max_quotes_per_market_side: int = 300
     weather_only: bool = False
+    max_markets: int | None = None
+    max_snapshots: int | None = None
+    profile_runtime: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,7 +64,9 @@ class MarketMakingResult:
         lines = [
             f"market_making_verdict={self.summary.get('market_making_verdict')}",
             f"message={self.summary.get('message')}",
-            f"snapshots={self.summary.get('snapshots')} markets={self.summary.get('markets_analyzed')} "
+            f"scope={self.summary.get('scope')} research_only={str(self.summary.get('research_only')).lower()} "
+            f"separate_from_weather_fair_value={str(self.summary.get('separate_from_weather_fair_value')).lower()}",
+            f"snapshots={self.summary.get('snapshots')} markets_in_snapshot_window={self.summary.get('markets_in_snapshot_window')} "
             f"two_sided_markets={self.summary.get('two_sided_markets')} trades={self.summary.get('trades')}",
             f"candidate_markets={self.summary.get('candidate_markets')} filled_markets={self.summary.get('filled_markets')} "
             f"zero_fill_markets={self.summary.get('zero_fill_markets')} "
@@ -52,8 +74,65 @@ class MarketMakingResult:
             f"fill_rate={self.summary.get('trade_evidence_fill_rate'):.3f}",
             f"avg_edge_30m={self.summary.get('avg_future_edge_30m_cents'):.2f} adverse_fill_rate_30m={self.summary.get('adverse_fill_rate_30m'):.3f}",
             f"data_sufficiency={self.summary.get('data_sufficiency')} paper_watchlist_candidates={self.summary.get('paper_watchlist_candidates')}",
+            f"paper_watchlist_hygiene=raw={self.summary.get('raw_paper_watchlist_candidates')} "
+            f"expired_removed={self.summary.get('expired_or_stale_watchlist_candidates_removed')} "
+            f"final={self.summary.get('final_paper_watchlist_candidates')}",
             f"weather_only={str(self.summary.get('weather_only')).lower()}",
         ]
+        for warning in self.summary.get("top_candidate_warnings") or []:
+            lines.append(f"warning={warning}")
+        filters = self.summary.get("spread_depth_filters") or {}
+        if filters:
+            lines.append(
+                "filters="
+                f"min_spread_cents={filters.get('min_spread_cents')} "
+                f"min_displayed_depth={filters.get('min_displayed_depth')} "
+                f"quote_spacing_seconds={filters.get('quote_spacing_seconds')} "
+                f"fill_horizon_minutes={filters.get('fill_horizon_minutes')} "
+                f"max_quotes_per_market_side={filters.get('max_quotes_per_market_side')}"
+            )
+        evidence = self.summary.get("evidence_assumptions") or {}
+        if evidence:
+            lines.append(
+                "assumptions="
+                f"fill_model={evidence.get('fill_model')} "
+                f"midpoint_fill_assumption={str(evidence.get('midpoint_fill_assumption')).lower()} "
+                f"quote_freshness={evidence.get('quote_freshness')} "
+                f"fees_slippage={evidence.get('fees_slippage')}"
+            )
+        runtime = self.summary.get("runtime_diagnostics") or {}
+        if runtime:
+            lines.append(
+                "runtime="
+                f"elapsed_seconds={runtime.get('elapsed_seconds')} "
+                f"rows_scanned={runtime.get('orderbook_rows_scanned')} "
+                f"rows_loaded={runtime.get('orderbook_rows_loaded_for_analysis')} "
+                f"markets_scanned={runtime.get('markets_scanned')} "
+                f"analyzed_after_filters={runtime.get('markets_analyzed_after_filters')} "
+                f"caps_truncated={str(runtime.get('caps_truncated_analysis')).lower()}"
+            )
+            caps = runtime.get("cap_settings") or {}
+            if caps:
+                lines.append(
+                    "caps="
+                    f"max_markets={caps.get('max_markets')} "
+                    f"max_snapshots={caps.get('max_snapshots')} "
+                    f"profile_runtime={str(caps.get('profile_runtime')).lower()}"
+                )
+        indexes = self.summary.get("index_diagnostics") or {}
+        if indexes:
+            lines.append(
+                "index_diagnostics="
+                f"checked={str(indexes.get('checked')).lower()} "
+                f"orderbook_ts={str(indexes.get('orderbook_time_index_present')).lower()} "
+                f"orderbook_market={str(indexes.get('orderbook_market_index_present')).lower()} "
+                f"trades_ts={str(indexes.get('historical_trades_time_index_present')).lower()} "
+                f"trades_market_ts={str(indexes.get('historical_trades_market_time_index_present')).lower()}"
+            )
+        rejection_counts = self.summary.get("rejection_reason_counts") or {}
+        if rejection_counts:
+            rejection_str = " ".join(f"{k}={v}" for k, v in sorted(rejection_counts.items()))
+            lines.append(f"rejection_reasons: {rejection_str}")
         if self.markets:
             readiness_counts: dict[str, int] = {}
             for row in self.markets:
@@ -86,29 +165,63 @@ class MarketMakingAnalyzer:
         self.config = config or MarketMakingConfig()
 
     def analyze(self, start: date | None = None, end: date | None = None, last_days: int | None = None, persist_exports: bool = True) -> MarketMakingResult:
+        started = time.perf_counter()
+        profile_steps: dict[str, float] = {}
         start, end = _date_window(start, end, last_days)
         book_stats = self._load_book_stats(start, end)
+        profile_steps["load_book_stats_seconds"] = _elapsed_since(started)
         books = self._load_books(start, end)
+        profile_steps["load_books_seconds"] = _elapsed_since(started)
+        index_diagnostics = self._index_diagnostics()
+        profile_steps["index_diagnostics_seconds"] = _elapsed_since(started)
         if not int(book_stats.get("snapshots", 0)) or books.empty:
-            summary = {
+            summary = _base_summary(self.config)
+            summary.update({
                 "market_making_verdict": "NOT_READY_DATA_INCOMPLETE",
                 "message": "No live orderbook snapshots in the requested window.",
-                "weather_only": self.config.weather_only,
                 "snapshots": 0,
-                "markets_analyzed": 0,
+                "markets_in_snapshot_window": 0,
+                "two_sided_snapshots": 0,
+                "two_sided_markets": 0,
+                "one_sided_or_empty_snapshots": 0,
                 "trades": 0,
+                "trade_markets": 0,
+                "candidate_markets": 0,
                 "candidate_quotes": 0,
                 "trade_evidence_fills": 0,
+                "filled_markets": 0,
+                "zero_fill_markets": 0,
                 "trade_evidence_fill_rate": 0.0,
                 "avg_future_edge_30m_cents": 0.0,
                 "adverse_fill_rate_30m": 0.0,
                 "data_sufficiency": "NEED_ORDERBOOK_DATA",
-            }
+                "paper_watchlist_candidates": 0,
+                "raw_paper_watchlist_candidates": 0,
+                "expired_or_stale_watchlist_candidates_removed": 0,
+                "final_paper_watchlist_candidates": 0,
+                "paper_watchlist_tickers": [],
+                "top_candidates_include_likely_expired": False,
+                "top_candidate_warnings": [],
+                "likely_expired_top_candidate_tickers": [],
+                "rejection_reason_counts": {"no_two_sided_orderbook_snapshots": 1},
+            })
+            _add_runtime_diagnostics(
+                summary,
+                book_stats=book_stats,
+                books=books,
+                markets=[],
+                cfg=self.config,
+                elapsed_seconds=_elapsed_since(started),
+                index_diagnostics=index_diagnostics,
+                profile_steps=profile_steps,
+            )
             return MarketMakingResult(summary, [], [])
 
         books = _prepare_books(books)
+        profile_steps["prepare_books_seconds"] = _elapsed_since(started)
         market_tickers = [str(value) for value in books["market_ticker"].dropna().unique().tolist()]
         trades = _prepare_trades(self._load_trades(start, end, market_tickers=market_tickers))
+        profile_steps["load_trades_seconds"] = _elapsed_since(started)
         trade_groups = {ticker: group.sort_values("ts_dt").reset_index(drop=True) for ticker, group in trades.groupby("market_ticker")} if not trades.empty else {}
         market_rows: list[dict[str, Any]] = []
         samples: list[dict[str, Any]] = []
@@ -118,6 +231,7 @@ class MarketMakingAnalyzer:
             metrics, quote_rows = _analyze_market(str(ticker), group, trades_for_market, self.config)
             market_rows.append(metrics)
             samples.extend(quote_rows)
+        profile_steps["analyze_markets_seconds"] = _elapsed_since(started)
 
         ranked = sorted(
             market_rows,
@@ -130,7 +244,17 @@ class MarketMakingAnalyzer:
             reverse=True,
         )
         samples = sorted(samples, key=lambda row: (row.get("filled") is True, row.get("future_edge_30m_cents") or -999), reverse=True)
-        summary = _summary(book_stats, books, trades, ranked, weather_only=self.config.weather_only)
+        summary = _summary(book_stats, books, trades, ranked, weather_only=self.config.weather_only, cfg=self.config)
+        _add_runtime_diagnostics(
+            summary,
+            book_stats=book_stats,
+            books=books,
+            markets=ranked,
+            cfg=self.config,
+            elapsed_seconds=_elapsed_since(started),
+            index_diagnostics=index_diagnostics,
+            profile_steps=profile_steps,
+        )
         if persist_exports:
             _export_market_making(ranked, samples, summary)
         return MarketMakingResult(summary, ranked, samples)
@@ -140,18 +264,93 @@ class MarketMakingAnalyzer:
         clauses.extend(["yes_best_bid IS NOT NULL", "yes_best_ask IS NOT NULL", "spread_cents IS NOT NULL"])
         if self.config.weather_only:
             clauses.append(weather_market_filter_clause("market_ticker"))
-        return self.storage.fetch_sql(
-            f"""
+        max_markets = _positive_cap(self.config.max_markets)
+        max_snapshots = _positive_cap(self.config.max_snapshots)
+        if max_markets is not None:
+            tickers = self._load_capped_market_tickers(start, end, max_markets)
+            if not tickers:
+                return pd.DataFrame(
+                    columns=[
+                        "market_ticker",
+                        "ts",
+                        "yes_best_bid",
+                        "yes_best_ask",
+                        "no_best_bid",
+                        "no_best_ask",
+                        "spread_cents",
+                        "mid_cents",
+                        "depth_yes_bid_1",
+                        "depth_yes_ask_1",
+                        "total_yes_bid_depth",
+                        "total_no_bid_depth",
+                        "last_price_cents",
+                        "volume",
+                        "volume_24h",
+                        "open_interest",
+                        "liquidity_cents",
+                        "market_status",
+                        "market_close_time",
+                    ]
+                )
+            placeholders = []
+            for idx, ticker in enumerate(tickers):
+                key = f"cap_ticker_{idx}"
+                placeholders.append(f":{key}")
+                params[key] = ticker
+            clauses.append(f"market_ticker IN ({', '.join(placeholders)})")
+        limit_sql = ""
+        if max_snapshots is not None:
+            params["max_snapshots"] = max_snapshots
+            limit_sql = " LIMIT :max_snapshots"
+        select_sql = f"""
             SELECT market_ticker, ts, yes_best_bid, yes_best_ask, no_best_bid, no_best_ask,
                    spread_cents, mid_cents, depth_yes_bid_1, depth_yes_ask_1,
                    total_yes_bid_depth, total_no_bid_depth, last_price_cents, volume,
                    volume_24h, open_interest, liquidity_cents, market_status, market_close_time
             FROM orderbook_snapshots_live
             WHERE {' AND '.join(clauses)}
+        """
+        if max_snapshots is not None:
+            sql = f"""
+            SELECT *
+            FROM ({select_sql} ORDER BY ts DESC{limit_sql})
             ORDER BY market_ticker, ts
+            """
+        else:
+            sql = f"{select_sql} ORDER BY market_ticker, ts"
+        return self.storage.fetch_sql(
+            sql,
+            params,
+        )
+
+    def _load_capped_market_tickers(self, start: date | None, end: date | None, max_markets: int) -> list[str]:
+        clauses, params = _time_clauses(start, end)
+        clauses.extend(["yes_best_bid IS NOT NULL", "yes_best_ask IS NOT NULL", "spread_cents IS NOT NULL"])
+        if self.config.weather_only:
+            clauses.append(weather_market_filter_clause("market_ticker"))
+        params["ticker_row_limit"] = max_markets
+        frame = self.storage.fetch_sql(
+            f"""
+            SELECT market_ticker
+            FROM orderbook_snapshots_live
+            WHERE {' AND '.join(clauses)}
+            ORDER BY ts DESC
+            LIMIT :ticker_row_limit
             """,
             params,
         )
+        if frame.empty or "market_ticker" not in frame.columns:
+            return []
+        tickers: list[str] = []
+        seen: set[str] = set()
+        for value in frame["market_ticker"].dropna().astype(str).tolist():
+            if value in seen:
+                continue
+            seen.add(value)
+            tickers.append(value)
+            if len(tickers) >= max_markets:
+                break
+        return tickers
 
     def _load_book_stats(self, start: date | None, end: date | None) -> dict[str, int]:
         clauses, params = _time_clauses(start, end)
@@ -161,7 +360,7 @@ class MarketMakingAnalyzer:
             f"""
             SELECT
                 COUNT(*) AS snapshots,
-                COUNT(DISTINCT market_ticker) AS markets_analyzed,
+                COUNT(DISTINCT market_ticker) AS markets_in_snapshot_window,
                 SUM(CASE WHEN yes_best_bid IS NOT NULL AND yes_best_ask IS NOT NULL AND spread_cents IS NOT NULL THEN 1 ELSE 0 END) AS two_sided_snapshots,
                 COUNT(DISTINCT CASE WHEN yes_best_bid IS NOT NULL AND yes_best_ask IS NOT NULL AND spread_cents IS NOT NULL THEN market_ticker END) AS two_sided_markets
             FROM orderbook_snapshots_live
@@ -170,14 +369,49 @@ class MarketMakingAnalyzer:
             params,
         )
         if frame.empty:
-            return {"snapshots": 0, "markets_analyzed": 0, "two_sided_snapshots": 0, "two_sided_markets": 0}
+            return {"snapshots": 0, "markets_in_snapshot_window": 0, "two_sided_snapshots": 0, "two_sided_markets": 0}
         row = frame.iloc[0]
         return {
             "snapshots": _int_value(row.get("snapshots")),
-            "markets_analyzed": _int_value(row.get("markets_analyzed")),
+            "markets_in_snapshot_window": _int_value(row.get("markets_in_snapshot_window")),
             "two_sided_snapshots": _int_value(row.get("two_sided_snapshots")),
             "two_sided_markets": _int_value(row.get("two_sided_markets")),
         }
+
+    def _index_diagnostics(self) -> dict[str, Any]:
+        diagnostics: dict[str, Any] = {
+            "checked": True,
+            "read_only": True,
+            "orderbook_expected_indexes": [
+                "ux_orderbook_snapshots_live_key",
+                "ix_orderbook_snapshots_live_ts",
+                "ix_orderbook_snapshots_live_market",
+            ],
+            "historical_trades_expected_indexes": [
+                "ix_historical_trades_market_ts",
+                "ix_historical_trades_ts",
+            ],
+        }
+        try:
+            orderbook_indexes = self.storage.fetch_sql("PRAGMA index_list(orderbook_snapshots_live)")
+            trade_indexes = self.storage.fetch_sql("PRAGMA index_list(historical_trades)")
+            orderbook_names = sorted(str(value) for value in orderbook_indexes.get("name", pd.Series(dtype=str)).dropna().tolist())
+            trade_names = sorted(str(value) for value in trade_indexes.get("name", pd.Series(dtype=str)).dropna().tolist())
+            diagnostics.update({
+                "orderbook_indexes": orderbook_names,
+                "historical_trades_indexes": trade_names,
+                "orderbook_time_index_present": "ix_orderbook_snapshots_live_ts" in orderbook_names,
+                "orderbook_market_index_present": "ix_orderbook_snapshots_live_market" in orderbook_names,
+                "historical_trades_time_index_present": "ix_historical_trades_ts" in trade_names,
+                "historical_trades_market_time_index_present": "ix_historical_trades_market_ts" in trade_names,
+            })
+        except Exception as exc:  # pragma: no cover - diagnostic only, fail-open.
+            diagnostics.update({
+                "checked": False,
+                "last_error_category": type(exc).__name__,
+                "last_error": str(exc)[:200],
+            })
+        return diagnostics
 
     def _load_trades(self, start: date | None, end: date | None, market_tickers: list[str] | None = None) -> pd.DataFrame:
         clauses, params = _time_clauses(start, end)
@@ -381,7 +615,7 @@ def _side_metrics(ticker: str, side: QuoteSide, books: pd.DataFrame, trades: pd.
 
 def _combined_market_metrics(ticker: str, books: pd.DataFrame, trades: pd.DataFrame, sides: list[dict[str, Any]], best: dict[str, Any]) -> dict[str, Any]:
     likely_expired = _market_likely_expired(books)
-    return {
+    combined = {
         "market_ticker": ticker,
         "best_side": best["side"],
         "snapshots": int(len(books)),
@@ -407,9 +641,19 @@ def _combined_market_metrics(ticker: str, books: pd.DataFrame, trades: pd.DataFr
         "no_side_json": json.dumps(next(row for row in sides if row["side"] == "BUY_NO"), default=str),
         "readiness": _market_readiness(best),
     }
+    combined["rejection_reason"] = _market_rejection_reason(combined)
+    return combined
 
 
-def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFrame, markets: list[dict[str, Any]], weather_only: bool = False) -> dict[str, Any]:
+def _summary(
+    book_stats: dict[str, int],
+    books: pd.DataFrame,
+    trades: pd.DataFrame,
+    markets: list[dict[str, Any]],
+    weather_only: bool = False,
+    cfg: MarketMakingConfig | None = None,
+) -> dict[str, Any]:
+    cfg = cfg or MarketMakingConfig(weather_only=weather_only)
     candidate_quotes = sum(row["candidate_quotes"] for row in markets)
     fills = sum(row["trade_evidence_fills"] for row in markets)
     candidate_markets = sum(1 for row in markets if row["candidate_quotes"] > 0)
@@ -417,7 +661,11 @@ def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFra
     zero_fill_markets = sum(1 for row in markets if row["candidate_quotes"] > 0 and row["trade_evidence_fills"] == 0)
     weighted_edge_num = sum(row["avg_future_edge_30m_cents"] * row["trade_evidence_fills"] for row in markets if row["trade_evidence_fills"] > 0)
     weighted_adverse_num = sum(row["adverse_fill_rate_30m"] * row["trade_evidence_fills"] for row in markets if row["trade_evidence_fills"] > 0)
-    strong = [row for row in markets if row["readiness"] == "PAPER_WATCHLIST"]
+    raw_watchlist = [row for row in markets if row["readiness"] == "PAPER_WATCHLIST"]
+    expired_watchlist_removed = [row for row in raw_watchlist if row.get("market_likely_expired")]
+    strong = [row for row in raw_watchlist if not row.get("market_likely_expired")]
+    displayed_top = markets[:10]
+    displayed_expired = [row for row in displayed_top if row.get("market_likely_expired")]
     watchlist_tickers = [
         {
             "market_ticker": row["market_ticker"],
@@ -427,9 +675,15 @@ def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFra
             "average_spread_cents": float(row["average_spread_cents"]),
             "score": float(row["score"]),
             "market_likely_expired": bool(row.get("market_likely_expired", False)),
+            "scope": _scope_name(weather_only),
+            "research_only": True,
         }
         for row in sorted(strong, key=lambda x: x["score"], reverse=True)
     ]
+    rejection_reason_counts: dict[str, int] = {}
+    for row in markets:
+        reason = str(row.get("rejection_reason") or _market_rejection_reason(row))
+        rejection_reason_counts[reason] = rejection_reason_counts.get(reason, 0) + 1
     one_sided_or_empty_snapshots = max(0, int(book_stats.get("snapshots", 0)) - int(book_stats.get("two_sided_snapshots", 0)))
     if len(books) < 10000 or len(trades) < 100:
         sufficiency = "NEED_MORE_COLLECTION"
@@ -446,13 +700,13 @@ def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFra
     else:
         verdict = "COLLECT_MORE_TRADE_EVIDENCE"
         message = "Orderbook data is useful, but passive fill evidence is still thin."
-    return {
+    summary = _base_summary(cfg)
+    summary.update({
         "market_making_verdict": verdict,
         "message": message,
-        "weather_only": bool(weather_only),
         "data_sufficiency": sufficiency,
         "snapshots": int(book_stats.get("snapshots", 0)),
-        "markets_analyzed": int(book_stats.get("markets_analyzed", 0)),
+        "markets_in_snapshot_window": int(book_stats.get("markets_in_snapshot_window", 0)),
         "two_sided_snapshots": int(book_stats.get("two_sided_snapshots", 0)),
         "two_sided_markets": int(book_stats.get("two_sided_markets", 0)),
         "one_sided_or_empty_snapshots": one_sided_or_empty_snapshots,
@@ -467,19 +721,211 @@ def _summary(book_stats: dict[str, int], books: pd.DataFrame, trades: pd.DataFra
         "avg_future_edge_30m_cents": float(weighted_edge_num / fills) if fills else 0.0,
         "adverse_fill_rate_30m": float(weighted_adverse_num / fills) if fills else 0.0,
         "paper_watchlist_candidates": len(strong),
+        "raw_paper_watchlist_candidates": len(raw_watchlist),
+        "expired_or_stale_watchlist_candidates_removed": len(expired_watchlist_removed),
+        "final_paper_watchlist_candidates": len(strong),
         "paper_watchlist_tickers": watchlist_tickers,
+        "rejection_reason_counts": rejection_reason_counts,
+        "trade_print_evidence_available": bool(len(trades) > 0),
+        "top_candidates_include_likely_expired": bool(displayed_expired),
+        "top_candidate_warnings": (
+            [
+                "Displayed top candidates include LIKELY_EXPIRED rows for diagnostic transparency; "
+                "these rows are excluded from paper_watchlist_tickers and paper basket candidates."
+            ]
+            if displayed_expired
+            else []
+        ),
+        "likely_expired_top_candidate_tickers": [str(row.get("market_ticker")) for row in displayed_expired],
+    })
+    return summary
+
+
+def _scope_name(weather_only: bool) -> str:
+    return "WEATHER_ONLY" if weather_only else "ALL_MARKETS"
+
+
+def _add_runtime_diagnostics(
+    summary: dict[str, Any],
+    *,
+    book_stats: dict[str, int],
+    books: pd.DataFrame,
+    markets: list[dict[str, Any]],
+    cfg: MarketMakingConfig,
+    elapsed_seconds: float,
+    index_diagnostics: dict[str, Any],
+    profile_steps: dict[str, float],
+) -> None:
+    rows_loaded = int(len(books))
+    markets_loaded = int(books["market_ticker"].nunique()) if not books.empty and "market_ticker" in books.columns else 0
+    rows_scanned = int(book_stats.get("snapshots", 0))
+    markets_scanned = int(book_stats.get("markets_in_snapshot_window", 0))
+    cap_settings = {
+        "max_markets": _positive_cap(cfg.max_markets),
+        "max_snapshots": _positive_cap(cfg.max_snapshots),
+        "profile_runtime": bool(cfg.profile_runtime),
+        "market_cap_applied_in_db": _positive_cap(cfg.max_markets) is not None,
+        "snapshot_cap_applied_in_db": _positive_cap(cfg.max_snapshots) is not None,
+        "market_cap_strategy": (
+            "latest_two_sided_snapshot_rows_before_full_book_load"
+            if _positive_cap(cfg.max_markets) is not None
+            else None
+        ),
+    }
+    markets_truncated = cap_settings["max_markets"] is not None and markets_loaded < markets_scanned
+    snapshots_truncated = cap_settings["max_snapshots"] is not None and rows_loaded < rows_scanned
+    runtime = {
+        "elapsed_seconds": round(float(elapsed_seconds), 3),
+        "orderbook_rows_scanned": rows_scanned,
+        "markets_scanned": markets_scanned,
+        "orderbook_rows_loaded_for_analysis": rows_loaded,
+        "markets_loaded_for_analysis": markets_loaded,
+        "markets_analyzed_after_filters": int(len(markets)),
+        "cap_settings": cap_settings,
+        "caps_truncated_analysis": bool(markets_truncated or snapshots_truncated),
+        "markets_truncated_by_cap": bool(markets_truncated),
+        "snapshots_truncated_by_cap": bool(snapshots_truncated),
+        "research_only": True,
+        "readiness_promotion": "none",
+    }
+    if cfg.profile_runtime:
+        runtime["profile_steps"] = {key: round(float(value), 3) for key, value in profile_steps.items()}
+    summary["runtime_diagnostics"] = runtime
+    summary["index_diagnostics"] = index_diagnostics
+    summary["orderbook_rows_scanned"] = rows_scanned
+    summary["markets_scanned"] = markets_scanned
+    summary["orderbook_rows_loaded_for_analysis"] = rows_loaded
+    summary["markets_loaded_for_analysis"] = markets_loaded
+    summary["markets_analyzed_after_filters"] = int(len(markets))
+    summary["elapsed_seconds"] = runtime["elapsed_seconds"]
+    summary["cap_settings"] = cap_settings
+    summary["caps_truncated_analysis"] = runtime["caps_truncated_analysis"]
+
+
+def _base_summary(cfg: MarketMakingConfig) -> dict[str, Any]:
+    scope = _scope_name(cfg.weather_only)
+    if cfg.weather_only:
+        scope_note = (
+            "Weather-only market-making scope filters to parsed weather contracts. "
+            "It is still microstructure evidence and does not change weather fair-value readiness."
+        )
+    else:
+        scope_note = (
+            "All-market market-making evidence uses bid/ask/depth/trade-print microstructure only. "
+            "It is separate from weather fair-value readiness."
+        )
+    return {
+        "scope": scope,
+        "weather_only": bool(cfg.weather_only),
+        "research_only": True,
+        "evidence_track": "market_making_microstructure",
+        "separate_from_weather_fair_value": True,
+        "readiness_promotion": "none",
+        "paper_or_live_readiness": "not_promoted",
+        "market_universe_note": scope_note,
+        "spread_depth_filters": {
+            "min_spread_cents": float(cfg.min_spread_cents),
+            "min_displayed_depth": float(cfg.min_displayed_depth),
+            "improve_cents": float(cfg.improve_cents),
+            "quote_spacing_seconds": int(cfg.quote_spacing_seconds),
+            "fill_horizon_minutes": int(cfg.fill_horizon_minutes),
+            "max_quotes_per_market_side": int(cfg.max_quotes_per_market_side),
+            "quote_size": float(cfg.quote_size),
+            "max_markets": _positive_cap(cfg.max_markets),
+            "max_snapshots": _positive_cap(cfg.max_snapshots),
+        },
+        "evidence_assumptions": {
+            "requires_real_bid_ask_depth": True,
+            "fill_model": "trade_print_confirmation_only",
+            "trade_evidence_fills_are_not_our_actual_orders": True,
+            "orderbook_touches_are_not_fills": True,
+            "midpoint_fill_assumption": False,
+            "quote_freshness": (
+                "quotes are sampled from recorded orderbook snapshot timestamps; "
+                "current live freshness is not asserted by this offline analyzer"
+            ),
+            "fees_slippage": (
+                "avg_edge_after_penalty_30m subtracts the configured adverse-selection penalty; "
+                "exchange fees, queue position, and multi-tick slippage are not claimed away"
+            ),
+        },
+        "paper_watchlist_disclaimer": (
+            "Paper-watchlist candidates are research-only microstructure candidates. "
+            "They do not imply live readiness, executable profit, or weather fair-value edge."
+        ),
     }
 
 
+def _elapsed_since(started: float) -> float:
+    return time.perf_counter() - started
+
+
+def _positive_cap(value: int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        cap = int(value)
+    except (TypeError, ValueError):
+        return None
+    return cap if cap > 0 else None
+
+
 def _market_likely_expired(books: pd.DataFrame) -> bool:
-    """Return True if the latest known market status indicates the market is no longer active."""
-    if "market_status" not in books.columns:
-        return False
-    status_col = books["market_status"].dropna()
-    if status_col.empty:
-        return False
-    latest = str(status_col.iloc[-1]).strip().lower()
-    return latest in {"finalized", "settled", "closed", "resolved"}
+    """Return True if status or known close time indicates the market is no longer active."""
+    if "market_status" in books.columns:
+        status_col = books["market_status"].dropna()
+        if not status_col.empty:
+            latest = str(status_col.iloc[-1]).strip().lower()
+            if latest in {"finalized", "settled", "closed", "resolved"}:
+                return True
+    if "market_close_time" in books.columns:
+        close_times = pd.to_datetime(books["market_close_time"], errors="coerce", utc=True).dropna()
+        if not close_times.empty:
+            latest_close = close_times.max()
+            if latest_close.to_pydatetime() < datetime.now(timezone.utc):
+                return True
+    # Kalshi market_close_time can be a formal settlement deadline, not the
+    # underlying sports/event date. For obvious sports ticker dates, fail closed
+    # once the event date has passed.
+    ticker = _market_ticker_from_books(books)
+    ticker_event_date = _ticker_event_date_hint(ticker)
+    if ticker_event_date is not None and ticker_event_date < date.today():
+        return True
+    return False
+
+
+def _market_ticker_from_books(books: pd.DataFrame) -> str | None:
+    if "market_ticker" not in books.columns:
+        return None
+    values = books["market_ticker"].dropna().astype(str)
+    if values.empty:
+        return None
+    return values.iloc[-1]
+
+
+def _ticker_event_date_hint(market_ticker: str | None) -> date | None:
+    """Parse only obvious supported sports YYMMMDD ticker event dates."""
+    if not market_ticker:
+        return None
+    ticker = str(market_ticker).strip().upper()
+    parts = ticker.split("-")
+    if len(parts) < 2:
+        return None
+    series = parts[0]
+    if not series.startswith(_EVENT_DATE_SERIES_PREFIXES):
+        return None
+    token = parts[1]
+    if len(token) < 7:
+        return None
+    yy = token[0:2]
+    month_key = token[2:5]
+    dd = token[5:7]
+    if not (yy.isdigit() and dd.isdigit() and month_key in _MONTHS):
+        return None
+    try:
+        return date(2000 + int(yy), _MONTHS[month_key], int(dd))
+    except ValueError:
+        return None
 
 
 def _market_making_score(fills: int, fill_rate: float, edge_after_penalty: float, adverse_rate: float) -> float:
@@ -499,6 +945,29 @@ def _market_readiness(best: dict[str, Any]) -> str:
     if fills >= 30:
         return "PAPER_WATCHLIST"
     return "PROMISING_NEEDS_MORE_FILLS"
+
+
+def _market_rejection_reason(row: dict[str, Any]) -> str:
+    readiness = str(row.get("readiness") or "")
+    if bool(row.get("market_likely_expired")):
+        return "likely_expired_market"
+    if int(row.get("candidate_quotes") or 0) <= 0:
+        return "no_candidate_quotes_after_spread_depth_spacing_filters"
+    if int(row.get("trade_evidence_fills") or 0) <= 0:
+        return "missing_trade_print_confirmation"
+    if readiness == "PAPER_WATCHLIST":
+        return "paper_watchlist_research_only"
+    if readiness == "PROMISING_NEEDS_MORE_FILLS":
+        return "promising_needs_more_trade_print_fills"
+    if readiness == "FEW_FILLS_NEED_MORE":
+        return "too_few_trade_print_fills"
+    if readiness == "TOO_MUCH_ADVERSE_SELECTION":
+        return "adverse_selection_high"
+    if readiness == "ADVERSE_SELECTION_OR_NO_EDGE":
+        return "no_positive_net_30m_after_penalty"
+    if readiness == "ZERO_TRADE_PRINT_FILLS":
+        return "missing_trade_print_confirmation"
+    return "research_only_not_paper_watchlist"
 
 
 def _future_side_mid_after(books: pd.DataFrame, fill_ts: pd.Timestamp, minutes: int, side: QuoteSide) -> float | None:
@@ -550,9 +1019,17 @@ def _prepare_trades(frame: pd.DataFrame) -> pd.DataFrame:
 def _export_market_making(markets: list[dict[str, Any]], samples: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     reports = PROJECT_ROOT / "reports"
     reports.mkdir(exist_ok=True)
-    pd.DataFrame(markets).to_csv(reports / "market_making_candidates.csv", index=False)
-    pd.DataFrame(samples).to_csv(reports / "market_making_quote_samples.csv", index=False)
-    (reports / "market_making_summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    scope_slug = "weather_only" if summary.get("scope") == "WEATHER_ONLY" else "all_markets"
+    pd.DataFrame(markets).to_csv(reports / f"market_making_{scope_slug}_candidates.csv", index=False)
+    pd.DataFrame(samples).to_csv(reports / f"market_making_{scope_slug}_quote_samples.csv", index=False)
+    (reports / f"market_making_{scope_slug}_summary.json").write_text(
+        json.dumps(summary, indent=2, default=str),
+        encoding="utf-8",
+    )
+    if summary.get("scope") == "ALL_MARKETS":
+        pd.DataFrame(markets).to_csv(reports / "market_making_candidates.csv", index=False)
+        pd.DataFrame(samples).to_csv(reports / "market_making_quote_samples.csv", index=False)
+        (reports / "market_making_summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
 
 def _date_window(start: date | None, end: date | None, last_days: int | None) -> tuple[date | None, date | None]:
