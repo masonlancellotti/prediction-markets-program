@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
@@ -8,7 +9,15 @@ from sqlalchemy import text
 
 from config import settings
 from data.storage import Storage
-from live.paper_market_making_basket import PaperMarketMakingBasket, PaperMarketMakingBasketConfig
+from live.paper_market_making_basket import (
+    PaperMarketMakingBasket,
+    PaperMarketMakingBasketConfig,
+    PaperMarketMakingBasketResult,
+    _apply_lifecycle,
+    _new_lifecycle,
+    _quote_rejection_bucket,
+    _update_lifecycle,
+)
 from research.market_making_analysis import (
     MarketMakingAnalyzer,
     MarketMakingConfig,
@@ -421,6 +430,106 @@ def test_paper_basket_final_targets_can_differ_after_cap(tmp_path):
     assert result.summary["final_candidate_targets"] == 1
     assert result.summary["target_hygiene_verdict"] == "TARGET_HYGIENE_OK"
     assert len(result.targets) == 1
+
+
+def test_paper_basket_lifecycle_fill_persists_after_final_zero_state():
+    lifecycle = _new_lifecycle()
+    first = PaperMarketMakingBasketResult(
+        summary={"filled_quotes": 1, "open_quotes": 0, "cancelled_quotes": 0},
+        targets=[{"market_ticker": "OLD", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED"}],
+        target_results=[{"market_ticker": "OLD", "side": "BUY_YES", "filled_quotes": 1}],
+        actions=[{"action": "QUOTE_FILLED", "reason": "filled"}],
+    )
+    final = PaperMarketMakingBasketResult(
+        summary={"filled_quotes": 0, "open_quotes": 0, "cancelled_quotes": 0},
+        targets=[],
+        target_results=[],
+        actions=[],
+    )
+
+    _update_lifecycle(lifecycle, first)
+    _update_lifecycle(lifecycle, final)
+    summary = {"filled_quotes": 0, "open_quotes": 0, "cancelled_quotes": 0, "_final_targets": []}
+    _apply_lifecycle(summary, lifecycle)
+
+    assert summary["total_trade_print_fills_seen"] == 1
+    assert summary["final_filled_quotes"] == 0
+    assert summary["fill_seen_in_history_but_not_final"] is True
+    assert summary["targets_with_any_fill"] == [{"market_ticker": "OLD", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED"}]
+    assert summary["quote_rejection_breakdown"]["target_removed"] == 1
+    assert summary["targets_removed_reason"] == {"OLD|BUY_YES": "target_removed_after_selector_refresh"}
+
+
+def test_paper_basket_lifecycle_quote_rejection_breakdown_counts_reasons():
+    lifecycle = _new_lifecycle()
+    result = PaperMarketMakingBasketResult(
+        summary={"filled_quotes": 0, "open_quotes": 0, "cancelled_quotes": 0},
+        targets=[{"market_ticker": "A", "side": "BUY_YES", "tier": "EXPLORATORY_CURRENT"}],
+        target_results=[],
+        actions=[
+            {"action": "NO_QUOTE", "reason": "Spread 4.0 below minimum 8.00c."},
+            {"action": "NO_QUOTE", "reason": "Already has 1 open paper quote(s)."},
+            {"action": "NO_QUOTE", "reason": "Latest orderbook is stale: 999s old."},
+            {"action": "NO_QUOTE", "reason": "Book is missing same-side bid or opposing ask."},
+            {"action": "QUOTE_OPENED", "reason": "Opened paper quote id=1 at 10.00c."},
+            {"action": "QUOTE_CANCELLED", "reason": "Quote id=1 cancelled after 300s."},
+        ],
+    )
+
+    _update_lifecycle(lifecycle, result)
+    summary = {"filled_quotes": 0, "open_quotes": 0, "cancelled_quotes": 0, "_final_targets": result.targets}
+    _apply_lifecycle(summary, lifecycle)
+
+    assert summary["quote_rejection_breakdown"]["spread_below_minimum"] == 1
+    assert summary["quote_rejection_breakdown"]["max_open_quotes_reached"] == 1
+    assert summary["quote_rejection_breakdown"]["stale_or_expired_target"] == 1
+    assert summary["quote_rejection_breakdown"]["other"] == 1
+    assert summary["total_quotes_opened"] == 1
+    assert summary["total_quotes_cancelled"] == 1
+
+
+def test_paper_basket_lifecycle_reports_strict_and_exploratory_seen():
+    lifecycle = _new_lifecycle()
+    result = PaperMarketMakingBasketResult(
+        summary={"filled_quotes": 0, "open_quotes": 0, "cancelled_quotes": 0},
+        targets=[
+            {"market_ticker": "STRICT", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED"},
+            {"market_ticker": "EXP", "side": "BUY_NO", "tier": "EXPLORATORY_CURRENT"},
+        ],
+        target_results=[],
+        actions=[],
+    )
+
+    _update_lifecycle(lifecycle, result)
+    summary = {"filled_quotes": 0, "open_quotes": 0, "cancelled_quotes": 0, "_final_targets": result.targets}
+    _apply_lifecycle(summary, lifecycle)
+
+    assert summary["target_sets_seen"] == 1
+    assert summary["max_targets_seen"] == 2
+    assert summary["strict_targets_seen"] == 1
+    assert summary["exploratory_targets_seen"] == 1
+    assert summary["targets_seen_over_run"] == [
+        {"market_ticker": "STRICT", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED"},
+        {"market_ticker": "EXP", "side": "BUY_NO", "tier": "EXPLORATORY_CURRENT"},
+    ]
+    assert summary["targets_final"] == summary["targets_seen_over_run"]
+
+
+def test_paper_basket_rejection_bucket_classifier():
+    assert _quote_rejection_bucket("Spread 4.0 below minimum 8.00c.") == "spread_below_minimum"
+    assert _quote_rejection_bucket("Already has 1 open paper quote(s).") == "max_open_quotes_reached"
+    assert _quote_rejection_bucket("Latest orderbook is stale: 999s old.") == "stale_or_expired_target"
+    assert _quote_rejection_bucket("Market status is closed; paper maker will not quote.") == "stale_or_expired_target"
+    assert _quote_rejection_bucket("Book is missing same-side bid or opposing ask.") == "other"
+
+
+def test_paper_basket_module_has_no_live_trading_calls():
+    import live.paper_market_making_basket as basket_module
+
+    source = inspect.getsource(basket_module)
+    forbidden = ("create_order", "cancel_order", "private_key", "account_balance", "positions", "wallet")
+    for token in forbidden:
+        assert token not in source
 
 
 def test_trade_print_evidence_metadata_and_research_only_guardrails(tmp_path):

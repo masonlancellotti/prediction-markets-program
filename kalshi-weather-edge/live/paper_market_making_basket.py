@@ -63,6 +63,11 @@ class PaperMarketMakingBasketResult:
             f"expired_removed={self.summary.get('expired_or_stale_targets_removed')} "
             f"survived={self.summary.get('survived_expiry_filter')} "
             f"final={self.summary.get('final_candidate_targets')} verdict={self.summary.get('target_hygiene_verdict')}",
+            f"lifecycle=max_targets_seen={self.summary.get('max_targets_seen')} target_sets_seen={self.summary.get('target_sets_seen')} "
+            f"strict_seen={self.summary.get('strict_targets_seen')} exploratory_seen={self.summary.get('exploratory_targets_seen')} "
+            f"total_quotes_opened={self.summary.get('total_quotes_opened')} total_quotes_cancelled={self.summary.get('total_quotes_cancelled')} "
+            f"total_fills_seen={self.summary.get('total_trade_print_fills_seen')} fill_seen_not_final={str(self.summary.get('fill_seen_in_history_but_not_final')).lower()}",
+            f"quote_rejections={self.summary.get('quote_rejection_breakdown')}",
             f"exports={self.summary.get('exports')}",
         ]
         lines.append("Targets:")
@@ -98,13 +103,19 @@ class PaperMarketMakingBasket:
         targets, selector_summary = self._select_targets(config)
         refresh_deadline = started + timedelta(minutes=max(float(config.refresh_candidates_minutes), 1.0))
         last_result: PaperMarketMakingBasketResult | None = None
+        lifecycle = _new_lifecycle()
         while True:
             now = self.now_fn()
             if now >= refresh_deadline:
                 targets, selector_summary = self._select_targets(config)
                 refresh_deadline = now + timedelta(minutes=max(float(config.refresh_candidates_minutes), 1.0))
             last_result = self.run_once(config, targets=targets, selector_summary=selector_summary, persist_exports=persist_exports)
+            _update_lifecycle(lifecycle, last_result)
             if once or deadline is None or now >= deadline:
+                last_result.summary["_final_targets"] = last_result.targets
+                _apply_lifecycle(last_result.summary, lifecycle)
+                if persist_exports:
+                    last_result.summary["exports"] = _export(last_result.summary, last_result.targets, last_result.target_results, last_result.actions)
                 return last_result
             _print_progress(last_result)
             time.sleep(max(1, int(config.interval_seconds)))
@@ -150,6 +161,9 @@ class PaperMarketMakingBasket:
                     }
                 )
         summary = self._summary(config, targets, target_results, selector_summary)
+        lifecycle = _new_lifecycle()
+        _update_lifecycle(lifecycle, PaperMarketMakingBasketResult(summary=summary, targets=targets, target_results=target_results, actions=actions))
+        _apply_lifecycle(summary, lifecycle)
         if persist_exports:
             summary["exports"] = _export(summary, targets, target_results, actions)
         else:
@@ -267,6 +281,9 @@ class PaperMarketMakingBasket:
             "final_candidate_targets": selector_summary.get("final_candidate_targets", len(targets)),
             "expired_target_tickers_removed": selector_summary.get("expired_target_tickers_removed", []),
             "target_hygiene_verdict": selector_summary.get("target_hygiene_verdict"),
+            "research_only": True,
+            "readiness_promotion": "none",
+            "_final_targets": targets,
             "config": config.__dict__,
         }
 
@@ -321,6 +338,133 @@ def _basket_message(status: str) -> str:
     if status == "PAPER_BASKET_ACTIVE_NO_FILLS_YET":
         return "Basket is quoting paper targets, but no trade-print fills yet."
     return "Basket is alive but current filters prevented paper quotes."
+
+
+def _new_lifecycle() -> dict[str, Any]:
+    return {
+        "target_sets_seen": 0,
+        "max_targets_seen": 0,
+        "strict_targets_seen": 0,
+        "exploratory_targets_seen": 0,
+        "total_quotes_opened": 0,
+        "total_quotes_cancelled": 0,
+        "quote_rejection_breakdown": {
+            "spread_below_minimum": 0,
+            "max_open_quotes_reached": 0,
+            "target_removed": 0,
+            "stale_or_expired_target": 0,
+            "no_valid_target": 0,
+            "other": 0,
+        },
+        "targets_seen": {},
+        "target_fill_max": {},
+        "targets_with_any_fill": {},
+        "targets_removed_reason": {},
+        "previous_targets": {},
+    }
+
+
+def _update_lifecycle(lifecycle: dict[str, Any], result: PaperMarketMakingBasketResult) -> None:
+    lifecycle["target_sets_seen"] += 1
+    lifecycle["max_targets_seen"] = max(int(lifecycle["max_targets_seen"]), len(result.targets))
+    lifecycle["strict_targets_seen"] = max(
+        int(lifecycle["strict_targets_seen"]),
+        len([row for row in result.targets if row.get("tier") == "REPLAY_SUPPORTED"]),
+    )
+    lifecycle["exploratory_targets_seen"] = max(
+        int(lifecycle["exploratory_targets_seen"]),
+        len([row for row in result.targets if row.get("tier") == "EXPLORATORY_CURRENT"]),
+    )
+    current_targets = {_target_key(row): _target_descriptor(row) for row in result.targets}
+    seen = lifecycle["targets_seen"]
+    for key, descriptor in current_targets.items():
+        seen[key] = descriptor
+    previous_targets = lifecycle.get("previous_targets") or {}
+    removed = set(previous_targets) - set(current_targets)
+    if removed:
+        breakdown = lifecycle["quote_rejection_breakdown"]
+        breakdown["target_removed"] += len(removed)
+        reasons = lifecycle["targets_removed_reason"]
+        for key in sorted(removed):
+            reasons[key] = "target_removed_after_selector_refresh"
+    lifecycle["previous_targets"] = current_targets
+    if not result.targets:
+        lifecycle["quote_rejection_breakdown"]["no_valid_target"] += 1
+    for action in result.actions:
+        action_name = str(action.get("action") or "")
+        if action_name == "QUOTE_OPENED":
+            lifecycle["total_quotes_opened"] += 1
+        elif action_name == "QUOTE_CANCELLED":
+            lifecycle["total_quotes_cancelled"] += 1
+        elif action_name == "NO_QUOTE":
+            bucket = _quote_rejection_bucket(str(action.get("reason") or ""))
+            lifecycle["quote_rejection_breakdown"][bucket] += 1
+    target_lookup = {_target_key(row): _target_descriptor(row) for row in result.targets}
+    for row in result.target_results:
+        key = _target_key(row)
+        filled = int(row.get("filled_quotes") or 0)
+        if filled <= 0:
+            continue
+        lifecycle["target_fill_max"][key] = max(int(lifecycle["target_fill_max"].get(key, 0)), filled)
+        lifecycle["targets_with_any_fill"][key] = target_lookup.get(key, _target_descriptor(row))
+
+
+def _apply_lifecycle(summary: dict[str, Any], lifecycle: dict[str, Any]) -> None:
+    final_filled = int(summary.get("filled_quotes") or 0)
+    total_fills_seen = sum(int(value) for value in lifecycle["target_fill_max"].values())
+    summary.update(
+        {
+            "max_targets_seen": int(lifecycle["max_targets_seen"]),
+            "target_sets_seen": int(lifecycle["target_sets_seen"]),
+            "strict_targets_seen": int(lifecycle["strict_targets_seen"]),
+            "exploratory_targets_seen": int(lifecycle["exploratory_targets_seen"]),
+            "total_quotes_opened": int(lifecycle["total_quotes_opened"]),
+            "total_quotes_cancelled": int(lifecycle["total_quotes_cancelled"]),
+            "total_trade_print_fills_seen": int(total_fills_seen),
+            "final_open_quotes": int(summary.get("open_quotes") or 0),
+            "final_filled_quotes": final_filled,
+            "final_cancelled_quotes": int(summary.get("cancelled_quotes") or 0),
+            "quote_rejection_breakdown": dict(lifecycle["quote_rejection_breakdown"]),
+            "targets_seen_over_run": list(lifecycle["targets_seen"].values()),
+            "targets_final": [
+                {
+                    "market_ticker": str(row.get("market_ticker")),
+                    "side": str(row.get("side")),
+                    "tier": str(row.get("tier")),
+                }
+                for row in summary.get("_final_targets", [])
+            ],
+            "targets_with_any_fill": list(lifecycle["targets_with_any_fill"].values()),
+            "targets_removed_reason": dict(lifecycle["targets_removed_reason"]),
+            "fill_seen_in_history_but_not_final": bool(total_fills_seen > final_filled),
+            "research_only": True,
+            "readiness_promotion": "none",
+        }
+    )
+    summary.pop("_final_targets", None)
+
+
+def _quote_rejection_bucket(reason: str) -> str:
+    text = reason.lower()
+    if "spread" in text and "below minimum" in text:
+        return "spread_below_minimum"
+    if "already has" in text and "open paper quote" in text:
+        return "max_open_quotes_reached"
+    if "stale" in text or "expired" in text or "market status" in text:
+        return "stale_or_expired_target"
+    return "other"
+
+
+def _target_key(row: dict[str, Any]) -> str:
+    return f"{row.get('market_ticker')}|{row.get('side')}"
+
+
+def _target_descriptor(row: dict[str, Any]) -> dict[str, str]:
+    return {
+        "market_ticker": str(row.get("market_ticker")),
+        "side": str(row.get("side")),
+        "tier": str(row.get("tier") or ""),
+    }
 
 
 def _export(summary: dict[str, Any], targets: list[dict[str, Any]], target_results: list[dict[str, Any]], actions: list[dict[str, Any]]) -> dict[str, str]:
