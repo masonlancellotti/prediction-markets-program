@@ -22,6 +22,21 @@
 - 2026-05-21 Sportsbook References: `match-live-snapshots --reference-snapshot` can attach saved reference snapshots as `reference_context` observability summaries without changing pair generation or actions.
 - 2026-05-21 Sportsbook References: added `explain-reference-context` to compare executable snapshots against The Odds API reference snapshots for diagnostic-only title/entity matches, stale flags, and no-vig context.
 - 2026-05-21 LLM Relationship Review: added `llm-review-relationships --stub` to attach saved-file LLM audit sidecars to matcher/evaluator reports without changing deterministic relationships or actions.
+- 2026-05-21 Venue Expansion Plan: added non-networked executable-venue capability matrix and recommended SX Bet read-only market/orderbook research as the next adapter, with ForecastEx/IBKR, Azuro, Omen/Gnosis, and PredictIt deferred or blocked.
+- 2026-05-21 SX Bet Feasibility: added static `sx_bet_research_snapshot_v1` fixture parsing and documentation; SX Bet remains planned/not implemented and cannot create candidate pairs or paper candidates.
+- 2026-05-22 SX Bet Boundary: added inert live-read-only boundary metadata for future endpoint categories, stage gates, redaction policy, rate-limit assumptions, and fail-closed rules; still no network/auth/wallet/signing/execution logic.
+- 2026-05-22 Provenance: default `python scan.py` now labels fixture/sample data with `data_source_mode=STATIC_FIXTURE`, writes report provenance, and `source-readiness` prints a key-safe API/source checklist without exposing secrets.
+- 2026-05-22 Provenance: clarified source diagnostics so executable sources can be pair-research participants while no single source is marked as creating paper candidates; live snapshot inspection now distinguishes match-shape readiness from paper-simulation readiness.
+- 2026-05-22 Live Read-Only Overlap: added explicit `fetch-live-overlap-universe` to fetch and locally retain Kalshi/Polymarket category/query universes for saved-snapshot matching diagnostics without changing default fixture scans or action gates.
+- 2026-05-22 Live Match Enrichment: added explicit `enrich-live-match-candidates` to enrich only current saved `WATCH`/`MANUAL_REVIEW` Kalshi/Polymarket match pairs with read-only depth and quote timestamps while keeping fee and relationship blockers authoritative.
+- 2026-05-22 Live Match Enrichment: wired conservative fee diagnostics into `enrich-live-match-candidates`; Kalshi uses the reviewed conservative fee model, and Polymarket now uses the official public CLOB fee formula/category schedule with sports taker rate `0.03`, no zero-fee execution-style assumption, and a non-zero unknown-category fallback. The public fee-rate endpoint is not queried yet.
+- 2026-05-22 Live Match Enrichment: fee diagnostics now carry `gross_gap_caveat` when `contract_relationship.same_payoff` is false so gross-gap fields are not misread as arb edge.
+- 2026-05-22 Live Overlap Sweep: sweep rows now write labelled snapshots under `reports/live_readonly/sweep/...` rather than silently leaving default saved live snapshots as the final sweep row.
+- 2026-05-22 Live Overlap Sweep: added explicit `sweep-live-overlap-universe` for macro, politics, crypto, companies, AI, and weather diagnostics; it runs live read-only overlap/match/diagnose loops without changing default fixture scans or readiness gates.
+- 2026-05-22 Live Overlap Sweep: added conservative non-sports Kalshi source-specific profiles for AI/OpenAI, Fed/FOMC, CPI/inflation, BTC/ETH, elections, NVDA, and TSLA, with per-series attempt counts and zero-retention rows reported explicitly.
+- 2026-05-22 Source Inventory: added explicit `discover-live-source-inventory` to fetch public Kalshi series and Polymarket tag inventories into human-review-only reports without modifying overlap profiles or readiness gates.
+- 2026-05-22 Live Overlap Profiles: replaced dead guessed non-sports Kalshi tickers with evidence-backed profile entries from live source inventory while preserving human-review provenance and no readiness promotion.
+- 2026-05-22 Near-Miss Diagnostics: diagnostic entity detection now uses word-boundary matching so short tokens like `ETH` do not match unrelated words like `Netherlands`.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

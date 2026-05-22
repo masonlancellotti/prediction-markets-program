@@ -8,6 +8,7 @@ class SourceType(str, Enum):
     EXECUTABLE_VENUE = "EXECUTABLE_VENUE"
     REFERENCE_ONLY = "REFERENCE_ONLY"
     SIGNAL_ONLY = "SIGNAL_ONLY"
+    DO_NOT_USE_YET = "DO_NOT_USE_YET"
 
 
 class ImplementationStatus(str, Enum):
@@ -99,6 +100,38 @@ SOURCE_REGISTRY: dict[str, SourceEntry] = {
         implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
         allowed_effects=(),
         notes="Potential executable venue later, but not implemented because it likely requires auth/account/instrument work.",
+    ),
+    "sx_bet": SourceEntry(
+        source_id="sx_bet",
+        display_name="SX Bet",
+        source_type=SourceType.EXECUTABLE_VENUE,
+        implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
+        allowed_effects=(),
+        notes="Potential executable venue later; only read-only public market/orderbook research is allowed before any wallet/signing work.",
+    ),
+    "azuro": SourceEntry(
+        source_id="azuro",
+        display_name="Azuro",
+        source_type=SourceType.DO_NOT_USE_YET,
+        implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
+        allowed_effects=(),
+        notes="On-chain/protocol-style liquidity model does not fit the current schema-v1 executable venue path cleanly.",
+    ),
+    "omen_gnosis": SourceEntry(
+        source_id="omen_gnosis",
+        display_name="Omen / Gnosis Conditional Tokens",
+        source_type=SourceType.DO_NOT_USE_YET,
+        implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
+        allowed_effects=(),
+        notes="Protocol/indexer-style conditional-token markets require separate schema and settlement-token analysis before use.",
+    ),
+    "predictit": SourceEntry(
+        source_id="predictit",
+        display_name="PredictIt",
+        source_type=SourceType.DO_NOT_USE_YET,
+        implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
+        allowed_effects=(),
+        notes="May have public read-only market data, but not treated as executable unless permitted execution API support is proven.",
     ),
     "manifold": SourceEntry(
         source_id="manifold",

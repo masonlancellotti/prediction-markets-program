@@ -11,6 +11,7 @@ This taxonomy is infrastructure only. It does not add API fetchers, authenticati
 - `EXECUTABLE_VENUE`: a prediction-market venue that may eventually support cross-venue candidate pairs after read-only discovery, normalization, relationship classification, settlement checks, liquidity checks, fee checks, and freshness checks. This does not imply live trading.
 - `REFERENCE_ONLY`: a source with prices or probabilities useful for `WATCH` rows, diagnostics, calibration, or sanity checks, but not executable in this scanner.
 - `SIGNAL_ONLY`: a source useful for discovery, semantic clustering, or forecast context, but not for pricing an executable candidate.
+- `DO_NOT_USE_YET`: a known source or protocol that should not affect scanner output until a separate schema, legality, settlement, or execution-permission review is complete.
 
 ## Planned Registry
 
@@ -19,6 +20,10 @@ This taxonomy is infrastructure only. It does not add API fetchers, authenticati
 | Kalshi | `EXECUTABLE_VENUE` | Implemented read-only discovery/enrichment | May participate in candidate pairs with another implemented executable venue. |
 | Polymarket | `EXECUTABLE_VENUE` | Implemented read-only discovery/enrichment | May participate in candidate pairs with another implemented executable venue. |
 | ForecastEx / IBKR | `EXECUTABLE_VENUE` | Planned, not implemented | No candidate-pair impact yet because auth/account/instrument work is not in scope. |
+| SX Bet | `EXECUTABLE_VENUE` | Planned, not implemented | Candidate venue candidate for read-only research only; no wallet/signing/execution logic. |
+| Azuro | `DO_NOT_USE_YET` | Planned, not implemented | On-chain AMM/protocol model needs separate schema work before scanner use. |
+| Omen / Gnosis Conditional Tokens | `DO_NOT_USE_YET` | Planned, not implemented | Conditional-token/indexer model needs token, collateral, oracle, and settlement review first. |
+| PredictIt | `DO_NOT_USE_YET` | Planned, not implemented | Do not treat as executable unless permitted execution API support is proven. |
 | Manifold | `SIGNAL_ONLY` | Planned, not implemented | Discovery and semantic clustering only. |
 | Metaculus | `SIGNAL_ONLY` | Planned, not implemented | Discovery and semantic clustering only. |
 | The Odds API / sportsbooks | `REFERENCE_ONLY` | Implemented read-only reference snapshots | `WATCH` diagnostics only. |
@@ -32,6 +37,8 @@ This taxonomy is infrastructure only. It does not add API fetchers, authenticati
 - Planned executable venues cannot create candidate pairs until a separate reviewed implementation exists.
 
 Source type must be checked before candidate evaluation. A source being listed here is not permission to fetch it live, authenticate, trade, or treat its quotes as executable liquidity.
+
+`python scan.py source-readiness` exposes a key-safe operational checklist for implemented, reference-only, and planned sources. It reports whether expected API-key environment variables are configured as booleans only, whether live fetches are implemented, whether default `scan.py` uses the source live, and whether the source can participate in paper-candidate review.
 
 ## Review Boundaries
 

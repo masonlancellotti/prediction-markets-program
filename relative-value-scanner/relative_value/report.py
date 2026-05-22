@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from relative_value.models import RelativeValueCandidate
 
@@ -47,21 +47,27 @@ def _reason_priority(reason: str) -> tuple[int, str]:
     return 999, reason
 
 
-def write_json_report(candidates: Sequence[RelativeValueCandidate], path: Path) -> None:
+def write_json_report(candidates: Sequence[RelativeValueCandidate], path: Path, *, provenance: dict[str, Any] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "count": len(candidates),
         "candidates": [candidate.to_dict() for candidate in candidates],
     }
+    if provenance is not None:
+        payload["provenance"] = provenance
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def write_markdown_report(candidates: Sequence[RelativeValueCandidate], path: Path) -> None:
+def write_markdown_report(candidates: Sequence[RelativeValueCandidate], path: Path, *, provenance: dict[str, Any] | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = provenance.get("data_source_mode") if provenance else "STATIC_FIXTURE"
+    live_fetch_attempted = provenance.get("live_fetch_attempted") if provenance else False
     lines = [
         "# Relative Value Candidates",
         "",
         "Read-only offline scan. Sportsbook odds are reference-only and cannot create POSSIBLE_ARB.",
+        "",
+        f"Data source mode: `{mode}`. Live fetch attempted: `{str(live_fetch_attempted).lower()}`.",
         "",
         "| Action | Left | Left Outcome | Right | Right Outcome | Confidence | Mismatch Risk | Liquidity Top Contracts | Gap | Notes |",
         "|---|---|---|---|---|---:|---:|---:|---:|---|",

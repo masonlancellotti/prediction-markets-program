@@ -11,10 +11,55 @@ python -m pytest -q
 python scan.py
 ```
 
+`.env.example` is a template only. Keep real `.env` files local and
+uncommitted, and never paste API keys, account IDs, wallet keys, private keys,
+tokens, or credentials into ChatGPT, Claude, Codex, or git history.
+
 The offline scan reads fixture data from `venues/fixtures/` and writes:
 
 - `reports/relative_value_candidates.json`
 - `reports/relative_value_candidates.md`
+
+The default `python scan.py` run is a static fixture/sample canary, not live market data. Its stdout includes `data_source_mode=STATIC_FIXTURE` and `live_fetch_attempted=false`, and the JSON report includes a `provenance` block with source ids, source types, fixture paths, captured timestamps when present, API-key requirement flags, and live-fetch status.
+
+```powershell
+python scan.py source-readiness
+python scan.py source-readiness --output reports\source_readiness.json
+python scan.py source-smoke
+python scan.py discover-live-source-inventory
+```
+
+`source-readiness` prints a key-safe API/source checklist for Kalshi, Polymarket, The Odds API, SX Bet, ProphetX, IBKR/ForecastEx, Crypto.com, and Robinhood. It reports whether an API key env var is configured as a boolean only and never prints key values. Kalshi and Polymarket may participate in candidate-pair research, but no single source is reported as able to create a paper candidate by itself.
+
+`source-smoke` is an explicit live-read-only connection smoke test. It loads local `.env` values without printing them, attempts only reviewed public/read-only fetch patterns, reports configured keys as booleans, and keeps planned sources as `LIVE_FETCH_NOT_IMPLEMENTED`.
+
+`discover-live-source-inventory` is explicit-only public inventory discovery for human review. It writes `reports\live_source_inventory.json` and `reports\live_source_inventory.md` with Kalshi series rows, Polymarket tag rows, likely category matches, and profile suggestions. It does not modify overlap profiles, assert overlap or same-payoff, or change any readiness gate.
+
+```powershell
+python scan.py fetch-live-readonly --sources kalshi,polymarket,the_odds_api --max-markets 25
+python scan.py fetch-live-overlap-universe --category sports --max-markets 500
+python scan.py sweep-live-overlap-universe --categories macro,politics,crypto,companies,ai,weather --max-markets 500
+python scan.py inspect-live-snapshots
+python scan.py match-live-readonly-snapshots
+python scan.py enrich-live-match-candidates
+python scan.py diagnose-live-matching
+```
+
+`fetch-live-readonly` is also explicit-only. It writes sanitized live read-only snapshots and a manifest under `reports\live_readonly\`; it is not used by default `python scan.py`, does not authenticate accounts, does not read balances or positions, does not sign, and does not place or cancel orders. The Odds API output remains `REFERENCE_ONLY`.
+
+`fetch-live-overlap-universe` is an explicit Kalshi/Polymarket-only helper for reducing unrelated live sample comparisons. It fetches read-only market discovery, locally retains a requested category or query, writes updated Kalshi/Polymarket snapshots under `reports\live_readonly\`, and writes overlap diagnostics under `reports\live_overlap_universe_*`. It does not use The Odds API as an executable leg, change matching thresholds, assert same-payoff, or emit candidate actions.
+
+`sweep-live-overlap-universe` is an explicit non-sports diagnostic loop over macro/economics, politics, crypto, companies, AI, and weather queries. For each query it fetches the overlap universe, inspects saved snapshots, runs saved-snapshot matching, runs diagnostics, and writes `reports\live_overlap_sweep.json` plus `reports\live_overlap_sweep.md`. It is for deciding where to investigate next, not for paper/live readiness.
+
+`inspect-live-snapshots` summarizes saved snapshot shape, safety status, reference-only status, and blockers before any future live matching. Its match-shape readiness fields mean required saved-snapshot identifiers/text/deadlines exist; they do not mean paper-simulation readiness. It writes `reports\live_snapshot_inspection.json` and `reports\live_snapshot_inspection.md` without scoring or action promotion.
+
+`match-live-readonly-snapshots` reads the saved Kalshi and Polymarket snapshots from disk, validates them, and runs the conservative saved-snapshot matcher. It writes `reports\live_readonly_match_report.json` and `reports\live_readonly_match_report.md` with research-only `WATCH`/`MANUAL_REVIEW` rows. It never fetches live APIs and never treats The Odds API reference snapshot as an executable leg.
+
+`enrich-live-match-candidates` reads the current `reports\live_readonly_match_report.json`, selects only existing `WATCH`/`MANUAL_REVIEW` Kalshi/Polymarket pairs, and fetches read-only orderbook metadata for those pair legs only. It writes `reports\live_match_candidate_enrichment.json` and `reports\live_match_candidate_enrichment.md` with depth, orderbook fetch timestamps, quote ages, bid/ask source tags, and fee-model status diagnostics. Kalshi uses the existing reviewed conservative fee model. Polymarket uses the official public CLOB fee formula `C * feeRate * p * (1 - p)` with reviewed category rates, including documented sports taker fee rate `0.03`, and a non-zero conservative unknown-category fallback; it does not assume maker execution or zero fees. The public token/market fee-rate endpoint is not wired into this command yet, so `polymarket_fee_source_used` is `official_category_schedule`, `conservative_unknown`, or `missing_or_unreviewed`. Relationship blockers, weak semantic-only matches, and sports scope/team guardrails remain blockers; fee-adjusted gaps, when present, are diagnostics only and do not grant paper or live readiness. When `contract_relationship.same_payoff` is false, rows include `gross_gap_caveat="same_payoff=false; gross_gap_cents is not arb edge"`.
+
+`sweep-live-overlap-universe` writes per-row labelled snapshots under `reports\live_readonly\sweep\...` so a sweep does not silently leave the default saved live snapshots as the final category/query. Rerun a targeted `fetch-live-overlap-universe` before `enrich-live-match-candidates` when you want the default saved snapshots to represent a specific universe.
+
+`diagnose-live-matching` reads the same saved snapshots and explains rejected Kalshi/Polymarket comparisons without forcing matches, fetching APIs, changing thresholds, or promoting readiness. It writes `reports\live_matching_diagnostics.json` and `reports\live_matching_diagnostics.md`; The Odds API remains reference context only.
 
 ## Live Read-Only Polymarket Discovery
 

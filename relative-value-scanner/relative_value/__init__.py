@@ -1,7 +1,7 @@
 """Pure relative-value scanner logic."""
 
 from relative_value.config import ScannerConfig
-from relative_value.fees import FeeModel, FlatFeeModel, KalshiTieredFeeModel, NoFeeModel
+from relative_value.fees import FeeModel, FlatFeeModel, KalshiTieredFeeModel, NoFeeModel, PolymarketConservativeFeeModel
 from relative_value.models import (
     Action,
     MatchAssessment,
@@ -19,6 +19,7 @@ __all__ = [
     "KalshiTieredFeeModel",
     "MatchAssessment",
     "NoFeeModel",
+    "PolymarketConservativeFeeModel",
     "NormalizedMarket",
     "RelativeValueCandidate",
     "RelativeValueScanner",

@@ -1,10 +1,16 @@
 .env
+.env.local
+.env.*
+*.env
+!.env.example
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 reports/*.json
 reports/*.md
+reports/**/*.json
+reports/**/*.md
 !reports/.gitkeep
 !reports/sweep_manifests/
 !reports/sweep_manifests/*.json

@@ -6,6 +6,19 @@ Exchange quotes can indicate executable market prices only if the venue adapter 
 
 Adapters must normalize top-of-book size into `liquidity_top_contracts`, measured in contracts. Do not pass raw USD, USDC, or venue notional into this field.
 
+## Default Scan Provenance
+
+`python scan.py` is an offline fixture/sample canary. Its seven current candidates come from `venues/fixtures/kalshi_markets.json`, `venues/fixtures/polymarket_markets.json`, and `venues/fixtures/the_odds_api_events.json`; no live API fetch is attempted by the default command.
+
+The default JSON report includes `provenance.data_source_mode=STATIC_FIXTURE`, per-source `snapshot_path`, `source_id`, `source_type`, captured timestamps when present, key-safe API-key configuration booleans, and `live_fetch_attempted=false`. The Odds API fixture source is still `REFERENCE_ONLY`; a configured `THE_ODDS_API_KEY` only enables explicit `fetch-the-odds-api` use and does not make sportsbook rows executable.
+
+`python scan.py source-readiness` prints a key-safe source/API checklist. It reports env var names and `api_key_configured` booleans only; it must not print key values. Implemented executable sources may be marked as able to participate in candidate-pair research, but no single source is marked as able to create a paper candidate by itself.
+
+`.env.example` is a template only. Real `.env` files must stay local and
+uncommitted, and API keys, account identifiers, wallet keys, private keys,
+tokens, or credentials should never be pasted into ChatGPT, Claude, Codex, or
+git history.
+
 ## Source Taxonomy
 
 Every source must be classified before it affects scanner output. `EXECUTABLE_VENUE` sources may participate in candidate pairs only when implemented and still subject to relationship, settlement, freshness, fee, and liquidity gates. `REFERENCE_ONLY` sources may inform `WATCH` rows and diagnostics only. `SIGNAL_ONLY` sources may help discovery or semantic clustering only.
@@ -89,6 +102,10 @@ A filled markout is research evidence that a later saved quote was observed near
 The runner does not sleep or wait for later markouts. It prints the exact markout replay command to run after separate later snapshots have been captured. It does not trade, authenticate, read accounts, place orders, score through `RelativeValueScanner`, use midpoint fills, make profit claims, or emit `PAPER` / `POSSIBLE_ARB`.
 
 The runner forwards evaluator review flags such as `--max-settlement-delta-seconds`, `--min-net-gap`, `--min-top-of-book-size`, and `--accept-unit-mismatch`. These are pass-through controls only; evaluator defaults and settlement-gate logic are unchanged.
+
+`python scan.py inspect-live-snapshots` is shape inspection only. A row being match-shape ready means saved snapshot identifiers, text, and deadline fields are present; it is not paper-simulation readiness and does not imply depth, fees, same-payoff equivalence, or action promotion.
+
+`python scan.py fetch-live-overlap-universe` is an explicit read-only Kalshi/Polymarket targeting helper. It fetches live discovery, locally retains a category or query, writes the saved live-readonly Kalshi/Polymarket snapshots used by inspection/matching diagnostics, and writes overlap reports. It does not use sportsbook/reference rows as executable legs, does not lower similarity thresholds, does not assert same-payoff, and does not emit `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
 
 ## Sportsbook Odds
 

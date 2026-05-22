@@ -92,6 +92,32 @@ class PolymarketGammaClient:
         raw_response = self.fetch_events(limit=limit, tag_slug=tag_slug, tag_id=tag_id)
         return build_polymarket_market_snapshot(raw_response, filter_options=filter_options)
 
+    def fetch_tag_inventory(self, limit: int = 500) -> Any:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        query_string = urlencode({"limit": str(limit)})
+        request = Request(
+            f"{self.base_url}/tags?{query_string}",
+            headers={
+                "Accept": "application/json",
+                "User-Agent": self.user_agent,
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                payload = response.read().decode("utf-8")
+        except HTTPError as exc:
+            raise RuntimeError(f"Polymarket Gamma API returned HTTP {exc.code} for /tags") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Polymarket Gamma tags request failed: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError("Polymarket Gamma tags request timed out") from exc
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Polymarket Gamma tags returned invalid JSON") from exc
+
 
 def build_polymarket_market_snapshot(
     raw_response: Any,

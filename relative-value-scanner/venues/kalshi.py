@@ -130,6 +130,33 @@ class KalshiReadOnlyClient:
         )
         return build_kalshi_market_snapshot(raw_response, filter_options=filter_options)
 
+    def fetch_series_inventory(self, limit: int = 500) -> Any:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        params = {"limit": str(limit)}
+        query_string = urlencode(params)
+        request = Request(
+            f"{self.base_url}/series?{query_string}",
+            headers={
+                "Accept": "application/json",
+                "User-Agent": self.user_agent,
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                payload = response.read().decode("utf-8")
+        except HTTPError as exc:
+            raise RuntimeError(f"Kalshi series API returned HTTP {exc.code} for /series") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Kalshi series API request failed: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError("Kalshi series API request timed out") from exc
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Kalshi series API returned invalid JSON") from exc
+
 
 def build_kalshi_market_snapshot(
     raw_response: Any,

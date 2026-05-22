@@ -2,7 +2,7 @@
 
 ## Root Files
 
-- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `match-live-snapshots`, `explain-reference-context`, `llm-review-relationships`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
+- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `fetch-live-overlap-universe`, `match-live-snapshots`, `explain-reference-context`, `llm-review-relationships`, `source-readiness`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
 - `README.md`: quick-start and action ladder.
 - `requirements.txt`: test dependency list.
 - `.env.example`: documents that this scaffold is offline/read-only.
@@ -14,12 +14,15 @@
 - `config.py`: conservative scanner thresholds.
 - `normalize.py`: text and datetime normalization helpers.
 - `reference_odds.py`: American odds and no-vig sportsbook conversion.
+- `provenance.py`: key-safe data-source provenance and source/API readiness checklist helpers for fixture scans and planned adapters.
 - `fees.py`: fee model interface plus flat, Kalshi-tiered, and no-fee implementations.
 - `contract_relationship.py`: deterministic contract-relationship classification constants and report shape for review/debugging only.
+- `executable_venue_plan.py`: non-networked capability matrix and recommendation for planned executable-venue expansion.
 - `llm_relationship_classifier.py`: stubbed no-network LLM relationship proposal validator and audit sidecar helpers; review metadata only.
 - `llm_relationship_review_report.py`: saved-report transformer that attaches stubbed LLM review sidecars to matcher/evaluator rows without changing deterministic fields or actions.
 - `reference_diagnostics.py`: diagnostic-only executable-to-reference snapshot comparison for The Odds API observability; no action promotion or edge math.
-- `source_registry.py`: non-networked source taxonomy and output-policy registry for executable, reference-only, and signal-only sources.
+- `source_registry.py`: non-networked source taxonomy and output-policy registry for executable, reference-only, signal-only, and do-not-use-yet sources.
+- `sx_bet_live_read_only_boundary.py`: inert design metadata for future SX Bet public read-only endpoint categories, stage gates, redaction policy, and fail-closed rules.
 - `matching.py`: match confidence and settlement mismatch risk.
 - `scoring.py`: action ladder and POSSIBLE_ARB hard gates.
 - `scanner.py`: deterministic pairwise scanner and default suppression of redundant opposite-side sportsbook reference rows.
@@ -36,6 +39,7 @@
 - `polymarket.py`: Polymarket fixture adapter plus public read-only Gamma discovery client, targeted `tag_slug`/`tag_id` controls, market filters, overlapping skip counters, and schema-versioned snapshot normalizer with `outcome_yes_token_price` plus Gamma `best_bid`/`best_ask` fields.
 - `orderbooks.py`: public read-only Kalshi and Polymarket orderbook clients plus depth metric parsers.
 - `the_odds_api.py`: sportsbook fixture adapter plus read-only The Odds API reference snapshot client and no-vig normalization.
+- `sx_bet.py`: static SX Bet feasibility parser that emits `sx_bet_research_snapshot_v1`; not executable schema-v1 and not scanner-integrated.
 - `fixtures/`: offline sample data.
 
 ## `tests/`
@@ -57,6 +61,8 @@
 - `test_llm_relationship_classifier.py`: strict LLM proposal schema, forbidden-output, audit sidecar, and no-behavior-change tests.
 - `test_llm_relationship_review_report.py`: saved matcher/evaluator report LLM audit sidecar tests; no real LLM or network calls.
 - `test_reference_diagnostics.py`: saved-file reference-context diagnostics tests for plausible matches, stale/malformed rows, and no disallowed actions.
+- `test_source_provenance.py`: fixture provenance and key-safe source-readiness tests.
+- `test_sx_bet_feasibility.py`: static SX Bet research-snapshot fixture/parser tests; no live API, wallet, signing, or execution behavior.
 
 ## `reports/`
 

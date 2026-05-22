@@ -19,6 +19,14 @@ def test_fixture_end_to_end_scan_produces_conservative_actions(tmp_path: Path) -
     actions = [candidate["action"] for candidate in payload["candidates"]]
     assert actions
     assert payload["count"] == 7
+    assert payload["provenance"]["data_source_mode"] == "STATIC_FIXTURE"
+    assert payload["provenance"]["live_fetch_attempted"] is False
+    assert payload["provenance"]["live_fetch_succeeded"] is False
+    assert {source["source_id"] for source in payload["provenance"]["sources"]} == {
+        "kalshi",
+        "polymarket",
+        "the_odds_api",
+    }
     assert Action.POSSIBLE_ARB.value not in actions
     assert all("opposite_reference_outcome_inverted" not in candidate["reasons"] for candidate in payload["candidates"])
     for candidate in payload["candidates"]:
