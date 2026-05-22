@@ -17,6 +17,8 @@ Alternate paths can be passed with `--polymarket` and `--kalshi`. Tuning flags a
 
 Snapshots must use `schema_version=1`. Missing or unsupported versions are reported as snapshot issues and no pair generation is trusted. Reference-only sibling snapshots such as The Odds API `schema_kind=reference_snapshot_v1` reports are diagnostics only; if routed into this matcher they fail closed as an unsupported schema kind and do not produce pairs.
 
+`--reference-snapshot <path>` can load saved `reference_snapshot_v1` files into a separate `reference_context` block. This path validates `source_type=REFERENCE_ONLY`, summarizes record/staleness/malformed-row diagnostics, and never feeds records into pair generation. Sportsbook/no-vig probabilities are observability context only; they are not executable prices, not settlement-equivalence proof, and cannot promote actions.
+
 ## Matching Approach
 
 The prototype uses documented common schema-v1 fields where possible:

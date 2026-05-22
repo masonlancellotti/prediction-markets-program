@@ -114,6 +114,13 @@ def main(argv: list[str] | None = None) -> int:
     match_parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "reports" / "live_snapshot_pairs.json")
     match_parser.add_argument("--min-similarity", type=float, default=0.68)
     match_parser.add_argument("--max-snapshot-age-hours", type=float, default=24.0)
+    match_parser.add_argument(
+        "--reference-snapshot",
+        type=Path,
+        action="append",
+        default=[],
+        help="Optional reference_snapshot_v1 file for observability diagnostics only.",
+    )
 
     enrich_parser = subparsers.add_parser(
         "enrich-orderbooks",
@@ -273,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
             args.output,
             min_similarity=args.min_similarity,
             max_snapshot_age_hours=args.max_snapshot_age_hours,
+            reference_snapshots=args.reference_snapshot,
         )
     if args.command == "enrich-orderbooks":
         return enrich_orderbooks(
@@ -488,6 +496,7 @@ def match_live_snapshots(
     output: Path,
     min_similarity: float = 0.68,
     max_snapshot_age_hours: float = 24.0,
+    reference_snapshots: list[Path] | None = None,
 ) -> int:
     try:
         payload = match_snapshot_files(
@@ -496,6 +505,7 @@ def match_live_snapshots(
             output_path=output,
             min_similarity=min_similarity,
             max_snapshot_age_hours=max_snapshot_age_hours,
+            reference_snapshot_paths=reference_snapshots,
         )
     except ValueError as exc:
         print(f"live_snapshot_match_status=FAILED message={exc}")
@@ -504,6 +514,7 @@ def match_live_snapshots(
     print(
         "live_snapshot_match_status=OK "
         f"pairs={payload['pair_count']} actions={','.join(sorted(actions)) or 'none'} "
+        f"reference_snapshots={payload['reference_context']['snapshot_count']} "
         f"output={output}"
     )
     return 0

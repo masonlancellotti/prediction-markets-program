@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 import scan
-from relative_value.live_snapshot_matcher import match_snapshot_files
+from relative_value.live_snapshot_matcher import load_reference_snapshot, match_snapshot_files
 from relative_value.models import Action, NormalizedMarket, SourceKind
 from relative_value.scoring import score_pair
 from venues.the_odds_api import (
@@ -65,6 +65,54 @@ def _sample_response() -> list[dict]:
             ],
         }
     ]
+
+
+def _executable_polymarket_snapshot() -> dict:
+    return {
+        "schema_version": 1,
+        "source": "polymarket_gamma",
+        "captured_at": "2026-05-21T12:00:00+00:00",
+        "normalized_markets": [
+            {
+                "venue": "polymarket",
+                "market_id": "poly-celtics",
+                "question": "Will the Boston Celtics beat the New York Knicks?",
+                "event_title": "New York Knicks at Boston Celtics",
+                "end_date": "2026-05-21T23:00:00+00:00",
+                "active": True,
+                "closed": False,
+                "liquidity": 100.0,
+                "raw": {},
+            }
+        ],
+    }
+
+
+def _executable_kalshi_snapshot() -> dict:
+    return {
+        "schema_version": 1,
+        "source": "kalshi_markets",
+        "captured_at": "2026-05-21T12:00:00+00:00",
+        "normalized_markets": [
+            {
+                "venue": "kalshi",
+                "ticker": "KXNBA-CELTICS",
+                "question": "Will the Boston Celtics beat the New York Knicks?",
+                "event_title": "New York Knicks at Boston Celtics",
+                "close_time": "2026-05-21T23:00:00+00:00",
+                "active": True,
+                "closed": False,
+                "status": "active",
+                "liquidity": 100.0,
+                "raw": {},
+            }
+        ],
+    }
+
+
+def _write_json(path: Path, payload: dict) -> Path:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def test_successful_response_normalizes_reference_records() -> None:
@@ -298,6 +346,81 @@ def test_reference_snapshot_fails_closed_in_live_snapshot_matcher_path(tmp_path:
     assert result["pairs"] == []
     assert "unsupported_schema_kind" in result["snapshot_issues"]["polymarket"]
     assert "missing_normalized_markets" in result["snapshot_issues"]["polymarket"]
+
+
+def test_reference_snapshot_loads_through_reference_context_path(tmp_path: Path) -> None:
+    snapshot = build_the_odds_api_reference_snapshot(
+        _sample_response(),
+        sport_key="basketball_nba",
+        regions="us",
+        markets="h2h",
+        odds_format="american",
+        retrieved_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    path = _write_json(tmp_path / "reference.json", snapshot)
+
+    loaded = load_reference_snapshot(path)
+
+    assert loaded.issues == ()
+    assert loaded.payload["schema_kind"] == "reference_snapshot_v1"
+    assert loaded.payload["source_type"] == "REFERENCE_ONLY"
+
+
+def test_reference_snapshot_context_does_not_change_pair_counts_or_actions(tmp_path: Path) -> None:
+    poly_path = _write_json(tmp_path / "polymarket.json", _executable_polymarket_snapshot())
+    kalshi_path = _write_json(tmp_path / "kalshi.json", _executable_kalshi_snapshot())
+    reference = build_the_odds_api_reference_snapshot(
+        _sample_response(),
+        sport_key="basketball_nba",
+        regions="us",
+        markets="h2h",
+        odds_format="american",
+        retrieved_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    reference_path = _write_json(tmp_path / "reference.json", reference)
+    now = datetime(2026, 5, 21, 12, 5, tzinfo=timezone.utc)
+
+    baseline = match_snapshot_files(poly_path, kalshi_path, now=now)
+    with_reference = match_snapshot_files(poly_path, kalshi_path, now=now, reference_snapshot_paths=[reference_path])
+
+    assert baseline["pair_count"] == 1
+    assert with_reference["pair_count"] == baseline["pair_count"]
+    assert [pair["action"] for pair in with_reference["pairs"]] == [pair["action"] for pair in baseline["pairs"]]
+    assert with_reference["reference_context"]["snapshot_count"] == 1
+    assert with_reference["reference_context"]["valid_record_count"] == 4
+    assert "PAPER_CANDIDATE" not in json.dumps(with_reference)
+    assert "POSSIBLE_ARB" not in json.dumps(with_reference)
+
+
+def test_stale_and_malformed_reference_rows_are_diagnostics_only(tmp_path: Path) -> None:
+    poly_path = _write_json(tmp_path / "polymarket.json", _executable_polymarket_snapshot())
+    kalshi_path = _write_json(tmp_path / "kalshi.json", _executable_kalshi_snapshot())
+    reference = build_the_odds_api_reference_snapshot(
+        _sample_response(),
+        sport_key="basketball_nba",
+        regions="us",
+        markets="h2h",
+        odds_format="american",
+        retrieved_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+        stale_after_seconds=60,
+    )
+    reference["normalized_records"].append({"source_type": "REFERENCE_ONLY"})
+    reference_path = _write_json(tmp_path / "reference.json", reference)
+
+    result = match_snapshot_files(
+        poly_path,
+        kalshi_path,
+        now=datetime(2026, 5, 21, 12, 5, tzinfo=timezone.utc),
+        reference_snapshot_paths=[reference_path],
+    )
+
+    assert result["pair_count"] == 1
+    assert result["pairs"][0]["action"] == "MANUAL_REVIEW"
+    assert result["pairs"][0]["ineligibility_reasons"] == []
+    assert "stale_reference_record" in result["reference_context"]["diagnostics"]
+    assert "malformed_reference_record" in result["reference_context"]["diagnostics"]
+    assert result["reference_context"]["stale_record_count"] == 4
+    assert result["reference_context"]["malformed_record_count"] == 1
 
 
 def test_default_scan_output_remains_offline_fixture_scan(capsys) -> None:

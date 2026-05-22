@@ -112,6 +112,13 @@ class LoadedSnapshot:
     issues: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class LoadedReferenceSnapshot:
+    path: Path
+    payload: dict[str, Any]
+    issues: tuple[str, ...]
+
+
 def match_snapshot_files(
     polymarket_path: Path,
     kalshi_path: Path,
@@ -119,18 +126,21 @@ def match_snapshot_files(
     now: datetime | None = None,
     max_snapshot_age_hours: float = DEFAULT_MAX_SNAPSHOT_AGE_HOURS,
     min_similarity: float = DEFAULT_MIN_SIMILARITY,
+    reference_snapshot_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     generated_at = now or datetime.now(timezone.utc)
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
         raise ValueError("now must include timezone information")
     polymarket = load_snapshot(polymarket_path, venue="polymarket")
     kalshi = load_snapshot(kalshi_path, venue="kalshi")
+    reference_snapshots = [load_reference_snapshot(path) for path in reference_snapshot_paths or []]
     payload = match_snapshots(
         polymarket,
         kalshi,
         generated_at=generated_at,
         max_snapshot_age_hours=max_snapshot_age_hours,
         min_similarity=min_similarity,
+        reference_snapshots=reference_snapshots,
     )
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,20 +171,43 @@ def load_snapshot(path: Path, venue: str) -> LoadedSnapshot:
     return LoadedSnapshot(venue=venue, path=path, payload=payload, issues=tuple(issues))
 
 
+def load_reference_snapshot(path: Path) -> LoadedReferenceSnapshot:
+    issues: list[str] = []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return LoadedReferenceSnapshot(path=path, payload={}, issues=("missing_reference_snapshot_file",))
+    except json.JSONDecodeError:
+        return LoadedReferenceSnapshot(path=path, payload={}, issues=("invalid_reference_snapshot_json",))
+    if not isinstance(payload, dict):
+        return LoadedReferenceSnapshot(path=path, payload={}, issues=("invalid_reference_snapshot_shape",))
+    if payload.get("schema_version") != SUPPORTED_SCHEMA_VERSION:
+        issues.append("unsupported_reference_schema_version")
+    if payload.get("schema_kind") != "reference_snapshot_v1":
+        issues.append("unsupported_reference_schema_kind")
+    if payload.get("source_type") != "REFERENCE_ONLY":
+        issues.append("reference_snapshot_not_reference_only")
+    if not isinstance(payload.get("normalized_records"), list):
+        issues.append("missing_reference_normalized_records")
+    return LoadedReferenceSnapshot(path=path, payload=payload, issues=tuple(issues))
+
+
 def match_snapshots(
     polymarket: LoadedSnapshot,
     kalshi: LoadedSnapshot,
     generated_at: datetime,
     max_snapshot_age_hours: float = DEFAULT_MAX_SNAPSHOT_AGE_HOURS,
     min_similarity: float = DEFAULT_MIN_SIMILARITY,
+    reference_snapshots: list[LoadedReferenceSnapshot] | None = None,
 ) -> dict[str, Any]:
     snapshot_issues = {
         "polymarket": list(polymarket.issues) + _snapshot_freshness_reasons(polymarket.payload, generated_at, max_snapshot_age_hours),
         "kalshi": list(kalshi.issues) + _snapshot_freshness_reasons(kalshi.payload, generated_at, max_snapshot_age_hours),
     }
+    reference_context = _reference_context_summary(reference_snapshots or [], generated_at)
     pairs: list[dict[str, Any]] = []
     if polymarket.issues or kalshi.issues:
-        return _output_payload(polymarket, kalshi, generated_at, snapshot_issues, pairs)
+        return _output_payload(polymarket, kalshi, generated_at, snapshot_issues, pairs, reference_context)
 
     polymarket_markets = polymarket.payload.get("normalized_markets", [])
     kalshi_markets = kalshi.payload.get("normalized_markets", [])
@@ -188,7 +221,7 @@ def match_snapshots(
             if candidate is not None:
                 pairs.append(candidate)
     pairs.sort(key=lambda item: (item["similarity_score"], item["action"]), reverse=True)
-    return _output_payload(polymarket, kalshi, generated_at, snapshot_issues, pairs)
+    return _output_payload(polymarket, kalshi, generated_at, snapshot_issues, pairs, reference_context)
 
 
 def _pair_candidate(
@@ -443,12 +476,97 @@ def _parse_datetime_or_none(value: str) -> datetime | None:
     return parsed
 
 
+def _reference_context_summary(
+    reference_snapshots: list[LoadedReferenceSnapshot],
+    generated_at: datetime,
+) -> dict[str, Any]:
+    snapshots: list[dict[str, Any]] = []
+    total_records = 0
+    valid_records = 0
+    stale_records = 0
+    malformed_records = 0
+    diagnostics: list[str] = []
+    for snapshot in reference_snapshots:
+        payload = snapshot.payload
+        records = payload.get("normalized_records", [])
+        records = records if isinstance(records, list) else []
+        snapshot_total = len(records)
+        snapshot_valid = 0
+        snapshot_stale = 0
+        snapshot_malformed = 0
+        snapshot_diagnostics = list(snapshot.issues)
+        for record in records:
+            if not isinstance(record, dict):
+                snapshot_malformed += 1
+                continue
+            record_issues = _reference_record_issues(record, generated_at)
+            if record_issues:
+                snapshot_diagnostics.extend(record_issues)
+            if "malformed_reference_record" in record_issues:
+                snapshot_malformed += 1
+                continue
+            if "stale_reference_record" in record_issues:
+                snapshot_stale += 1
+            snapshot_valid += 1
+        total_records += snapshot_total
+        valid_records += snapshot_valid
+        stale_records += snapshot_stale
+        malformed_records += snapshot_malformed
+        diagnostics.extend(snapshot_diagnostics)
+        snapshots.append(
+            {
+                "path": str(snapshot.path),
+                "source_id": payload.get("source_id"),
+                "source_type": payload.get("source_type"),
+                "schema_kind": payload.get("schema_kind"),
+                "record_count": payload.get("record_count", snapshot_total),
+                "normalized_count": payload.get("normalized_count", snapshot_total),
+                "valid_record_count": snapshot_valid,
+                "stale_record_count": snapshot_stale,
+                "malformed_record_count": snapshot_malformed,
+                "retrieved_at": payload.get("retrieved_at"),
+                "stale_after": payload.get("stale_after"),
+                "diagnostics": sorted(set(snapshot_diagnostics)),
+            }
+        )
+    return {
+        "source": "reference_snapshot_observability",
+        "snapshot_count": len(reference_snapshots),
+        "record_count": total_records,
+        "valid_record_count": valid_records,
+        "stale_record_count": stale_records,
+        "malformed_record_count": malformed_records,
+        "diagnostics": sorted(set(diagnostics)),
+        "snapshots": snapshots,
+        "notes": "Reference-only sportsbook rows are observability metadata only; they are never candidate legs.",
+    }
+
+
+def _reference_record_issues(record: dict[str, Any], generated_at: datetime) -> list[str]:
+    issues: list[str] = []
+    if record.get("source_type") != "REFERENCE_ONLY" or record.get("permission") != "REFERENCE_ONLY":
+        issues.append("reference_record_not_reference_only")
+    if record.get("is_executable") is not False:
+        issues.append("reference_record_not_non_executable")
+    if record.get("usable_for_trade_decision") is not False:
+        issues.append("reference_record_trade_decision_not_disabled")
+    if not (record.get("event_title") and record.get("bookmaker") and record.get("market_type")):
+        issues.append("malformed_reference_record")
+    stale_after = _parse_datetime_or_none(str(record.get("stale_after") or ""))
+    if stale_after is None:
+        issues.append("missing_reference_stale_after")
+    elif generated_at > stale_after:
+        issues.append("stale_reference_record")
+    return issues
+
+
 def _output_payload(
     polymarket: LoadedSnapshot,
     kalshi: LoadedSnapshot,
     generated_at: datetime,
     snapshot_issues: dict[str, list[str]],
     pairs: list[dict[str, Any]],
+    reference_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -457,8 +575,10 @@ def _output_payload(
         "inputs": {
             "polymarket": str(polymarket.path),
             "kalshi": str(kalshi.path),
+            "reference_snapshots": [snapshot["path"] for snapshot in (reference_context or {}).get("snapshots", [])],
         },
         "snapshot_issues": snapshot_issues,
+        "reference_context": reference_context or _reference_context_summary([], generated_at),
         "pair_count": len(pairs),
         "pairs": pairs,
         "disclaimer": "Read-only prototype. Pairs are WATCH/MANUAL_REVIEW only; no scoring, arb, profit, or trading claim.",

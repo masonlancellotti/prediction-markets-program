@@ -84,9 +84,12 @@ See `docs/SOURCE_TAXONOMY.md` for the planned registry and output policy.
 
 ```powershell
 python scan.py match-live-snapshots --polymarket reports\polymarket_markets_snapshot.json --kalshi reports\kalshi_markets_snapshot.json --output reports\live_snapshot_pairs.json
+python scan.py match-live-snapshots --polymarket reports\polymarket_markets_snapshot.json --kalshi reports\kalshi_markets_snapshot.json --reference-snapshot reports\the_odds_api_reference_snapshot.json --output reports\live_snapshot_pairs.json
 ```
 
 This reads saved schema-v1 snapshot files only. It emits tentative `WATCH` or `MANUAL_REVIEW` pairs for human review and never emits `PAPER`, `PAPER_CANDIDATE`, or `POSSIBLE_ARB`. It does not call live APIs, does not score through `RelativeValueScanner`, and does not claim arb, profit, or executable liquidity. Optional tuning flags are `--min-similarity` and `--max-snapshot-age-hours`.
+
+Optional `--reference-snapshot` files must be `schema_kind=reference_snapshot_v1` and `source_type=REFERENCE_ONLY`. They are loaded into `reference_context` observability diagnostics only, never treated as `normalized_markets`, never candidate legs, and never action-promotion evidence.
 
 The matcher uses strict question/event text overlap, then may add small saved-file-only aids for close settlement times and shared event/league keywords such as NBA, election, BTC, CPI, or Fed. These aids help surface review candidates; they are not settlement-rule proof and cannot produce trading actions.
 

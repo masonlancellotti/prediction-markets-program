@@ -19,6 +19,7 @@
 - 2026-05-21 Sportsbook References: added read-only `fetch-the-odds-api` reference snapshots with no-vig normalization; sportsbook rows remain non-executable diagnostics only.
 - 2026-05-21 Sportsbook References: The Odds API reports now carry `schema_kind=reference_snapshot_v1`, making them explicit sibling diagnostic snapshots rather than executable venue snapshots.
 - 2026-05-21 LLM Relationship Review: added a stubbed, no-network LLM proposal interface for relationship review metadata only; deterministic rules remain authoritative and LLM output cannot approve equivalence or candidate actions.
+- 2026-05-21 Sportsbook References: `match-live-snapshots --reference-snapshot` can attach saved reference snapshots as `reference_context` observability summaries without changing pair generation or actions.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

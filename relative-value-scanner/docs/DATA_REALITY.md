@@ -94,6 +94,8 @@ The runner forwards evaluator review flags such as `--max-settlement-delta-secon
 
 Sportsbook prices are reference prices only. Reference snapshots are sibling diagnostic reports, not executable venue snapshots for the live matcher. No-vig conversion removes listed overround, but it does not make the sportsbook leg executable inside this scanner. No-vig odds are diagnostics, not guaranteed edge. A sportsbook/reference row cannot create `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
 
+`python scan.py match-live-snapshots --reference-snapshot <path>` may load these saved reference snapshots into `reference_context` observability summaries. Stale or malformed sportsbook rows are reported as diagnostics, not semantic relationship proof. Reference rows cannot affect gross gap, net gap, fees, depth, unit checks, settlement eligibility, or action selection.
+
 ## Settlement Risk
 
 Similar event names are not enough. Missing settlement dates cap match confidence. Conflicting settlement dates create high mismatch risk and cap action severity. Different settlement rules also increase mismatch risk.

@@ -21,7 +21,7 @@
 - `matching.py`: match confidence and settlement mismatch risk.
 - `scoring.py`: action ladder and POSSIBLE_ARB hard gates.
 - `scanner.py`: deterministic pairwise scanner and default suppression of redundant opposite-side sportsbook reference rows.
-- `live_snapshot_matcher.py`: read-only schema-v1 snapshot matcher with conservative text, settlement-time, and event-keyword review signals; emits WATCH/MANUAL_REVIEW pairs only.
+- `live_snapshot_matcher.py`: read-only schema-v1 snapshot matcher with conservative text, settlement-time, and event-keyword review signals; emits WATCH/MANUAL_REVIEW pairs only and can attach separate reference snapshot observability summaries.
 - `orderbook_enrichment.py`: saved schema-v1 snapshot enrichment coordinator; attaches read-only depth metrics without scoring.
 - `paper_candidate_evaluator.py`: saved-JSON-only paper candidate ledger evaluator; emits WATCH/MANUAL_REVIEW/PAPER_CANDIDATE only.
 - `markout_replay.py`: saved-file-only paper candidate markout replay; fills research markout windows from later enriched snapshots without fetching, scoring, or trading.
