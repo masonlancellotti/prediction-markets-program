@@ -1,14 +1,173 @@
 from __future__ import annotations
 
 import json
+from json import JSONDecodeError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 SX_BET_RESEARCH_SCHEMA_KIND = "sx_bet_research_snapshot_v1"
 SX_BET_PERCENTAGE_ODDS_SCALE = 10**20
 SX_BET_USDC_SCALE = 10**6
+SX_BET_DEFAULT_BASE_URL = "https://api.sx.bet"
+SX_BET_DEFAULT_USER_AGENT = "relative-value-scanner/0.x (read-only research; no execution, no auth)"
+SX_BET_REDACTED_VALUE = "[REDACTED]"
+SX_BET_RAW_REDACTION_FIELDS = {
+    "authorization",
+    "authToken",
+    "token",
+    "signature",
+    "privateKey",
+    "wallet",
+    "maker",
+    "taker",
+    "session",
+    "executor",
+    "salt",
+    "nonce",
+    "affiliateAddress",
+    "eip712Signature",
+    "relayer",
+}
+
+
+class SXBetReadOnlyFetchError(RuntimeError):
+    def __init__(self, message: str, *, error_category: str = "READ_ONLY_FETCH_FAILED") -> None:
+        super().__init__(message)
+        self.error_category = error_category
+
+
+class SXBetReadOnlyClient:
+    def __init__(
+        self,
+        base_url: str = SX_BET_DEFAULT_BASE_URL,
+        timeout_seconds: float = 10.0,
+        user_agent: str = SX_BET_DEFAULT_USER_AGENT,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self.user_agent = user_agent
+
+    def fetch_research_snapshot(
+        self,
+        *,
+        max_markets: int = 25,
+        captured_at: datetime | None = None,
+        sport: str | None = None,
+        league: str | None = None,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        if max_markets <= 0:
+            raise ValueError("max_markets must be positive")
+        timestamp = captured_at or datetime.now(timezone.utc)
+        markets_response = self._fetch_active_markets(max_markets=max_markets)
+        markets = _sx_bet_markets_from_response(markets_response)
+        retained_markets, targeting_diagnostics = _filter_sx_bet_markets(
+            markets,
+            sport=sport,
+            league=league,
+            query=query,
+        )
+        market_hashes = [_string_or_none(market.get("marketHash")) for market in retained_markets if isinstance(market, dict)]
+        market_hashes = [market_hash for market_hash in market_hashes if market_hash]
+        orders_response = self._fetch_orders(market_hashes=market_hashes)
+        orders = _sx_bet_orders_from_response(orders_response)
+        payload = {
+            "markets": retained_markets,
+            "orders": orders,
+        }
+        snapshot = build_sx_bet_research_snapshot(_redact_sx_bet_raw_payload(payload), captured_at=timestamp)
+        snapshot["live_fetch_attempted"] = True
+        snapshot["live_fetch_succeeded"] = True
+        snapshot["execution_allowed_in_project_now"] = False
+        snapshot["can_create_candidate_pair"] = False
+        snapshot["can_create_paper_candidate"] = False
+        snapshot["endpoint_metadata"] = {
+            "base_url": self.base_url,
+            "markets_endpoint": "/markets/active",
+            "orders_endpoint": "/orders",
+            "market_count_requested": max_markets,
+            "orders_requested_for_market_hash_count": len(market_hashes),
+            "auth_used": False,
+            "wallet_or_signing_used": False,
+            "targeting_method": targeting_diagnostics["targeting_method"],
+        }
+        snapshot["targeting"] = targeting_diagnostics
+        snapshot["sx_bet_fetched_count"] = targeting_diagnostics["sx_bet_fetched_count"]
+        snapshot["sx_bet_retained_count"] = targeting_diagnostics["sx_bet_retained_count"]
+        snapshot["unresolved_blockers"] = [
+            "sx_bet_registry_status_planned_not_implemented",
+            "not_executable_schema_v1",
+            "not_integrated_with_matcher_or_evaluator",
+            "fee_model_not_reviewed",
+            "depth_units_not_normalized",
+            "settlement_wording_not_normalized",
+            "venue_restrictions_not_reviewed",
+        ]
+        snapshot["raw_redaction_policy"] = {
+            "allow_raw_network_echo": False,
+            "redacted_fields": sorted(SX_BET_RAW_REDACTION_FIELDS),
+        }
+        return snapshot
+
+    def _fetch_active_markets(self, *, max_markets: int) -> dict[str, Any]:
+        params = {
+            "pageSize": str(min(max_markets, 100)),
+            "onlyMainLine": "true",
+        }
+        return self._get_json("/markets/active", params)
+
+    def _fetch_orders(self, *, market_hashes: list[str]) -> dict[str, Any]:
+        if not market_hashes:
+            return {"status": "success", "data": []}
+        params = {
+            "marketHashes": ",".join(market_hashes),
+            "perPage": "1000",
+        }
+        return self._get_json("/orders", params)
+
+    def _get_json(self, path: str, params: dict[str, str]) -> dict[str, Any]:
+        query = urlencode(params)
+        url = f"{self.base_url}{path}" + (f"?{query}" if query else "")
+        request = Request(
+            url,
+            headers={
+                "User-Agent": self.user_agent,
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            if exc.code == 403:
+                raise SXBetReadOnlyFetchError(
+                    f"SX Bet public read-only fetch blocked with HTTP 403 for {path}",
+                    error_category="READ_ONLY_FETCH_BLOCKED",
+                ) from exc
+            raise SXBetReadOnlyFetchError(
+                f"SX Bet API returned HTTP {exc.code} for {path}",
+                error_category="HTTP_ERROR",
+            ) from exc
+        except URLError as exc:
+            raise SXBetReadOnlyFetchError(
+                f"SX Bet API request failed for {path}: {exc.reason}",
+                error_category="NETWORK_ERROR",
+            ) from exc
+        except TimeoutError as exc:
+            raise SXBetReadOnlyFetchError(
+                f"SX Bet API request timed out for {path}",
+                error_category="TIMEOUT",
+            ) from exc
+        except JSONDecodeError as exc:
+            raise SXBetReadOnlyFetchError(
+                f"SX Bet API returned invalid JSON for {path}",
+                error_category="MALFORMED_JSON",
+            ) from exc
 
 
 def build_sx_bet_research_snapshot(
@@ -50,6 +209,9 @@ def build_sx_bet_research_snapshot(
         "is_executable": False,
         "can_create_candidate_pair": False,
         "can_create_paper_candidate": False,
+        "execution_allowed_in_project_now": False,
+        "live_fetch_attempted": False,
+        "live_fetch_succeeded": False,
         "captured_at": timestamp.isoformat(),
         "market_count": len(markets),
         "research_market_count": len(research_markets),
@@ -68,7 +230,7 @@ def build_sx_bet_research_snapshot(
         ],
         "disclaimer": (
             "SX Bet feasibility snapshot only. Not executable schema-v1, not a scanner input, "
-            "and not eligible for PAPER_CANDIDATE or candidate-pair creation."
+            "and not eligible for paper-candidate or candidate-pair creation."
         ),
     }
 
@@ -78,6 +240,34 @@ def load_sx_bet_research_fixture(path: Path, *, captured_at: datetime | None = N
     if not isinstance(raw_payload, dict):
         raise ValueError("SX Bet research fixture must be a JSON object")
     return build_sx_bet_research_snapshot(raw_payload, captured_at=captured_at)
+
+
+def build_sx_bet_failure_snapshot(
+    *,
+    error_category: str,
+    error_message: str,
+    captured_at: datetime | None = None,
+) -> dict[str, Any]:
+    snapshot = build_sx_bet_research_snapshot({"markets": [], "orders": []}, captured_at=captured_at)
+    snapshot["live_fetch_attempted"] = True
+    snapshot["live_fetch_succeeded"] = False
+    snapshot["error_category"] = error_category
+    snapshot["error_message"] = error_message
+    snapshot["is_executable"] = False
+    snapshot["execution_allowed_in_project_now"] = False
+    snapshot["can_create_candidate_pair"] = False
+    snapshot["can_create_paper_candidate"] = False
+    snapshot["unresolved_blockers"] = [
+        "sx_bet_public_readonly_fetch_unavailable",
+        "sx_bet_registry_status_planned_not_implemented",
+        "not_executable_schema_v1",
+        "not_integrated_with_matcher_or_evaluator",
+    ]
+    snapshot["raw_redaction_policy"] = {
+        "allow_raw_network_echo": False,
+        "redacted_fields": sorted(SX_BET_RAW_REDACTION_FIELDS),
+    }
+    return snapshot
 
 
 def _research_market(
@@ -92,7 +282,12 @@ def _research_market(
     orderbook = _research_orderbook(orders)
     return {
         "market_hash": _string_or_none(market.get("marketHash")),
-        "event_title": _string_or_none(market.get("eventName") or market.get("gameLabel") or market.get("eventLabel")),
+        "event_title": _string_or_none(
+            market.get("eventName")
+            or market.get("gameLabel")
+            or market.get("eventLabel")
+            or _sx_bet_derived_event_title(market.get("teamOneName"), market.get("teamTwoName"))
+        ),
         "league": _string_or_none(market.get("leagueLabel") or market.get("league")),
         "sport": _string_or_none(market.get("sportLabel") or market.get("sport")),
         "market_type": market.get("type"),
@@ -122,6 +317,160 @@ def _research_market(
         "research_orderbook": orderbook,
         "raw": market,
     }
+
+
+def _sx_bet_derived_event_title(team_one: Any, team_two: Any) -> str | None:
+    team_one_text = _string_or_none(team_one)
+    team_two_text = _string_or_none(team_two)
+    if team_one_text and team_two_text:
+        return f"{team_one_text} vs {team_two_text}"
+    return team_one_text or team_two_text
+
+
+def _filter_sx_bet_markets(
+    markets: list[Any],
+    *,
+    sport: str | None,
+    league: str | None,
+    query: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    filters = {
+        "sport": _string_or_none(sport),
+        "league": _string_or_none(league),
+        "query": _string_or_none(query),
+    }
+    active_filters = {key: value for key, value in filters.items() if value}
+    retained: list[dict[str, Any]] = []
+    rejected_samples: list[dict[str, Any]] = []
+    rejected_counts: dict[str, int] = {}
+    for market in markets:
+        if not isinstance(market, dict):
+            rejected_counts["non_object_market"] = rejected_counts.get("non_object_market", 0) + 1
+            if len(rejected_samples) < 5:
+                rejected_samples.append({"event_title": None, "rejection_reasons": ["non_object_market"]})
+            continue
+        reasons = _sx_bet_filter_rejection_reasons(market, **filters)
+        if reasons:
+            for reason in reasons:
+                rejected_counts[reason] = rejected_counts.get(reason, 0) + 1
+            if len(rejected_samples) < 5:
+                rejected_samples.append(_sx_bet_filter_sample(market, rejection_reasons=reasons))
+            continue
+        retained.append(market)
+    return retained, {
+        "targeting_method": "local" if active_filters else "none",
+        "api_side_filtering_used": False,
+        "local_filtering_used": bool(active_filters),
+        "requested_sport": filters["sport"],
+        "requested_league": filters["league"],
+        "requested_query": filters["query"],
+        "sx_bet_fetched_count": len(markets),
+        "sx_bet_retained_count": len(retained),
+        "retained_sport_counts": _sx_bet_value_counts(retained, ("sportLabel", "sport")),
+        "retained_league_counts": _sx_bet_value_counts(retained, ("leagueLabel", "league")),
+        "rejected_count_by_reason": rejected_counts,
+        "sample_retained_events": [_sx_bet_filter_sample(market) for market in retained[:5]],
+        "sample_rejected_events": rejected_samples,
+        "compatible_universe_note": (
+            "Run fetch-live-overlap-universe for Kalshi/Polymarket with the same sport/league/query before compare-sx-bet-reference."
+            if active_filters
+            else "No SX Bet universe targeting requested."
+        ),
+    }
+
+
+def _sx_bet_filter_sample(market: dict[str, Any], *, rejection_reasons: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "market_hash": _string_or_none(market.get("marketHash")),
+        "event_title": _string_or_none(
+            market.get("eventName")
+            or market.get("gameLabel")
+            or market.get("eventLabel")
+            or _sx_bet_derived_event_title(market.get("teamOneName"), market.get("teamTwoName"))
+        ),
+        "sport": _string_or_none(market.get("sportLabel") or market.get("sport")),
+        "league": _string_or_none(market.get("leagueLabel") or market.get("league")),
+        "outcome_one_name": _string_or_none(market.get("outcomeOneName")),
+        "outcome_two_name": _string_or_none(market.get("outcomeTwoName")),
+        "rejection_reasons": rejection_reasons or [],
+    }
+
+
+def _sx_bet_filter_rejection_reasons(
+    market: dict[str, Any],
+    *,
+    sport: str | None,
+    league: str | None,
+    query: str | None,
+) -> list[str]:
+    reasons: list[str] = []
+    if sport and not _sx_bet_filter_matches(market, sport, scope="sport"):
+        reasons.append("sport_mismatch")
+    if league and not _sx_bet_filter_matches(market, league, scope="league"):
+        reasons.append("league_mismatch")
+    if query and not _sx_bet_filter_matches(market, query, scope="query"):
+        reasons.append("query_mismatch")
+    return reasons
+
+
+def _sx_bet_filter_matches(market: dict[str, Any], value: str, *, scope: str) -> bool:
+    normalized_value = value.strip().lower()
+    if not normalized_value:
+        return True
+    aliases = _sx_bet_filter_aliases(normalized_value)
+    text = _sx_bet_filter_text(market, scope=scope)
+    return any(alias in text for alias in aliases)
+
+
+def _sx_bet_filter_aliases(value: str) -> tuple[str, ...]:
+    aliases = {
+        "mlb": ("mlb", "baseball", "major league baseball"),
+        "baseball": ("baseball", "mlb", "major league baseball"),
+        "nba": ("nba", "basketball", "pro basketball"),
+        "basketball": ("basketball", "nba", "pro basketball"),
+        "nfl": ("nfl", "football", "pro football"),
+        "football": ("football", "nfl", "pro football"),
+        "nhl": ("nhl", "hockey", "ice hockey"),
+        "hockey": ("hockey", "nhl", "ice hockey"),
+        "soccer": ("soccer", "fifa", "premier league"),
+    }
+    return aliases.get(value, (value,))
+
+
+def _sx_bet_filter_text(market: dict[str, Any], *, scope: str) -> str:
+    if scope == "sport":
+        keys = ("sportLabel", "sport", "leagueLabel", "league")
+    elif scope == "league":
+        keys = ("leagueLabel", "league", "sportLabel", "sport")
+    else:
+        keys = (
+            "eventName",
+            "gameLabel",
+            "eventLabel",
+            "teamOneName",
+            "teamTwoName",
+            "outcomeOneName",
+            "outcomeTwoName",
+            "leagueLabel",
+            "league",
+            "sportLabel",
+            "sport",
+        )
+    return " ".join(str(market.get(key) or "").lower() for key in keys)
+
+
+def _sx_bet_value_counts(markets: list[dict[str, Any]], keys: tuple[str, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for market in markets:
+        value = None
+        for key in keys:
+            value = _string_or_none(market.get(key))
+            if value:
+                break
+        if not value:
+            value = "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def _research_orderbook(orders: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -233,3 +582,41 @@ def _scaled_int_to_float(value: Any, scale: int) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed / scale
+
+
+def _sx_bet_orders_from_response(response: dict[str, Any]) -> list[Any]:
+    data = response.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("orders", "data", "results"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _sx_bet_markets_from_response(response: dict[str, Any]) -> list[Any]:
+    data = response.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("markets", "data", "results"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _redact_sx_bet_raw_payload(payload: Any) -> Any:
+    if isinstance(payload, list):
+        return [_redact_sx_bet_raw_payload(item) for item in payload]
+    if isinstance(payload, dict):
+        redacted = {}
+        for key, value in payload.items():
+            if key in SX_BET_RAW_REDACTION_FIELDS:
+                redacted[key] = SX_BET_REDACTED_VALUE
+            else:
+                redacted[key] = _redact_sx_bet_raw_payload(value)
+        return redacted
+    return payload

@@ -113,9 +113,9 @@ SX_BET_ADAPTER_STAGES = (
     ),
     SXBetAdapterStage(
         stage=1,
-        name="live_read_only_raw_fetcher_disabled_by_default",
+        name="live_read_only_raw_fetcher_implemented_research_only",
         allowed=False,
-        description="Future public REST fetcher design only; no transport implementation in this checkpoint.",
+        description="Explicit public REST fetcher implemented for research-only snapshots; matcher/evaluator integration remains disabled.",
     ),
     SXBetAdapterStage(
         stage=2,
@@ -169,7 +169,8 @@ SX_BET_RAW_REDACTION_POLICY = {
 
 
 SX_BET_RATE_LIMIT_AND_RETRY_POLICY = {
-    "live_fetcher_implemented": False,
+    "live_fetcher_implemented": True,
+    "current_live_fetch_status": "READ_ONLY_FETCH_SUCCEEDED_RESEARCH_ONLY",
     "assume_rate_limits_exist": True,
     "future_timeout_required_seconds": 10.0,
     "future_retry_limit": 2,
@@ -193,7 +194,7 @@ SX_BET_FAIL_CLOSED_RULES = (
 def sx_bet_live_read_only_boundary_report() -> dict[str, object]:
     return {
         "source_id": "sx_bet",
-        "status": "design_only_no_network",
+        "status": "live_readonly_fetch_succeeded_research_only",
         "execution_allowed_in_project_now": False,
         "can_create_candidate_pair": False,
         "can_create_paper_candidate": False,

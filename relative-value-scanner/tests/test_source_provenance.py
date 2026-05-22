@@ -8,6 +8,7 @@ from relative_value.provenance import STATIC_FIXTURE, build_fixture_scan_provena
 from scan import (
     _OVERLAP_QUERY_PROFILES,
     _diagnostic_entities,
+    build_executable_venue_readiness_report,
     build_live_matching_diagnostics_report,
     build_live_match_candidate_enrichment_report,
     build_non_sports_near_miss_diagnostics_report,
@@ -22,6 +23,7 @@ from scan import (
     discover_live_source_inventory,
     fetch_live_overlap_universe,
     fetch_live_readonly,
+    executable_venue_readiness,
     inspect_live_snapshots,
     main,
     match_live_readonly_snapshots,
@@ -189,6 +191,94 @@ def test_source_smoke_separates_pair_participation_from_paper_candidate_creation
     assert rows["kalshi"]["can_create_paper_candidate"] is False
     assert rows["polymarket"]["can_participate_in_candidate_pair"] is True
     assert rows["polymarket"]["can_create_paper_candidate"] is False
+
+
+def test_executable_venue_readiness_rows_are_conservative(monkeypatch) -> None:
+    monkeypatch.delenv("THE_ODDS_API_KEY", raising=False)
+
+    report = build_executable_venue_readiness_report(env={})
+    rows = {row["source_id"]: row for row in report["rows"]}
+
+    assert report["default_scan_data_source_mode"] == "STATIC_FIXTURE"
+    assert report["live_api_fetch_attempted"] is False
+    assert report["recommended_next_adapter_candidate"]["source_id"] == "sx_bet"
+    assert "research fetch exists" in report["recommended_next_adapter_candidate"]["rationale"]
+    assert "candidate-eligible normalized adapter" in report["recommended_next_adapter_candidate"]["rationale"]
+    assert rows["kalshi"]["live_readonly_research_fetch_exists"] is True
+    assert rows["kalshi"]["live_readonly_candidate_adapter_exists"] is True
+    assert rows["kalshi"]["live_readonly_adapter_exists"] is True
+    assert rows["kalshi"]["env_configured"] == "not_applicable"
+    assert rows["polymarket"]["live_readonly_research_fetch_exists"] is True
+    assert rows["polymarket"]["live_readonly_candidate_adapter_exists"] is True
+    assert rows["polymarket"]["live_readonly_adapter_exists"] is True
+    assert rows["polymarket"]["env_configured"] == "not_applicable"
+    assert rows["sx_bet"]["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert rows["sx_bet"]["env_configured"] == "not_applicable"
+    assert rows["sx_bet"]["live_readonly_research_fetch_exists"] is True
+    assert rows["sx_bet"]["live_readonly_candidate_adapter_exists"] is False
+    assert rows["sx_bet"]["live_readonly_adapter_exists"] is False
+    assert rows["sx_bet"]["can_create_candidate_pair_now"] is False
+    assert rows["forecastex_ibkr"]["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert rows["prophetx"]["implementation_status"] == "NOT_IMPLEMENTED"
+    assert rows["crypto_com"]["source_type"] == "DO_NOT_USE_YET"
+    assert rows["robinhood"]["source_type"] == "DO_NOT_USE_YET"
+    assert rows["the_odds_api"]["source_type"] == "REFERENCE_ONLY"
+    assert rows["the_odds_api"]["live_readonly_research_fetch_exists"] is True
+    assert rows["the_odds_api"]["live_readonly_candidate_adapter_exists"] is False
+    assert rows["the_odds_api"]["live_readonly_adapter_exists"] is False
+    assert rows["the_odds_api"]["can_create_candidate_pair_now"] is False
+    assert all(row["can_create_paper_candidate_now"] is False for row in rows.values())
+    assert all(row["execution_allowed_in_project_now"] is False for row in rows.values())
+
+
+def test_executable_venue_readiness_command_writes_reports_without_secret(tmp_path: Path, monkeypatch, capsys) -> None:
+    secret = "super-secret-readiness-key"
+    monkeypatch.setenv("THE_ODDS_API_KEY", secret)
+
+    result = executable_venue_readiness(
+        json_output=tmp_path / "executable_readiness.json",
+        markdown_output=tmp_path / "executable_readiness.md",
+        load_env_file=False,
+    )
+
+    output = capsys.readouterr().out
+    report_text = (
+        (tmp_path / "executable_readiness.json").read_text(encoding="utf-8")
+        + (tmp_path / "executable_readiness.md").read_text(encoding="utf-8")
+        + output
+    )
+    payload = json.loads((tmp_path / "executable_readiness.json").read_text(encoding="utf-8"))
+    rows = {row["source_id"]: row for row in payload["rows"]}
+    assert result == 0
+    assert "executable_venue_readiness_status=OK" in output
+    assert "live_readonly_research_fetch_exists=true" in output
+    assert "live_readonly_candidate_adapter_exists=false" in output
+    assert rows["the_odds_api"]["env_configured"] is True
+    assert secret not in report_text
+    assert "POSSIBLE_ARB" not in report_text
+
+
+def test_executable_venue_readiness_loads_local_env_safely(tmp_path: Path, monkeypatch) -> None:
+    secret = "super-secret-dot-env-key"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("THE_ODDS_API_KEY", raising=False)
+    env_path = tmp_path / ".env"
+    env_path.write_text(f"THE_ODDS_API_KEY={secret}\n", encoding="utf-8")
+
+    result = executable_venue_readiness(
+        json_output=tmp_path / "executable_readiness.json",
+        markdown_output=tmp_path / "executable_readiness.md",
+    )
+
+    payload = json.loads((tmp_path / "executable_readiness.json").read_text(encoding="utf-8"))
+    report_text = (
+        (tmp_path / "executable_readiness.json").read_text(encoding="utf-8")
+        + (tmp_path / "executable_readiness.md").read_text(encoding="utf-8")
+    )
+    rows = {row["source_id"]: row for row in payload["rows"]}
+    assert result == 0
+    assert rows["the_odds_api"]["env_configured"] is True
+    assert secret not in report_text
 
 
 def test_discover_live_source_inventory_writes_human_review_report(tmp_path: Path, monkeypatch, capsys) -> None:

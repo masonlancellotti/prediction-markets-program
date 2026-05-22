@@ -2,7 +2,7 @@
 
 ## Scope
 
-This spike is a static, fixture-backed design layer for SX Bet. It does not call SX Bet live APIs, does not require an API key, and does not add wallet, signing, private-key, auth/session, order, cancel, routing, account, balance, position, or execution logic.
+This spike began as a static, fixture-backed design layer and now includes an explicit public live read-only research fetcher. It does not require an API key and does not add wallet, signing, private-key, auth/session, order, cancel, routing, account, balance, position, or execution logic.
 
 SX Bet remains `PLANNED_NOT_IMPLEMENTED` in the source registry. It cannot create candidate pairs, `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
 
@@ -26,11 +26,21 @@ This shape is intentionally not executable schema-v1. It is for feasibility revi
 
 The static fixture currently echoes raw fields into research rows for local review/debugging. That is safe only for hand-authored fixtures. Before any future networked adapter exists, raw response persistence must be filtered or redacted so auth tokens, wallet addresses, session data, signatures, maker/taker identifiers, or other sensitive fields cannot be stored accidentally. Wallet, signing, and execution remain explicitly out of scope.
 
+## Public Live Fetch Status
+
+`fetch-sx-bet-readonly` is an explicit research-only command that attempts public read-only market and order endpoints and writes the same non-executable research snapshot shape. On 2026-05-22, live fetch was verified from this environment with `sx_bet_readonly_fetch_status=OK`, 25 markets, 10 orders, `schema_kind=sx_bet_research_snapshot_v1`, `is_executable=false`, `can_create_candidate_pair=false`, and `can_create_paper_candidate=false`.
+
+The fetcher applies the network raw redaction policy before writing research snapshots. SX Bet remains `PLANNED_NOT_IMPLEMENTED`, is not matcher/evaluator integrated, and cannot create candidate pairs, `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
+
+Do not add cookies, browser automation, VPN/geoblock bypass, proxy/Tor logic, auth/session flows, wallet logic, signing, or order logic. If access fails again, the command must fail closed instead of adding bypass behavior.
+
 ## Candidate Adapter Shape
 
 ## Future Live-Read-Only Boundary
 
-No live adapter exists yet. The intended live-read-only boundary is documented as inert metadata in `relative_value/sx_bet_live_read_only_boundary.py`; it imports no transport or blockchain libraries and performs no network calls.
+Stage 1 public live-read-only fetching is implemented as an explicit research-only command and was verified on 2026-05-22. The boundary remains documented in `relative_value/sx_bet_live_read_only_boundary.py`; it imports no blockchain, browser automation, scraping, proxy, auth, wallet, signing, or execution libraries.
+
+No bypass of jurisdiction restrictions, Cloudflare controls, auth, wallet, signing, or order surfaces has been attempted and none will be added here.
 
 ### Intended Endpoint Categories
 
@@ -47,7 +57,7 @@ Realtime orderbook subscriptions may help freshness later, but SX Bet realtime d
 | Stage | Status | Description |
 | --- | --- | --- |
 | 0 | Current | Static fixture parser only. |
-| 1 | Not implemented | Live-read-only raw fetcher, disabled by default. |
+| 1 | Implemented research-only | Explicit public REST fetcher writes non-executable research snapshots; matcher/evaluator integration remains disabled. |
 | 2 | Not implemented | Raw snapshot archival with redaction. |
 | 3 | Not implemented | Schema validation and quote freshness checks. |
 | 4 | Not implemented | Normalized snapshot generation for manual review only. |

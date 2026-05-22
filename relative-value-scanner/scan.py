@@ -40,6 +40,7 @@ from relative_value.reference_diagnostics import explain_reference_context_files
 from relative_value.report import write_json_report, write_markdown_report
 from relative_value.scanner import RelativeValueScanner
 from relative_value.source_registry import ImplementationStatus, SOURCE_REGISTRY, SourceType
+from relative_value.executable_venue_plan import PLANNED_EXECUTABLE_VENUE_CAPABILITIES
 from venues.kalshi import (
     FixtureKalshiAdapter,
     KalshiMarketFilterOptions,
@@ -54,6 +55,7 @@ from venues.polymarket import (
     write_polymarket_market_snapshot,
 )
 from venues.the_odds_api import FixtureTheOddsApiAdapter, TheOddsApiReadOnlyClient, write_the_odds_api_reference_snapshot
+from venues.sx_bet import SXBetReadOnlyClient, SXBetReadOnlyFetchError, build_sx_bet_failure_snapshot
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -128,6 +130,48 @@ def main(argv: list[str] | None = None) -> int:
     odds_parser.add_argument("--timeout-seconds", type=float, default=10.0)
     odds_parser.add_argument("--stale-after-seconds", type=int, default=900)
     odds_parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "reports" / "the_odds_api_reference_snapshot.json")
+
+    sx_bet_parser = subparsers.add_parser(
+        "fetch-sx-bet-readonly",
+        help="Fetch a public read-only SX Bet research snapshot that remains non-executable.",
+    )
+    sx_bet_parser.add_argument("--max-markets", type=int, default=25)
+    sx_bet_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    sx_bet_parser.add_argument("--sport", help="Optional local sport filter for SX Bet research snapshots, for example baseball or basketball.")
+    sx_bet_parser.add_argument("--league", help="Optional local league filter for SX Bet research snapshots, for example MLB, NBA, or NFL.")
+    sx_bet_parser.add_argument("--query", help="Optional local free-text filter across SX Bet event/team/outcome fields.")
+    sx_bet_parser.add_argument("--label", help="Optional safe label for reports/sx_bet/<label>/sx_bet_research_snapshot.json.")
+    sx_bet_parser.add_argument("--output", type=Path)
+
+    sx_bet_compare_parser = subparsers.add_parser(
+        "compare-sx-bet-reference",
+        help="Compare saved SX Bet research snapshots against saved Kalshi/Polymarket snapshots as reference context only.",
+    )
+    sx_bet_compare_parser.add_argument(
+        "--sx-bet-snapshot",
+        type=Path,
+        default=None,
+    )
+    sx_bet_compare_parser.add_argument(
+        "--kalshi-snapshot",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "live_readonly" / "kalshi_live_readonly_snapshot.json",
+    )
+    sx_bet_compare_parser.add_argument(
+        "--polymarket-snapshot",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "live_readonly" / "polymarket_live_readonly_snapshot.json",
+    )
+    sx_bet_compare_parser.add_argument("--top-limit", type=int, default=20)
+    sx_bet_compare_parser.add_argument("--label", help="Optional safe label for reports/sx_bet_reference/<label>/ outputs.")
+    sx_bet_compare_parser.add_argument(
+        "--json-output",
+        type=Path,
+    )
+    sx_bet_compare_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+    )
 
     match_parser = subparsers.add_parser(
         "match-live-snapshots",
@@ -279,6 +323,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Print a read-only source/API readiness checklist and provenance summary.",
     )
     source_readiness_parser.add_argument("--output", type=Path, help="Optional JSON output path for the readiness report.")
+
+    executable_readiness_parser = subparsers.add_parser(
+        "executable-venue-readiness",
+        help="Audit next executable-venue read-only adapter readiness without making live calls.",
+    )
+    executable_readiness_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "executable_venue_readiness.json",
+    )
+    executable_readiness_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "executable_venue_readiness.md",
+    )
 
     source_smoke_parser = subparsers.add_parser(
         "source-smoke",
@@ -495,6 +554,26 @@ def main(argv: list[str] | None = None) -> int:
             stale_after_seconds=args.stale_after_seconds,
             output=args.output,
         )
+    if args.command == "fetch-sx-bet-readonly":
+        return fetch_sx_bet_readonly(
+            max_markets=args.max_markets,
+            timeout_seconds=args.timeout_seconds,
+            sport=args.sport,
+            league=args.league,
+            query=args.query,
+            label=args.label,
+            output=args.output,
+        )
+    if args.command == "compare-sx-bet-reference":
+        return compare_sx_bet_reference(
+            sx_bet_snapshot=args.sx_bet_snapshot,
+            kalshi_snapshot=args.kalshi_snapshot,
+            polymarket_snapshot=args.polymarket_snapshot,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            label=args.label,
+            top_limit=args.top_limit,
+        )
     if args.command == "match-live-snapshots":
         return match_live_snapshots(
             args.polymarket,
@@ -586,6 +665,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "source-readiness":
         return source_readiness(args.output)
+    if args.command == "executable-venue-readiness":
+        return executable_venue_readiness(
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
     if args.command == "source-smoke":
         return source_smoke(
             max_markets=args.max_markets,
@@ -710,6 +794,348 @@ def source_readiness(output: Path | None = None) -> int:
     if output is not None:
         print(f"source_readiness_output={output}")
     return 0
+
+
+def executable_venue_readiness(*, json_output: Path, markdown_output: Path, load_env_file: bool = True) -> int:
+    if load_env_file:
+        _load_local_env_safely()
+    report = build_executable_venue_readiness_report()
+    json_output.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    json_output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_output.write_text(_executable_venue_readiness_markdown(report), encoding="utf-8")
+    recommendation = report["recommended_next_adapter_candidate"]
+    print(
+        "executable_venue_readiness_status=OK "
+        "default_scan_data_source_mode=STATIC_FIXTURE "
+        "default_scan_live_fetch_attempted=false "
+        f"recommended_next={recommendation['source_id']} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    for row in report["rows"]:
+        print(
+            "executable_venue_readiness_row "
+            f"source={row['source_id']} type={row['source_type']} "
+            f"status={row['implementation_status']} "
+            f"env_configured={_env_configured_display(row['env_configured'])} "
+            f"live_readonly_research_fetch_exists={str(row['live_readonly_research_fetch_exists']).lower()} "
+            f"live_readonly_candidate_adapter_exists={str(row['live_readonly_candidate_adapter_exists']).lower()} "
+            f"live_readonly_adapter_exists={str(row['live_readonly_adapter_exists']).lower()} "
+            f"execution_allowed_now={str(row['execution_allowed_in_project_now']).lower()} "
+            f"can_create_candidate_pair_now={str(row['can_create_candidate_pair_now']).lower()} "
+            f"can_create_paper_candidate_now={str(row['can_create_paper_candidate_now']).lower()}"
+        )
+    return 0
+
+
+def build_executable_venue_readiness_report(*, env: dict[str, str] | None = None) -> dict[str, Any]:
+    environment = env if env is not None else os.environ
+    rows = [_executable_venue_readiness_row(source_id, environment) for source_id in _EXECUTABLE_READINESS_SOURCE_ORDER]
+    recommendation = _recommended_executable_venue_row(rows)
+    return {
+        "schema_version": 1,
+        "source": "executable_venue_readiness",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "default_scan_data_source_mode": "STATIC_FIXTURE",
+        "default_scan_live_fetch_attempted": False,
+        "live_api_fetch_attempted": False,
+        "research_only": True,
+        "readiness_promotion": "none",
+        "recommended_next_adapter_candidate": recommendation,
+        "rows": rows,
+        "safety": {
+            "execution_enabled": False,
+            "thresholds_changed": False,
+            "uses_reference_as_executable_leg": False,
+            "uses_the_odds_api_as_executable_leg": False,
+            "planned_sources_create_candidate_pairs": False,
+            "readiness_promotion": "none",
+        },
+        "disclaimer": (
+            "Readiness audit only. This command does not fetch live markets, does not inspect accounts, "
+            "does not grant paper/live readiness, and does not enable execution."
+        ),
+    }
+
+
+_EXECUTABLE_READINESS_SOURCE_ORDER = (
+    "kalshi",
+    "polymarket",
+    "forecastex_ibkr",
+    "sx_bet",
+    "prophetx",
+    "crypto_com",
+    "robinhood",
+    "the_odds_api",
+)
+
+
+def _executable_venue_readiness_row(source_id: str, env: dict[str, str]) -> dict[str, Any]:
+    definitions = _EXECUTABLE_READINESS_DEFINITIONS[source_id]
+    entry = SOURCE_REGISTRY.get(source_id)
+    capability = PLANNED_EXECUTABLE_VENUE_CAPABILITIES.get(source_id)
+    source_type = definitions.get("source_type") or (entry.source_type.value if entry else SourceType.DO_NOT_USE_YET.value)
+    implementation_status = definitions.get("implementation_status") or (
+        entry.implementation_status.value if entry else "NOT_IMPLEMENTED"
+    )
+    expected_env_vars = list(definitions.get("expected_env_vars") or ())
+    api_or_credentials_expected = bool(definitions["api_key_or_credentials_expected"])
+    live_readonly_candidate_adapter_exists = bool(
+        definitions.get("live_readonly_candidate_adapter_exists", definitions.get("live_readonly_adapter_exists", False))
+    )
+    live_readonly_research_fetch_exists = bool(
+        definitions.get("live_readonly_research_fetch_exists", live_readonly_candidate_adapter_exists)
+    )
+    live_readonly_adapter_exists = live_readonly_candidate_adapter_exists
+    execution_allowed_now = False
+    can_create_candidate_pair_now = bool(
+        entry
+        and entry.can_create_candidate_pair
+        and live_readonly_candidate_adapter_exists
+        and source_type == SourceType.EXECUTABLE_VENUE.value
+        and source_id in {"kalshi", "polymarket"}
+    )
+    return {
+        "source_id": source_id,
+        "display_name": definitions["display_name"],
+        "source_type": source_type,
+        "implementation_status": implementation_status,
+        "account_required": bool(definitions["account_required"]),
+        "api_key_or_credentials_expected": api_or_credentials_expected,
+        "expected_env_vars": expected_env_vars,
+        "env_configured": _readiness_env_configured(expected_env_vars, api_or_credentials_expected, env),
+        "live_readonly_research_fetch_exists": live_readonly_research_fetch_exists,
+        "live_readonly_candidate_adapter_exists": live_readonly_candidate_adapter_exists,
+        "live_readonly_adapter_exists": live_readonly_adapter_exists,
+        "live_readonly_smoke_exists": bool(definitions["live_readonly_smoke_exists"]),
+        "public_market_data_possible": bool(
+            definitions.get(
+                "public_market_data_possible",
+                capability.has_public_market_data if capability else live_readonly_research_fetch_exists,
+            )
+        ),
+        "orderbook_or_bidask_possible": bool(
+            definitions.get(
+                "orderbook_or_bidask_possible",
+                capability.has_orderbook_or_bid_ask if capability else live_readonly_research_fetch_exists,
+            )
+        ),
+        "depth_possible": bool(
+            definitions.get("depth_possible", capability.has_depth if capability else live_readonly_research_fetch_exists)
+        ),
+        "settlement_metadata_possible": bool(
+            definitions.get(
+                "settlement_metadata_possible",
+                capability.has_settlement_rules if capability else live_readonly_research_fetch_exists,
+            )
+        ),
+        "execution_allowed_in_project_now": execution_allowed_now,
+        "can_create_candidate_pair_now": can_create_candidate_pair_now,
+        "can_create_paper_candidate_now": False,
+        "next_required_step": definitions["next_required_step"],
+        "blocked_reason": definitions.get("blocked_reason"),
+    }
+
+
+def _readiness_env_configured(expected_env_vars: list[str], credentials_expected: bool, env: dict[str, str]) -> bool | str:
+    if expected_env_vars:
+        return all(bool(env.get(name)) for name in expected_env_vars)
+    if credentials_expected:
+        return False
+    return "not_applicable"
+
+
+def _env_configured_display(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    return str(value)
+
+
+def _recommended_executable_venue_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    for row in rows:
+        if row["source_id"] == "sx_bet":
+            return {
+                "source_id": row["source_id"],
+                "display_name": row["display_name"],
+                "recommendation": "best_next_read_only_research_adapter",
+                "rationale": (
+                    "SX Bet is the best next adapter candidate because a public read-only research fetch exists "
+                    "without project execution support, while auth-heavy venues remain higher-friction. It still has "
+                    "no candidate-eligible normalized adapter and cannot create candidate pairs."
+                ),
+            }
+    return {"source_id": "none", "display_name": "none", "recommendation": "none", "rationale": "No candidate found."}
+
+
+_EXECUTABLE_READINESS_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "kalshi": {
+        "display_name": "Kalshi",
+        "account_required": False,
+        "api_key_or_credentials_expected": False,
+        "expected_env_vars": [],
+        "live_readonly_research_fetch_exists": True,
+        "live_readonly_candidate_adapter_exists": True,
+        "live_readonly_adapter_exists": True,
+        "live_readonly_smoke_exists": True,
+        "public_market_data_possible": True,
+        "orderbook_or_bidask_possible": True,
+        "depth_possible": True,
+        "settlement_metadata_possible": True,
+        "next_required_step": "Already implemented as read-only; continue using as one executable research leg with relationship/depth/fee/freshness gates.",
+        "blocked_reason": None,
+    },
+    "polymarket": {
+        "display_name": "Polymarket",
+        "account_required": False,
+        "api_key_or_credentials_expected": False,
+        "expected_env_vars": [],
+        "live_readonly_research_fetch_exists": True,
+        "live_readonly_candidate_adapter_exists": True,
+        "live_readonly_adapter_exists": True,
+        "live_readonly_smoke_exists": True,
+        "public_market_data_possible": True,
+        "orderbook_or_bidask_possible": True,
+        "depth_possible": True,
+        "settlement_metadata_possible": True,
+        "next_required_step": "Already implemented as read-only; continue using as one executable research leg with relationship/depth/fee/freshness gates.",
+        "blocked_reason": None,
+    },
+    "forecastex_ibkr": {
+        "display_name": "IBKR / ForecastEx",
+        "account_required": True,
+        "api_key_or_credentials_expected": True,
+        "expected_env_vars": [],
+        "live_readonly_research_fetch_exists": False,
+        "live_readonly_candidate_adapter_exists": False,
+        "live_readonly_adapter_exists": False,
+        "live_readonly_smoke_exists": False,
+        "next_required_step": "Define reviewed read-only data boundary, auth/session policy, instrument discovery, and settlement metadata plan before any adapter.",
+        "blocked_reason": "NOT_IMPLEMENTED; likely auth/account/instrument complexity.",
+    },
+    "sx_bet": {
+        "display_name": "SX Bet",
+        "account_required": False,
+        "api_key_or_credentials_expected": False,
+        "expected_env_vars": [],
+        "live_readonly_research_fetch_exists": True,
+        "live_readonly_candidate_adapter_exists": False,
+        "live_readonly_adapter_exists": False,
+        "live_readonly_smoke_exists": False,
+        "next_required_step": "Use the existing research-only fetch for overlap review; build a separate candidate-eligible normalized adapter only after fee/depth/settlement/restriction review.",
+        "blocked_reason": "Research fetch exists, but no candidate-eligible adapter; fee/depth units/settlement wording/venue restrictions remain unreviewed.",
+    },
+    "prophetx": {
+        "display_name": "ProphetX",
+        "source_type": SourceType.EXECUTABLE_VENUE.value,
+        "implementation_status": "NOT_IMPLEMENTED",
+        "account_required": True,
+        "api_key_or_credentials_expected": True,
+        "expected_env_vars": [],
+        "live_readonly_research_fetch_exists": False,
+        "live_readonly_candidate_adapter_exists": False,
+        "live_readonly_adapter_exists": False,
+        "live_readonly_smoke_exists": False,
+        "public_market_data_possible": False,
+        "orderbook_or_bidask_possible": False,
+        "depth_possible": False,
+        "settlement_metadata_possible": False,
+        "next_required_step": "Perform API-permission and read-only market/depth/settlement review before implementation.",
+        "blocked_reason": "NOT_IMPLEMENTED; no reviewed source registry capability row yet.",
+    },
+    "crypto_com": {
+        "display_name": "Crypto.com",
+        "source_type": SourceType.DO_NOT_USE_YET.value,
+        "implementation_status": "NOT_IMPLEMENTED",
+        "account_required": True,
+        "api_key_or_credentials_expected": True,
+        "expected_env_vars": [],
+        "live_readonly_research_fetch_exists": False,
+        "live_readonly_candidate_adapter_exists": False,
+        "live_readonly_adapter_exists": False,
+        "live_readonly_smoke_exists": False,
+        "public_market_data_possible": False,
+        "orderbook_or_bidask_possible": False,
+        "depth_possible": False,
+        "settlement_metadata_possible": False,
+        "next_required_step": "Confirm prediction-market product fit, API permissions, and settlement schema before any adapter work.",
+        "blocked_reason": "NOT_IMPLEMENTED; product/schema fit not reviewed.",
+    },
+    "robinhood": {
+        "display_name": "Robinhood",
+        "source_type": SourceType.DO_NOT_USE_YET.value,
+        "implementation_status": "NOT_IMPLEMENTED",
+        "account_required": True,
+        "api_key_or_credentials_expected": True,
+        "expected_env_vars": [],
+        "live_readonly_research_fetch_exists": False,
+        "live_readonly_candidate_adapter_exists": False,
+        "live_readonly_adapter_exists": False,
+        "live_readonly_smoke_exists": False,
+        "public_market_data_possible": False,
+        "orderbook_or_bidask_possible": False,
+        "depth_possible": False,
+        "settlement_metadata_possible": False,
+        "next_required_step": "Confirm permitted read-only API access and prediction-market instrument coverage before any adapter work.",
+        "blocked_reason": "NOT_IMPLEMENTED; API permission/instrument fit not reviewed.",
+    },
+    "the_odds_api": {
+        "display_name": "The Odds API",
+        "account_required": True,
+        "api_key_or_credentials_expected": True,
+        "expected_env_vars": ["THE_ODDS_API_KEY"],
+        "live_readonly_research_fetch_exists": True,
+        "live_readonly_candidate_adapter_exists": False,
+        "live_readonly_adapter_exists": True,
+        "live_readonly_smoke_exists": True,
+        "public_market_data_possible": True,
+        "orderbook_or_bidask_possible": False,
+        "depth_possible": False,
+        "settlement_metadata_possible": False,
+        "next_required_step": "Use only as REFERENCE_ONLY context; never as an executable candidate leg.",
+        "blocked_reason": "REFERENCE_ONLY; sportsbook odds are not executable prices in this scanner.",
+    },
+}
+
+
+def _executable_venue_readiness_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# Executable Venue Readiness",
+        "",
+        "Explicit audit for read-only adapter readiness. This report does not fetch live data, inspect accounts, grant readiness, or enable execution.",
+        "",
+        f"- Recommended next adapter candidate: `{report['recommended_next_adapter_candidate']['source_id']}`",
+        f"- Rationale: {report['recommended_next_adapter_candidate']['rationale']}",
+        f"- Default scan mode: `{report['default_scan_data_source_mode']}`",
+        "",
+        "| Source | Type | Status | Env configured | Research fetch | Candidate adapter | Adapter alias | Smoke | Public data | Bid/ask | Depth | Settlement | Candidate pair now | Paper candidate now | Next step |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in report["rows"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row["display_name"]),
+                    _markdown_cell(row["source_type"]),
+                    _markdown_cell(row["implementation_status"]),
+                    _markdown_cell(_env_configured_display(row["env_configured"])),
+                    _markdown_cell(_yes_no(row["live_readonly_research_fetch_exists"])),
+                    _markdown_cell(_yes_no(row["live_readonly_candidate_adapter_exists"])),
+                    _markdown_cell(_yes_no(row["live_readonly_adapter_exists"])),
+                    _markdown_cell(_yes_no(row["live_readonly_smoke_exists"])),
+                    _markdown_cell(_yes_no(row["public_market_data_possible"])),
+                    _markdown_cell(_yes_no(row["orderbook_or_bidask_possible"])),
+                    _markdown_cell(_yes_no(row["depth_possible"])),
+                    _markdown_cell(_yes_no(row["settlement_metadata_possible"])),
+                    _markdown_cell(_yes_no(row["can_create_candidate_pair_now"])),
+                    _markdown_cell(_yes_no(row["can_create_paper_candidate_now"])),
+                    _markdown_cell(row["next_required_step"]),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def source_smoke(
@@ -5035,6 +5461,747 @@ def fetch_the_odds_api(
         f"output={output}"
     )
     return 0
+
+
+def fetch_sx_bet_readonly(
+    *,
+    max_markets: int,
+    timeout_seconds: float,
+    sport: str | None = None,
+    league: str | None = None,
+    query: str | None = None,
+    label: str | None = None,
+    output: Path | None = None,
+) -> int:
+    output = output or _sx_bet_research_snapshot_path(label)
+    try:
+        snapshot = SXBetReadOnlyClient(timeout_seconds=timeout_seconds).fetch_research_snapshot(
+            max_markets=max_markets,
+            sport=sport,
+            league=league,
+            query=query,
+        )
+        if label:
+            snapshot["targeting"]["label"] = _safe_pipeline_label(label)
+    except SXBetReadOnlyFetchError as exc:
+        snapshot = build_sx_bet_failure_snapshot(
+            error_category=exc.error_category,
+            error_message=str(exc),
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
+        print(
+            "sx_bet_readonly_fetch_status=FAILED "
+            f"error_category={exc.error_category} "
+            "is_executable=false "
+            "can_create_candidate_pair=false "
+            "can_create_paper_candidate=false "
+            f"output={output}"
+        )
+        return 1
+    except (RuntimeError, ValueError) as exc:
+        snapshot = build_sx_bet_failure_snapshot(
+            error_category="READ_ONLY_FETCH_FAILED",
+            error_message=str(exc),
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
+        print(
+            "sx_bet_readonly_fetch_status=FAILED "
+            "error_category=READ_ONLY_FETCH_FAILED "
+            "is_executable=false "
+            "can_create_candidate_pair=false "
+            "can_create_paper_candidate=false "
+            f"output={output}"
+        )
+        return 1
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
+    print(
+        "sx_bet_readonly_fetch_status=OK "
+        f"schema_kind={snapshot.get('schema_kind')} "
+        f"label={snapshot.get('targeting', {}).get('label') or 'none'} "
+        f"markets={snapshot.get('market_count')} "
+        f"research_markets={snapshot.get('research_market_count')} "
+        f"orders={snapshot.get('order_count')} "
+        f"targeting_method={snapshot.get('targeting', {}).get('targeting_method', 'none')} "
+        f"requested_sport={snapshot.get('targeting', {}).get('requested_sport') or 'none'} "
+        f"requested_league={snapshot.get('targeting', {}).get('requested_league') or 'none'} "
+        f"requested_query={snapshot.get('targeting', {}).get('requested_query') or 'none'} "
+        f"sx_bet_fetched_count={snapshot.get('sx_bet_fetched_count', snapshot.get('market_count'))} "
+        f"sx_bet_retained_count={snapshot.get('sx_bet_retained_count', snapshot.get('research_market_count'))} "
+        "is_executable=false "
+        "can_create_candidate_pair=false "
+        "can_create_paper_candidate=false "
+        f"output={output}"
+    )
+    if sport or league or query:
+        print(
+            "sx_bet_compatible_universe_note="
+            "run fetch-live-overlap-universe for Kalshi/Polymarket with the same sport/league/query before compare-sx-bet-reference"
+        )
+    return 0
+
+
+def compare_sx_bet_reference(
+    *,
+    sx_bet_snapshot: Path | None,
+    kalshi_snapshot: Path,
+    polymarket_snapshot: Path,
+    json_output: Path | None,
+    markdown_output: Path | None,
+    label: str | None = None,
+    top_limit: int = 20,
+) -> int:
+    safe_label = _safe_pipeline_label(label) if label else None
+    sx_bet_snapshot = sx_bet_snapshot or _sx_bet_research_snapshot_path(safe_label)
+    json_output = json_output or _sx_bet_reference_json_path(safe_label)
+    markdown_output = markdown_output or _sx_bet_reference_markdown_path(safe_label)
+    report = build_sx_bet_reference_context_report(
+        sx_bet_snapshot=sx_bet_snapshot,
+        executable_snapshots={
+            "kalshi": kalshi_snapshot,
+            "polymarket": polymarket_snapshot,
+        },
+        top_limit=top_limit,
+    )
+    json_output.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    json_output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_output.write_text(_sx_bet_reference_context_markdown(report), encoding="utf-8")
+    summary = report["summary"]
+    print(
+        "sx_bet_reference_context_status=OK "
+        "live_fetch_attempted=false "
+        f"sx_bet_markets={summary['sx_bet_markets_inspected']} "
+        f"kalshi_records={summary['kalshi_records_inspected']} "
+        f"polymarket_records={summary['polymarket_records_inspected']} "
+        f"top_candidates={summary['top_overlap_candidate_count']} "
+        f"asymmetric_universe_warning={summary.get('asymmetric_universe_warning') or 'none'} "
+        f"label={safe_label or 'none'} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
+
+
+def _sx_bet_research_snapshot_path(label: str | None = None) -> Path:
+    if label:
+        return PROJECT_ROOT / "reports" / "sx_bet" / _safe_pipeline_label(label) / "sx_bet_research_snapshot.json"
+    return PROJECT_ROOT / "reports" / "sx_bet_research_snapshot.json"
+
+
+def _sx_bet_reference_json_path(label: str | None = None) -> Path:
+    if label:
+        return PROJECT_ROOT / "reports" / "sx_bet_reference" / _safe_pipeline_label(label) / "sx_bet_reference_context.json"
+    return PROJECT_ROOT / "reports" / "sx_bet_reference_context.json"
+
+
+def _sx_bet_reference_markdown_path(label: str | None = None) -> Path:
+    if label:
+        return PROJECT_ROOT / "reports" / "sx_bet_reference" / _safe_pipeline_label(label) / "sx_bet_reference_context.md"
+    return PROJECT_ROOT / "reports" / "sx_bet_reference_context.md"
+
+
+def build_sx_bet_reference_context_report(
+    *,
+    sx_bet_snapshot: Path,
+    executable_snapshots: dict[str, Path],
+    top_limit: int = 20,
+) -> dict[str, Any]:
+    generated_at = datetime.now(timezone.utc)
+    sx_payload, sx_source_row = _load_sx_bet_reference_snapshot(sx_bet_snapshot)
+    executable_rows: dict[str, dict[str, Any]] = {}
+    executable_markets: list[dict[str, Any]] = []
+    for source_id, path in executable_snapshots.items():
+        payload, source_row = _load_executable_snapshot_for_sx_bet_reference(source_id, path)
+        executable_rows[source_id] = source_row
+        if source_row["status"] == "OK":
+            for market in _normalized_market_rows(payload):
+                executable_markets.append({"source_id": source_id, "market": market})
+    sx_markets = _sx_bet_reference_markets(sx_payload) if sx_source_row["status"] == "OK" else []
+    comparison_payload = _sx_bet_reference_comparison_payload(sx_markets, executable_markets, top_limit=top_limit)
+    comparisons = comparison_payload["top_overlap_candidates"]
+    source_rows = {"sx_bet": sx_source_row, **executable_rows}
+    blocker_counts = _counter_rows(reason for row in comparisons for reason in row["blockers"])
+    recommendation = _sx_bet_reference_review_recommendation(comparisons)
+    asymmetric_warning = _sx_bet_asymmetric_universe_warning(executable_rows)
+    warnings = _sx_bet_reference_warnings(asymmetric_warning, executable_rows)
+    return {
+        "schema_version": 1,
+        "source": "sx_bet_reference_context",
+        "generated_at": generated_at.isoformat(),
+        "diagnostic_only": True,
+        "is_reference_only": True,
+        "same_payoff_asserted": False,
+        "can_create_candidate_pair": False,
+        "can_create_paper_candidate": False,
+        "readiness_promotion": "none",
+        "live_fetch_attempted": False,
+        "source_rows": source_rows,
+        "summary": {
+            "sx_bet_markets_inspected": len(sx_markets),
+            "sx_bet_event_title_coverage_ratio": _sx_bet_event_title_coverage_ratio(sx_markets),
+            "kalshi_records_inspected": executable_rows.get("kalshi", {}).get("record_count", 0),
+            "polymarket_records_inspected": executable_rows.get("polymarket", {}).get("record_count", 0),
+            "structured_pairs_considered": comparison_payload["structured_pairs_considered"],
+            "structured_pairs_rejected": comparison_payload["structured_pairs_rejected"],
+            "sport_or_league_mismatch_rejections": comparison_payload["sport_or_league_mismatch_rejections"],
+            "top_overlap_candidate_count": len(comparisons),
+            "top_similarity": comparisons[0]["similarity_score"] if comparisons else 0.0,
+            "top_similarity_after_structured_filter": comparisons[0]["similarity_score"] if comparisons else 0.0,
+            "blockers": blocker_counts,
+            "recommendation": recommendation,
+            "future_review_recommendation": recommendation,
+            "asymmetric_universe_warning": asymmetric_warning,
+            "warnings": warnings,
+        },
+        "top_overlap_candidates": comparisons,
+        "structured_rejections_sample": comparison_payload["structured_rejections_sample"],
+        "disclaimer": (
+            "SX Bet reference comparison is diagnostic only. It does not normalize SX Bet into schema-v1, "
+            "does not use SX Bet as an executable leg, and does not assert same payoff."
+        ),
+    }
+
+
+def _sx_bet_asymmetric_universe_warning(executable_rows: dict[str, dict[str, Any]]) -> str | None:
+    for source_id in ("kalshi", "polymarket"):
+        row = executable_rows.get(source_id, {})
+        if row.get("status") != "OK" or int(row.get("record_count") or 0) == 0:
+            return "ASYMMETRIC_EXECUTABLE_UNIVERSE"
+    return None
+
+
+def _sx_bet_reference_warnings(
+    asymmetric_warning: str | None,
+    executable_rows: dict[str, dict[str, Any]],
+) -> list[str]:
+    warnings: list[str] = []
+    if asymmetric_warning:
+        impacted: list[str] = []
+        for source_id in ("kalshi", "polymarket"):
+            row = executable_rows.get(source_id, {})
+            status = row.get("status") or "MISSING"
+            record_count = int(row.get("record_count") or 0)
+            if status != "OK" or record_count == 0:
+                impacted.append(f"{source_id} status={status} records={record_count}")
+        detail = "; ".join(impacted) if impacted else "one or more executable snapshots is unavailable"
+        warnings.append(
+            f"{asymmetric_warning}: {detail}. Top SX Bet reference candidates may reflect an incomplete executable universe."
+        )
+    return warnings
+
+
+def _load_sx_bet_reference_snapshot(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not path.exists():
+        return {}, _snapshot_status_row("sx_bet", path, "NOT_FOUND", 0, "SX Bet research snapshot not found")
+    payload = _load_json_object(path)
+    if not payload:
+        return {}, _snapshot_status_row("sx_bet", path, "INVALID_JSON", 0, "SX Bet research snapshot is missing or invalid")
+    if payload.get("schema_kind") != "sx_bet_research_snapshot_v1":
+        return {}, _snapshot_status_row("sx_bet", path, "UNSUPPORTED_SCHEMA_KIND", 0, "Expected sx_bet_research_snapshot_v1")
+    rows = _sx_bet_reference_markets(payload)
+    return payload, _snapshot_status_row("sx_bet", path, "OK", len(rows), None)
+
+
+def _load_executable_snapshot_for_sx_bet_reference(source_id: str, path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not path.exists():
+        return {}, _snapshot_status_row(source_id, path, "NOT_FOUND", 0, f"{source_id} snapshot not found")
+    payload = _load_json_object(path)
+    if not payload:
+        return {}, _snapshot_status_row(source_id, path, "INVALID_JSON", 0, f"{source_id} snapshot is missing or invalid")
+    if payload.get("schema_version") != 1 or payload.get("schema_kind") not in (None, "market_snapshot_v1"):
+        return {}, _snapshot_status_row(source_id, path, "UNSUPPORTED_SCHEMA", 0, "Expected executable schema-v1 market snapshot")
+    rows = _normalized_market_rows(payload)
+    if not rows:
+        return payload, _snapshot_status_row(source_id, path, "MISSING_NORMALIZED_MARKETS", 0, "No normalized_markets rows")
+    return payload, _snapshot_status_row(source_id, path, "OK", len(rows), None)
+
+
+def _snapshot_status_row(
+    source_id: str,
+    path: Path,
+    status: str,
+    record_count: int,
+    message: str | None,
+) -> dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "path": str(path),
+        "status": status,
+        "record_count": record_count,
+        "message": message,
+    }
+
+
+def _sx_bet_reference_markets(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = payload.get("research_markets")
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _sx_bet_reference_comparisons(
+    sx_markets: list[dict[str, Any]],
+    executable_markets: list[dict[str, Any]],
+    *,
+    top_limit: int,
+) -> list[dict[str, Any]]:
+    return _sx_bet_reference_comparison_payload(
+        sx_markets,
+        executable_markets,
+        top_limit=top_limit,
+    )["top_overlap_candidates"]
+
+
+def _sx_bet_reference_comparison_payload(
+    sx_markets: list[dict[str, Any]],
+    executable_markets: list[dict[str, Any]],
+    *,
+    top_limit: int,
+) -> dict[str, Any]:
+    comparisons: list[dict[str, Any]] = []
+    structured_rejections: list[dict[str, Any]] = []
+    structured_pairs_considered = 0
+    sport_or_league_mismatch_rejections = 0
+    for sx_market in sx_markets:
+        sx_text = _sx_bet_reference_text(sx_market)
+        for executable in executable_markets:
+            structured_pairs_considered += 1
+            source_id = executable["source_id"]
+            market = executable["market"]
+            structured = _sx_bet_structured_compatibility(sx_market, market)
+            if structured["hard_rejected"]:
+                if "sport_mismatch" in structured["blockers"] or "league_mismatch" in structured["blockers"]:
+                    sport_or_league_mismatch_rejections += 1
+                structured_rejections.append(
+                    {
+                        "diagnostic_only": True,
+                        "is_reference_only": True,
+                        "same_payoff_asserted": False,
+                        "can_create_candidate_pair": False,
+                        "can_create_paper_candidate": False,
+                        "readiness_promotion": "none",
+                        "sx_bet_market": _sx_bet_reference_market_summary(sx_market),
+                        "executable_market": _executable_reference_market_summary(source_id, market),
+                        "structured_compatibility": structured,
+                        "blockers": [
+                            "sx_bet_reference_only",
+                            "same_payoff_not_asserted",
+                            *structured["blockers"],
+                        ],
+                    }
+                )
+                continue
+            executable_text = _executable_reference_text(market)
+            raw_score = _text_similarity(sx_text, executable_text)
+            score = round(raw_score, 6)
+            blockers = [
+                "sx_bet_reference_only",
+                "same_payoff_not_asserted",
+                "depth_units_not_normalized",
+                "fee_model_not_reviewed",
+                "settlement_wording_not_normalized",
+                "venue_restrictions_not_reviewed",
+                "not_candidate_pair_eligible",
+            ]
+            blockers.extend(structured["blockers"])
+            comparisons.append(
+                {
+                    "diagnostic_only": True,
+                    "is_reference_only": True,
+                    "same_payoff_asserted": False,
+                    "can_create_candidate_pair": False,
+                    "can_create_paper_candidate": False,
+                    "readiness_promotion": "none",
+                    "similarity_score": score,
+                    "raw_similarity_score": round(raw_score, 6),
+                    "structured_compatibility": structured,
+                    "sport_league_compatibility": structured["sport_league_compatibility"],
+                    "sx_bet_market": _sx_bet_reference_market_summary(sx_market),
+                    "executable_market": _executable_reference_market_summary(source_id, market),
+                    "sx_bet_research_orderbook": _sx_bet_reference_orderbook(sx_market),
+                    "comparison_fields_used": [
+                        "event_title",
+                        "market_title",
+                        "start_or_close_time",
+                        "outcome_names",
+                        "market_type",
+                        "sport",
+                        "league",
+                    ],
+                    "blockers": blockers,
+                }
+            )
+    comparisons.sort(key=lambda row: row["similarity_score"], reverse=True)
+    top = _dedupe_sx_bet_reference_comparisons(comparisons, top_limit=top_limit)
+    return {
+        "top_overlap_candidates": top,
+        "structured_rejections_sample": structured_rejections[:20],
+        "structured_pairs_considered": structured_pairs_considered,
+        "structured_pairs_rejected": len(structured_rejections),
+        "sport_or_league_mismatch_rejections": sport_or_league_mismatch_rejections,
+    }
+
+
+def _dedupe_sx_bet_reference_comparisons(comparisons: list[dict[str, Any]], *, top_limit: int) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_market_hashes: set[str] = set()
+    for row in comparisons:
+        market_hash = str(row.get("sx_bet_market", {}).get("market_hash") or "")
+        if market_hash and market_hash in seen_market_hashes:
+            continue
+        if market_hash:
+            seen_market_hashes.add(market_hash)
+        selected.append(row)
+        if len(selected) >= max(top_limit, 0):
+            break
+    return selected
+
+
+def _sx_bet_event_title_coverage_ratio(sx_markets: list[dict[str, Any]]) -> float:
+    if not sx_markets:
+        return 0.0
+    covered = sum(1 for market in sx_markets if str(market.get("event_title") or "").strip())
+    return round(covered / len(sx_markets), 6)
+
+
+def _sx_bet_structured_compatibility(sx_market: dict[str, Any], executable_market: dict[str, Any]) -> dict[str, Any]:
+    sx_sport_key = _sx_bet_sport_league_key(sx_market)
+    executable_sport_key = _executable_sport_league_key(executable_market)
+    sx_market_type = _sx_bet_market_type_key(sx_market)
+    executable_market_type = _executable_market_type_key(executable_market)
+    sx_start = _parse_datetime_or_none(str(sx_market.get("starts_at") or ""))
+    executable_time = _parse_datetime_or_none(
+        str(executable_market.get("close_time") or executable_market.get("end_date") or "")
+    )
+    blockers: list[str] = []
+    missing_fields: list[str] = []
+    if not sx_sport_key or not executable_sport_key:
+        missing_fields.append("sport_or_league")
+    elif sx_sport_key != executable_sport_key:
+        blockers.append("sport_mismatch")
+        blockers.append("league_mismatch")
+    if not sx_market_type or not executable_market_type:
+        missing_fields.append("market_type")
+    elif sx_market_type != executable_market_type:
+        blockers.append("market_type_mismatch")
+    if sx_start and executable_time:
+        delta_seconds = abs((sx_start - executable_time).total_seconds())
+        if delta_seconds > 6 * 60 * 60:
+            blockers.append("start_time_mismatch")
+    elif sx_market.get("starts_at") or executable_market.get("close_time") or executable_market.get("end_date"):
+        missing_fields.append("start_time")
+    scope_blocker = _sx_bet_outcome_scope_blocker(sx_market, executable_market)
+    if scope_blocker:
+        blockers.append(scope_blocker)
+    if missing_fields:
+        blockers.append("structured_fields_missing")
+    hard_rejected = any(
+        blocker in blockers
+        for blocker in (
+            "sport_mismatch",
+            "league_mismatch",
+            "team_mismatch",
+            "start_time_mismatch",
+            "market_type_mismatch",
+            "outcome_scope_mismatch",
+        )
+    )
+    return {
+        "hard_rejected": hard_rejected,
+        "blockers": blockers,
+        "missing_fields": missing_fields,
+        "sport_league_compatibility": {
+            "sx_bet_sport_league_key": sx_sport_key,
+            "executable_sport_league_key": executable_sport_key,
+            "compatible": bool(sx_sport_key and executable_sport_key and sx_sport_key == executable_sport_key),
+        },
+        "market_type_compatibility": {
+            "sx_bet_market_type_key": sx_market_type,
+            "executable_market_type_key": executable_market_type,
+            "compatible": bool(sx_market_type and executable_market_type and sx_market_type == executable_market_type),
+        },
+    }
+
+
+_SX_BET_SPORT_LEAGUE_TERMS: dict[str, tuple[str, ...]] = {
+    "nfl": ("nfl", "football", "jaguars", "browns", "chiefs", "eagles", "cowboys", "ravens", "bills", "packers"),
+    "mlb": ("mlb", "baseball", "guardians", "phillies", "dodgers", "yankees", "mets", "cubs", "brewers", "astros", "tigers", "orioles"),
+    "nba": ("nba", "basketball", "celtics", "knicks", "lakers", "warriors", "bucks", "nuggets"),
+    "nhl": ("nhl", "hockey", "stanley cup", "rangers", "bruins", "maple leafs", "oilers"),
+    "soccer": ("soccer", "football club", "premier league", "champions league", "world cup"),
+}
+
+
+_SX_BET_MARKET_TYPE_TERMS: dict[str, tuple[str, ...]] = {
+    "moneyline": ("moneyline", "winner", " win ", " beat ", "championship"),
+    "spread": ("spread", " -", " +"),
+    "total": ("o/u", "over/under", " over ", " under ", " total "),
+}
+
+
+def _sx_bet_sport_league_key(market: dict[str, Any]) -> str | None:
+    text = " ".join(
+        str(value)
+        for value in (
+            market.get("sport"),
+            market.get("league"),
+            market.get("event_title"),
+            market.get("outcome_one_name"),
+            market.get("outcome_two_name"),
+        )
+        if value is not None
+    )
+    return _sport_league_key_from_text(text)
+
+
+def _sx_bet_market_type_key(market: dict[str, Any]) -> str | None:
+    text = " ".join(
+        str(value)
+        for value in (
+            market.get("market_type"),
+            market.get("event_title"),
+            market.get("outcome_one_name"),
+            market.get("outcome_two_name"),
+        )
+        if value is not None
+    )
+    return _market_type_key_from_text(text)
+
+
+def _executable_market_type_key(market: dict[str, Any]) -> str | None:
+    text = _executable_reference_text(market)
+    raw = market.get("raw")
+    if isinstance(raw, dict):
+        text += " " + " ".join(
+            str(raw.get(key) or "")
+            for key in ("marketType", "type", "slug", "description", "title", "question", "rules_primary")
+        )
+    return _market_type_key_from_text(text)
+
+
+def _market_type_key_from_text(text: str) -> str | None:
+    normalized = f" {text.lower()} "
+    for key, terms in _SX_BET_MARKET_TYPE_TERMS.items():
+        if any(term in normalized for term in terms):
+            return key
+    return None
+
+
+def _sx_bet_outcome_scope_blocker(sx_market: dict[str, Any], executable_market: dict[str, Any]) -> str | None:
+    text = f"{_sx_bet_reference_text(sx_market)} {_executable_reference_text(executable_market)}".lower()
+    has_world_series = "world series" in text or "pro baseball championship" in text
+    has_lcs = any(term in text for term in ("alcs", "nlcs", "league championship series"))
+    if has_world_series and has_lcs:
+        return "outcome_scope_mismatch"
+    has_btc_price = "bitcoin" in text or "btc" in text
+    has_company_btc = any(term in text for term in ("sell bitcoin", "buys bitcoin", "sells btc", "treasury bitcoin"))
+    if has_btc_price and has_company_btc:
+        return "outcome_scope_mismatch"
+    return None
+
+
+def _executable_sport_league_key(market: dict[str, Any]) -> str | None:
+    text = _executable_reference_text(market)
+    raw = market.get("raw")
+    if isinstance(raw, dict):
+        text += " " + " ".join(
+            str(raw.get(key) or "")
+            for key in ("event_slug", "slug", "description", "sports_event_ticker", "ticker", "title", "rules_primary")
+        )
+    diagnostics = market.get("overlap_filter_diagnostics")
+    if isinstance(diagnostics, dict):
+        terms = diagnostics.get("query_hit_terms")
+        if isinstance(terms, list):
+            text += " " + " ".join(str(term) for term in terms)
+    return _sport_league_key_from_text(text)
+
+
+def _sport_league_key_from_text(text: str) -> str | None:
+    normalized = text.lower()
+    for key, terms in _SX_BET_SPORT_LEAGUE_TERMS.items():
+        if any(term in normalized for term in terms):
+            return key
+    return None
+
+
+def _sx_bet_reference_text(market: dict[str, Any]) -> str:
+    pieces = [
+        market.get("event_title"),
+        market.get("league"),
+        market.get("sport"),
+        market.get("market_type"),
+        market.get("outcome_one_name"),
+        market.get("outcome_two_name"),
+        market.get("starts_at"),
+    ]
+    return " ".join(str(piece) for piece in pieces if piece is not None)
+
+
+def _executable_reference_text(market: dict[str, Any]) -> str:
+    pieces = [
+        market.get("event_title"),
+        market.get("title"),
+        market.get("question"),
+        market.get("ticker"),
+        market.get("end_date"),
+        market.get("close_time"),
+    ]
+    outcomes = market.get("outcomes")
+    if isinstance(outcomes, list):
+        for outcome in outcomes:
+            if isinstance(outcome, dict):
+                pieces.append(outcome.get("name"))
+            else:
+                pieces.append(outcome)
+    return " ".join(str(piece) for piece in pieces if piece is not None)
+
+
+def _sx_bet_reference_market_summary(market: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_id": "sx_bet",
+        "market_hash": market.get("market_hash"),
+        "event_title": market.get("event_title"),
+        "league": market.get("league"),
+        "sport": market.get("sport"),
+        "market_type": market.get("market_type"),
+        "starts_at": market.get("starts_at"),
+        "outcome_one_name": market.get("outcome_one_name"),
+        "outcome_two_name": market.get("outcome_two_name"),
+        "is_reference_only": True,
+        "same_payoff_asserted": False,
+    }
+
+
+def _executable_reference_market_summary(source_id: str, market: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "market_id": market.get("market_id"),
+        "ticker": market.get("ticker"),
+        "question": market.get("question"),
+        "event_title": market.get("event_title"),
+        "title": market.get("title"),
+        "close_time": market.get("close_time"),
+        "end_date": market.get("end_date"),
+    }
+
+
+def _sx_bet_reference_orderbook(market: dict[str, Any]) -> dict[str, Any]:
+    orderbook = market.get("research_orderbook")
+    if not isinstance(orderbook, dict):
+        return {"depth_units_not_normalized": True, "available": False}
+    return {
+        "available": True,
+        "depth_units_not_normalized": True,
+        "unit_warning": orderbook.get("unit_warning"),
+        "best_taker_price_outcome_one": orderbook.get("best_taker_price_outcome_one"),
+        "best_taker_price_outcome_two": orderbook.get("best_taker_price_outcome_two"),
+        "maker_stake_usdc_at_best_outcome_one": orderbook.get("depth_usdc_at_best_outcome_one"),
+        "maker_stake_usdc_at_best_outcome_two": orderbook.get("depth_usdc_at_best_outcome_two"),
+    }
+
+
+def _counter_rows(values: Any) -> list[dict[str, Any]]:
+    counts = Counter(value for value in values if value)
+    return [{"reason": reason, "count": count} for reason, count in counts.most_common()]
+
+
+def _sx_bet_reference_review_recommendation(comparisons: list[dict[str, Any]]) -> str:
+    if not comparisons:
+        return "no_overlap_visible_from_saved_files"
+    top_score = comparisons[0]["similarity_score"]
+    if top_score >= 0.6:
+        return "overlap_worth_future_fee_depth_settlement_review"
+    if top_score >= 0.35:
+        return "weak_overlap_review_targeting_before_normalization"
+    return "low_overlap_skip_normalization_for_now"
+
+
+def _sx_bet_reference_context_markdown(report: dict[str, Any]) -> str:
+    summary = report["summary"]
+    lines = [
+        "# SX Bet Reference Context",
+        "",
+        "Diagnostic-only comparison of saved SX Bet research rows against saved Kalshi/Polymarket snapshots.",
+        "",
+        "- Live fetch attempted by this command: `false`",
+        "- SX Bet role: `reference_context_only`",
+        "- Same payoff asserted: `false`",
+        "- Readiness promotion: `none`",
+        f"- SX Bet markets inspected: `{summary['sx_bet_markets_inspected']}`",
+        f"- SX Bet event title coverage: `{summary['sx_bet_event_title_coverage_ratio']}`",
+        f"- Kalshi records inspected: `{summary['kalshi_records_inspected']}`",
+        f"- Polymarket records inspected: `{summary['polymarket_records_inspected']}`",
+        f"- Structured pairs considered: `{summary['structured_pairs_considered']}`",
+        f"- Structured pairs rejected: `{summary['structured_pairs_rejected']}`",
+        f"- Sport/league mismatch rejections: `{summary['sport_or_league_mismatch_rejections']}`",
+        f"- Top similarity: `{summary['top_similarity']}`",
+        f"- Top similarity after structured filter: `{summary['top_similarity_after_structured_filter']}`",
+        f"- Future review recommendation: `{summary['future_review_recommendation']}`",
+        "",
+        "`weak_overlap_review_targeting_before_normalization` means the saved files show some weak textual overlap, but the next step is tighter sport/league/start-time targeting before any fee, depth, settlement, or normalization review.",
+        "",
+    ]
+    if summary.get("asymmetric_universe_warning"):
+        lines.extend(
+            [
+                "## Warnings",
+                "",
+                f"- `{summary['asymmetric_universe_warning']}`",
+            ]
+        )
+        for warning in summary.get("warnings", []):
+            lines.append(f"- {warning}")
+        lines.append("")
+    lines.extend(
+        [
+            "## Sources",
+            "",
+            "| Source | Status | Records | Path | Message |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in report["source_rows"].values():
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row["source_id"]),
+                    _markdown_cell(row["status"]),
+                    _markdown_cell(row["record_count"]),
+                    _markdown_cell(row["path"]),
+                    _markdown_cell(row.get("message")),
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Top Overlap Candidates",
+            "",
+            "| Similarity | SX Bet event | Executable source | Executable title | Blockers |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in report["top_overlap_candidates"]:
+        executable = row["executable_market"]
+        title = executable.get("question") or executable.get("title") or executable.get("event_title")
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row["similarity_score"]),
+                    _markdown_cell(row["sx_bet_market"].get("event_title")),
+                    _markdown_cell(executable.get("source_id")),
+                    _markdown_cell(title),
+                    _markdown_cell(", ".join(row["blockers"])),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _smoke_kalshi(*, max_markets: int, timeout_seconds: float) -> dict[str, Any]:
