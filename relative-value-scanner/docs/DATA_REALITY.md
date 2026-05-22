@@ -70,6 +70,8 @@ Polymarket shares and Kalshi contracts are not unit-normalized. The ledger alway
 
 Paper ledger `contract_relationship` fields are research/debugging evidence only. The evaluator re-classifies from matcher relationship-level blocking reasons and adds the unit normalization warning only where relevant; it does not copy matcher confidence/source through. Sportsbook and reference odds are not executable prices, and a positive semantic match or relationship label is never a profit, fill, or live-trading claim.
 
+`python scan.py llm-review-relationships --input <report>.json --output <reviewed>.json --stub` can attach stubbed LLM audit sidecars to saved matcher/evaluator reports. This is saved-file review metadata only: it does not call a real LLM, does not rerun matcher/evaluator logic, does not change actions, and cannot turn semantic similarity into settlement equivalence.
+
 Markout windows are placeholders only. Null `t_plus_30s`, `t_plus_5m`, `t_plus_30m`, and `t_plus_2h` fields are not evidence. A future saved-snapshot markout pass must fill them before any paper result is interpreted.
 
 ## Markout Replay

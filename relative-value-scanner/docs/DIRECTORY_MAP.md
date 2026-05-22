@@ -2,7 +2,7 @@
 
 ## Root Files
 
-- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `match-live-snapshots`, `explain-reference-context`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
+- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `match-live-snapshots`, `explain-reference-context`, `llm-review-relationships`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
 - `README.md`: quick-start and action ladder.
 - `requirements.txt`: test dependency list.
 - `.env.example`: documents that this scaffold is offline/read-only.
@@ -17,6 +17,7 @@
 - `fees.py`: fee model interface plus flat, Kalshi-tiered, and no-fee implementations.
 - `contract_relationship.py`: deterministic contract-relationship classification constants and report shape for review/debugging only.
 - `llm_relationship_classifier.py`: stubbed no-network LLM relationship proposal validator and audit sidecar helpers; review metadata only.
+- `llm_relationship_review_report.py`: saved-report transformer that attaches stubbed LLM review sidecars to matcher/evaluator rows without changing deterministic fields or actions.
 - `reference_diagnostics.py`: diagnostic-only executable-to-reference snapshot comparison for The Odds API observability; no action promotion or edge math.
 - `source_registry.py`: non-networked source taxonomy and output-policy registry for executable, reference-only, and signal-only sources.
 - `matching.py`: match confidence and settlement mismatch risk.
@@ -54,6 +55,7 @@
 - `test_source_registry.py`: source taxonomy tests proving executable, reference-only, signal-only, planned, and unknown-source behavior.
 - `test_the_odds_api_live.py`: mocked The Odds API reference snapshot tests; no real API key or network required.
 - `test_llm_relationship_classifier.py`: strict LLM proposal schema, forbidden-output, audit sidecar, and no-behavior-change tests.
+- `test_llm_relationship_review_report.py`: saved matcher/evaluator report LLM audit sidecar tests; no real LLM or network calls.
 - `test_reference_diagnostics.py`: saved-file reference-context diagnostics tests for plausible matches, stale/malformed rows, and no disallowed actions.
 
 ## `reports/`

@@ -83,6 +83,12 @@ See `docs/SOURCE_TAXONOMY.md` for the planned registry and output policy.
 
 `relative_value/llm_relationship_classifier.py` defines a no-network, no-API-key interface for future LLM relationship review. It is audit metadata only: LLM output cannot assert `EQUIVALENT`, cannot set `same_payoff=true`, cannot approve trades, and cannot change `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB` behavior. Deterministic relationship rules remain authoritative.
 
+```powershell
+python scan.py llm-review-relationships --input reports\live_snapshot_pairs.json --output reports\live_snapshot_pairs_llm_reviewed.json --stub
+```
+
+`llm-review-relationships` is a saved-report audit transformer for matcher/evaluator JSON files that already contain `contract_relationship`. It uses the deterministic stub only, writes `llm_review` sidecars, preserves deterministic relationship fields and actions unchanged, and does not call a real LLM.
+
 ## Live Snapshot Matching Prototype
 
 ```powershell

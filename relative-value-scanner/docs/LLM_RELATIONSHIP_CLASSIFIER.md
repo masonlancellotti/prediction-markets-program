@@ -22,4 +22,10 @@ Unknown fields are rejected. Forbidden fields and tokens such as `same_payoff`, 
 
 The in-memory audit sidecar contains `prompt_hash`, `input_payload_hash`, `model_id`, `model_version`, `timestamp`, `raw_output`, `parsed_output`, and `validation_errors`. This is meant for future review traceability only; there is no persistence layer yet.
 
+## Saved-Report Audit Command
+
+`python scan.py llm-review-relationships --input <matcher_or_ledger>.json --output <reviewed>.json --stub` reads a saved `live_snapshot_matcher` or `paper_candidate_evaluator` report, finds rows with `contract_relationship`, and attaches `llm_review` sidecars. It does not rerun matching or evaluation, does not call a real LLM, and refuses non-stub mode.
+
+The command preserves deterministic `contract_relationship` fields and row `action` fields unchanged. Validation errors from malformed or forbidden LLM proposals are recorded and force manual-review escalation inside the sidecar only; they do not promote actions.
+
 Semantic similarity is not settlement equivalence. A future LLM may help identify terms and uncertainty, but it cannot approve trades or override deterministic blocking reasons.

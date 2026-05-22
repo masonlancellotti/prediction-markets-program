@@ -21,6 +21,7 @@
 - 2026-05-21 LLM Relationship Review: added a stubbed, no-network LLM proposal interface for relationship review metadata only; deterministic rules remain authoritative and LLM output cannot approve equivalence or candidate actions.
 - 2026-05-21 Sportsbook References: `match-live-snapshots --reference-snapshot` can attach saved reference snapshots as `reference_context` observability summaries without changing pair generation or actions.
 - 2026-05-21 Sportsbook References: added `explain-reference-context` to compare executable snapshots against The Odds API reference snapshots for diagnostic-only title/entity matches, stale flags, and no-vig context.
+- 2026-05-21 LLM Relationship Review: added `llm-review-relationships --stub` to attach saved-file LLM audit sidecars to matcher/evaluator reports without changing deterministic relationships or actions.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

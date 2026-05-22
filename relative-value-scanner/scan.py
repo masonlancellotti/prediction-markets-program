@@ -9,6 +9,7 @@ from typing import Any
 
 from relative_value._numeric import float_or_none
 from relative_value.live_snapshot_matcher import match_snapshot_files
+from relative_value.llm_relationship_review_report import review_relationship_report_file
 from relative_value.markout_replay import MarkoutReplayConfig, replay_paper_candidate_markout_files
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot_file
 from relative_value.paper_candidate_evaluator import (
@@ -242,6 +243,15 @@ def main(argv: list[str] | None = None) -> int:
     explain_reference_parser.add_argument("--reference-snapshot", type=Path, required=True)
     explain_reference_parser.add_argument("--min-similarity", type=float, default=0.35)
 
+    llm_review_parser = subparsers.add_parser(
+        "llm-review-relationships",
+        help="Attach stubbed LLM relationship review audit metadata to a saved matcher/evaluator report.",
+    )
+    llm_review_parser.add_argument("--input", type=Path, required=True)
+    llm_review_parser.add_argument("--output", type=Path, required=True)
+    llm_review_parser.add_argument("--markdown-output", type=Path)
+    llm_review_parser.add_argument("--stub", action="store_true", help="Use the deterministic no-network stub client.")
+
     parser.add_argument("--fixture-dir", type=Path, default=PROJECT_ROOT / "venues" / "fixtures")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
     parser.add_argument("--include-ignore", action="store_true", help="Include ignored pairs in reports.")
@@ -363,6 +373,13 @@ def main(argv: list[str] | None = None) -> int:
             args.snapshot,
             args.reference_snapshot,
             min_similarity=args.min_similarity,
+        )
+    if args.command == "llm-review-relationships":
+        return llm_review_relationships(
+            args.input,
+            args.output,
+            markdown_output=args.markdown_output,
+            stub=args.stub,
         )
 
     scanner = RelativeValueScanner()
@@ -1149,6 +1166,30 @@ def explain_reference_context(snapshot: Path, reference_snapshot: Path, min_simi
         print(f"  diagnostics: {_format_reason_list(row.get('reference_diagnostics'))}")
         print("")
     print(f"explain_reference_context_status=OK matches={payload['diagnostic_match_count']}")
+    return 0
+
+
+def llm_review_relationships(input_path: Path, output_path: Path, markdown_output: Path | None = None, stub: bool = False) -> int:
+    if not stub:
+        print("llm_review_relationships_status=FAILED message=only --stub mode is supported; no real LLM calls are implemented")
+        return 1
+    try:
+        payload = review_relationship_report_file(
+            input_path=input_path,
+            output_path=output_path,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"llm_review_relationships_status=FAILED message={exc}")
+        return 1
+    summary = payload["llm_relationship_review"]
+    print(
+        "llm_review_relationships_status=OK "
+        f"rows_reviewed={summary['rows_reviewed']} "
+        f"validation_errors={summary['validation_error_count']} "
+        f"manual_review_escalations={summary['manual_review_escalation_count']} "
+        f"output={output_path}"
+    )
     return 0
 
 
