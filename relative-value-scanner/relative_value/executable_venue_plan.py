@@ -80,7 +80,7 @@ PLANNED_EXECUTABLE_VENUE_CAPABILITIES: dict[str, VenueCapability] = {
         execution_supported_by_api=True,
         execution_allowed_in_project_now=False,
         adapter_priority="defer_high_value_high_friction",
-        rationale="High-value regulated venue, but eligibility, auth, account permissions, and instrument mapping make it unsafe as the next adapter.",
+        rationale="High-value regulated venue, but eligibility, account/API permissions, instrument mapping, settlement terms, and fee inputs require boundary review before transport.",
     ),
     "sx_bet": VenueCapability(
         source_id="sx_bet",

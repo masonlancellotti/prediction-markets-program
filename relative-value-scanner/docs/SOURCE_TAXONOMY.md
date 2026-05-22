@@ -19,7 +19,7 @@ This taxonomy is infrastructure only. It does not add API fetchers, authenticati
 | --- | --- | --- | --- |
 | Kalshi | `EXECUTABLE_VENUE` | Implemented read-only discovery/enrichment | May participate in candidate pairs with another implemented executable venue. |
 | Polymarket | `EXECUTABLE_VENUE` | Implemented read-only discovery/enrichment | May participate in candidate pairs with another implemented executable venue. |
-| ForecastEx / IBKR | `EXECUTABLE_VENUE` | Planned, not implemented | No candidate-pair impact yet because auth/account/instrument work is not in scope. |
+| ForecastEx / IBKR | `EXECUTABLE_VENUE` | Planned, not implemented | Boundary design exists in `docs/IBKR_FORECASTEX_READ_ONLY_BOUNDARY.md`; no candidate-pair impact because auth/account/instrument work is not implemented. |
 | SX Bet | `EXECUTABLE_VENUE` | Planned, not implemented | Candidate venue candidate for read-only research only; no wallet/signing/execution logic. |
 | Azuro | `DO_NOT_USE_YET` | Planned, not implemented | On-chain AMM/protocol model needs separate schema work before scanner use. |
 | Omen / Gnosis Conditional Tokens | `DO_NOT_USE_YET` | Planned, not implemented | Conditional-token/indexer model needs token, collateral, oracle, and settlement review first. |

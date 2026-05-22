@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from relative_value.fees import FlatFeeModel, PolymarketConservativeFeeModel
+from relative_value.ibkr_forecastex_read_only_boundary import ibkr_forecastex_read_only_boundary_report
 from relative_value.provenance import STATIC_FIXTURE, build_fixture_scan_provenance, source_readiness_report
 from scan import (
     _OVERLAP_QUERY_PROFILES,
@@ -219,6 +220,15 @@ def test_executable_venue_readiness_rows_are_conservative(monkeypatch) -> None:
     assert rows["sx_bet"]["live_readonly_adapter_exists"] is False
     assert rows["sx_bet"]["can_create_candidate_pair_now"] is False
     assert rows["forecastex_ibkr"]["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert rows["forecastex_ibkr"]["expected_env_vars"] == [
+        "IBKR_HOST",
+        "IBKR_PORT",
+        "IBKR_CLIENT_ID",
+        "IBKR_ACCOUNT_ID",
+    ]
+    assert rows["forecastex_ibkr"]["live_readonly_research_fetch_exists"] is False
+    assert rows["forecastex_ibkr"]["live_readonly_candidate_adapter_exists"] is False
+    assert rows["forecastex_ibkr"]["can_create_candidate_pair_now"] is False
     assert rows["prophetx"]["implementation_status"] == "NOT_IMPLEMENTED"
     assert rows["crypto_com"]["source_type"] == "DO_NOT_USE_YET"
     assert rows["robinhood"]["source_type"] == "DO_NOT_USE_YET"
@@ -229,6 +239,42 @@ def test_executable_venue_readiness_rows_are_conservative(monkeypatch) -> None:
     assert rows["the_odds_api"]["can_create_candidate_pair_now"] is False
     assert all(row["can_create_paper_candidate_now"] is False for row in rows.values())
     assert all(row["execution_allowed_in_project_now"] is False for row in rows.values())
+
+
+def test_ibkr_forecastex_boundary_is_inert_and_fail_closed() -> None:
+    report = ibkr_forecastex_read_only_boundary_report()
+
+    assert report["source_id"] == "forecastex_ibkr"
+    assert report["source_type"] == "EXECUTABLE_VENUE"
+    assert report["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert report["status"] == "boundary_design_only_no_live_transport"
+    assert report["expected_env_vars"] == [
+        "IBKR_HOST",
+        "IBKR_PORT",
+        "IBKR_CLIENT_ID",
+        "IBKR_ACCOUNT_ID",
+    ]
+    assert report["execution_allowed_in_project_now"] is False
+    assert report["can_create_candidate_pair"] is False
+    assert report["can_create_paper_candidate"] is False
+    assert any(row["name"] == "instrument_discovery" for row in report["data_categories"])
+    forbidden = next(row for row in report["data_categories"] if row["name"] == "account_balances_positions_or_orders")
+    assert forbidden["allowed_read_only_research"] is False
+    assert forbidden["forbidden_account_or_execution_surface"] is True
+    assert all(row["allowed"] is False for row in report["stages"] if row["stage"] > 0)
+    assert report["raw_redaction_policy"]["allow_raw_network_echo"] is False
+    serialized = json.dumps(report)
+    assert "PAPER_CANDIDATE" not in serialized
+    assert "POSSIBLE_ARB" not in serialized
+
+
+def test_ibkr_forecastex_boundary_adds_no_transport_imports() -> None:
+    source = (Path(__file__).parents[1] / "relative_value" / "ibkr_forecastex_read_only_boundary.py").read_text(
+        encoding="utf-8"
+    )
+
+    forbidden_terms = ("ibapi", "ib_insync", "requests", "httpx", "aiohttp", "socket", "websocket")
+    assert all(term not in source for term in forbidden_terms)
 
 
 def test_executable_venue_readiness_command_writes_reports_without_secret(tmp_path: Path, monkeypatch, capsys) -> None:

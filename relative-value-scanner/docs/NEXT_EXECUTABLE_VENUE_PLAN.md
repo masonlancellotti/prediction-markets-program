@@ -17,7 +17,7 @@ Why:
 - It must remain read-only: no wallet connection, signing, maker/taker order flow, or FillOrder/settlement-contract calls.
 - It must not create `PAPER_CANDIDATE` until settlement metadata, fee/slippage treatment, quote freshness, source restrictions, and contract relationship equivalence are reviewed.
 
-ForecastEx / IBKR is likely the highest-value regulated venue, but should be deferred because market data and instrument access likely cross into authentication, account permissions, eligibility, and broker API complexity. PredictIt should not be treated as executable unless permitted execution API support is proven. Azuro and Omen/Gnosis should be deferred because on-chain AMM/protocol/conditional-token models do not fit the current schema-v1 bid/ask/depth assumptions cleanly.
+ForecastEx / IBKR is likely the highest-value regulated venue, but should be deferred because market data and instrument access likely cross into authentication, account permissions, eligibility, and broker API complexity. The current boundary is documented in `docs/IBKR_FORECASTEX_READ_ONLY_BOUNDARY.md`; it is design-only and adds no live transport. PredictIt should not be treated as executable unless permitted execution API support is proven. Azuro and Omen/Gnosis should be deferred because on-chain AMM/protocol/conditional-token models do not fit the current schema-v1 bid/ask/depth assumptions cleanly.
 
 ## Adapter Interface Design
 
@@ -58,7 +58,7 @@ No adapter may create execution methods until a separate review explicitly allow
 
 ### ForecastEx / IBKR
 
-Classify as `EXECUTABLE_VENUE`, planned. It is high-value because ForecastEx contracts are regulated event contracts and IBKR has brokerage infrastructure, but it is high-friction because data, permissions, eligibility, and instrument mapping likely require authenticated broker workflows. Do not build until auth/account boundaries are explicitly approved.
+Classify as `EXECUTABLE_VENUE`, planned. It is high-value because ForecastEx contracts are regulated event contracts and IBKR has brokerage infrastructure, but it is high-friction because data, permissions, eligibility, and instrument mapping likely require authenticated broker workflows. Do not build live transport until account/API permissions, instrument discovery, settlement metadata, fee/commission modeling, quote freshness, and raw redaction are explicitly reviewed.
 
 ### SX Bet
 

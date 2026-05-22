@@ -37,6 +37,7 @@
 - 2026-05-22 Source Inventory: added explicit `discover-live-source-inventory` to fetch public Kalshi series and Polymarket tag inventories into human-review-only reports without modifying overlap profiles or readiness gates.
 - 2026-05-22 Live Overlap Profiles: replaced dead guessed non-sports Kalshi tickers with evidence-backed profile entries from live source inventory while preserving human-review provenance and no readiness promotion.
 - 2026-05-22 Near-Miss Diagnostics: diagnostic entity detection now uses word-boundary matching so short tokens like `ETH` do not match unrelated words like `Netherlands`.
+- 2026-05-22 IBKR / ForecastEx Boundary: added design-only read-only research boundary docs and inert metadata for account/API permission review, instrument discovery, quote/depth, settlement metadata, fee inputs, redaction, and fail-closed rules; no live transport was added.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

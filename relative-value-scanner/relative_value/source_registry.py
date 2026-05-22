@@ -99,7 +99,7 @@ SOURCE_REGISTRY: dict[str, SourceEntry] = {
         source_type=SourceType.EXECUTABLE_VENUE,
         implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
         allowed_effects=(),
-        notes="Potential executable venue later, but not implemented because it likely requires auth/account/instrument work.",
+        notes="Potential executable venue later; design-only read-only boundary exists, but live transport is blocked by account/API permission and instrument work.",
     ),
     "sx_bet": SourceEntry(
         source_id="sx_bet",

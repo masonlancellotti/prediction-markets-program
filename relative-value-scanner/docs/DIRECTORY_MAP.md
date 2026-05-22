@@ -18,6 +18,7 @@
 - `fees.py`: fee model interface plus flat, Kalshi-tiered, and no-fee implementations.
 - `contract_relationship.py`: deterministic contract-relationship classification constants and report shape for review/debugging only.
 - `executable_venue_plan.py`: non-networked capability matrix and recommendation for planned executable-venue expansion.
+- `ibkr_forecastex_read_only_boundary.py`: inert design metadata for future IBKR / ForecastEx read-only account-permission, instrument, quote/depth, settlement, fee, redaction, and fail-closed review.
 - `llm_relationship_classifier.py`: stubbed no-network LLM relationship proposal validator and audit sidecar helpers; review metadata only.
 - `llm_relationship_review_report.py`: saved-report transformer that attaches stubbed LLM review sidecars to matcher/evaluator rows without changing deterministic fields or actions.
 - `reference_diagnostics.py`: diagnostic-only executable-to-reference snapshot comparison for The Odds API observability; no action promotion or edge math.
