@@ -1207,10 +1207,10 @@ _EXECUTABLE_READINESS_DEFINITIONS: dict[str, dict[str, Any]] = {
     "prophetx": {
         "display_name": "ProphetX",
         "source_type": SourceType.EXECUTABLE_VENUE.value,
-        "implementation_status": "NOT_IMPLEMENTED",
+        "implementation_status": "PLANNED_NOT_IMPLEMENTED",
         "account_required": True,
         "api_key_or_credentials_expected": True,
-        "expected_env_vars": [],
+        "expected_env_vars": ["PROPHETX_BASE_URL", "PROPHETX_API_KEY"],
         "live_readonly_research_fetch_exists": False,
         "live_readonly_candidate_adapter_exists": False,
         "live_readonly_adapter_exists": False,
@@ -1219,8 +1219,9 @@ _EXECUTABLE_READINESS_DEFINITIONS: dict[str, dict[str, Any]] = {
         "orderbook_or_bidask_possible": False,
         "depth_possible": False,
         "settlement_metadata_possible": False,
-        "next_required_step": "Perform API-permission and read-only market/depth/settlement review before implementation.",
-        "blocked_reason": "NOT_IMPLEMENTED; no reviewed source registry capability row yet.",
+        "fixture_research_schema_exists": False,
+        "next_required_step": "Complete manual account/API permission review, then build fixture-backed market/depth/settlement/fee schemas before any live ProphetX transport.",
+        "blocked_reason": "PLANNED_NOT_IMPLEMENTED; API access, endpoint scope, venue restrictions, fees, and settlement metadata are not reviewed.",
     },
     "crypto_com": {
         "display_name": "Crypto.com",
@@ -6464,14 +6465,13 @@ def _not_implemented_smoke_rows() -> list[dict[str, Any]]:
         "robinhood": ["ROBINHOOD_ENABLED"],
     }
     source_types = {
-        "prophetx": SourceType.DO_NOT_USE_YET.value,
         "crypto_com": SourceType.DO_NOT_USE_YET.value,
         "robinhood": SourceType.DO_NOT_USE_YET.value,
     }
     next_steps = {
         "sx_bet": "Build a separately reviewed public read-only fetcher; no wallet, signing, or execution.",
         "forecastex_ibkr": "Resolve account/API permission and read-only boundaries before any adapter work.",
-        "prophetx": "Perform source taxonomy, API-permission, and read-only data review before adapter work.",
+        "prophetx": "Complete manual API-permission review, then design fixture-backed market/depth/settlement/fee schema before adapter work.",
         "crypto_com": "Do product, settlement, and read-only API review before adding any adapter.",
         "robinhood": "Do API-permission review; do not use browser automation, sessions, or credentials.",
     }

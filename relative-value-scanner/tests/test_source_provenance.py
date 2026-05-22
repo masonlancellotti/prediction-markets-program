@@ -5,6 +5,7 @@ from pathlib import Path
 
 from relative_value.fees import FlatFeeModel, PolymarketConservativeFeeModel
 from relative_value.ibkr_forecastex_read_only_boundary import ibkr_forecastex_read_only_boundary_report
+from relative_value.prophetx_read_only_boundary import prophetx_read_only_boundary_report
 from relative_value.provenance import STATIC_FIXTURE, build_fixture_scan_provenance, source_readiness_report
 from relative_value.source_registry import can_create_tradable_candidate_pair, get_source_entry
 from scan import (
@@ -104,6 +105,8 @@ def test_source_readiness_rows_cover_requested_checklist_sources(monkeypatch) ->
     assert rows["Polymarket"]["can_create_paper_candidate"] is False
     assert rows["SX Bet"]["can_create_paper_candidate"] is False
     assert rows["ProphetX"]["source_mode_currently_used"] == "NOT_IMPLEMENTED"
+    assert rows["ProphetX"]["source_type"] == "EXECUTABLE_VENUE"
+    assert rows["ProphetX"]["can_participate_in_candidate_pair"] is False
 
 
 def test_source_readiness_optional_json_output(tmp_path: Path, monkeypatch) -> None:
@@ -236,7 +239,13 @@ def test_executable_venue_readiness_rows_are_conservative(monkeypatch) -> None:
     assert rows["forecastex_ibkr"]["live_readonly_candidate_adapter_exists"] is False
     assert rows["forecastex_ibkr"]["fixture_research_schema_exists"] is True
     assert rows["forecastex_ibkr"]["can_create_candidate_pair_now"] is False
-    assert rows["prophetx"]["implementation_status"] == "NOT_IMPLEMENTED"
+    assert rows["prophetx"]["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert rows["prophetx"]["source_type"] == "EXECUTABLE_VENUE"
+    assert rows["prophetx"]["expected_env_vars"] == ["PROPHETX_BASE_URL", "PROPHETX_API_KEY"]
+    assert rows["prophetx"]["live_readonly_research_fetch_exists"] is False
+    assert rows["prophetx"]["live_readonly_candidate_adapter_exists"] is False
+    assert rows["prophetx"]["fixture_research_schema_exists"] is False
+    assert rows["prophetx"]["can_create_candidate_pair_now"] is False
     assert rows["crypto_com"]["source_type"] == "DO_NOT_USE_YET"
     assert rows["robinhood"]["source_type"] == "DO_NOT_USE_YET"
     assert rows["the_odds_api"]["source_type"] == "REFERENCE_ONLY"
@@ -299,6 +308,59 @@ def test_ibkr_forecastex_boundary_adds_no_transport_imports() -> None:
         "webapi",
     )
     assert all(term not in source for term in forbidden_terms)
+
+
+def test_prophetx_boundary_is_inert_and_fail_closed() -> None:
+    report = prophetx_read_only_boundary_report()
+
+    assert report["source_id"] == "prophetx"
+    assert report["source_type"] == "EXECUTABLE_VENUE"
+    assert report["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert report["status"] == "boundary_design_only_no_live_transport"
+    assert report["expected_env_vars"] == ["PROPHETX_BASE_URL", "PROPHETX_API_KEY"]
+    assert report["fixture_research_schema_exists"] is False
+    assert report["execution_allowed_in_project_now"] is False
+    assert report["can_create_candidate_pair"] is False
+    assert report["can_create_paper_candidate"] is False
+    assert any(row["name"] == "market_discovery" for row in report["data_categories"])
+    assert any(row["name"] == "orderbook_depth" for row in report["data_categories"])
+    forbidden = next(row for row in report["data_categories"] if row["name"] == "account_balances_positions_or_orders")
+    assert forbidden["allowed_read_only_research"] is False
+    assert forbidden["forbidden_account_or_execution_surface"] is True
+    assert all(row["allowed"] is False for row in report["stages"] if row["stage"] > 0)
+    assert report["raw_redaction_policy"]["allow_raw_network_echo"] is False
+    serialized = json.dumps(report)
+    assert "PAPER_CANDIDATE" not in serialized
+    assert "POSSIBLE_ARB" not in serialized
+
+
+def test_prophetx_boundary_adds_no_transport_imports() -> None:
+    source = (Path(__file__).parents[1] / "relative_value" / "prophetx_read_only_boundary.py").read_text(
+        encoding="utf-8"
+    )
+
+    forbidden_terms = (
+        "requests",
+        "httpx",
+        "aiohttp",
+        "socket",
+        "websocket",
+        "urllib",
+        "http.client",
+        "ssl",
+        "clientportal",
+        "webapi",
+    )
+    assert all(term not in source for term in forbidden_terms)
+
+
+def test_prophetx_source_registry_still_blocks_candidate_use() -> None:
+    entry = get_source_entry("prophetx")
+
+    assert entry.source_type.value == "EXECUTABLE_VENUE"
+    assert entry.implementation_status.value == "PLANNED_NOT_IMPLEMENTED"
+    assert entry.can_create_candidate_pair is False
+    assert can_create_tradable_candidate_pair("prophetx", "kalshi") is False
 
 
 def test_ibkr_forecastex_fixture_parser_emits_research_only_snapshot() -> None:

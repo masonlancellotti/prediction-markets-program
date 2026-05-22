@@ -4,7 +4,7 @@
 
 This is a boundary and readiness plan only. It adds no IBKR transport, no TWS/Gateway connection, no Client Portal session, no authentication flow, no account queries, no balance or position access, no order placement, no order cancellation, and no execution logic.
 
-`forecastex_ibkr` remains `PLANNED_NOT_IMPLEMENTED` in the source registry. It cannot create candidate pairs, `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
+`forecastex_ibkr` remains `PLANNED_NOT_IMPLEMENTED` in the source registry. It cannot create candidate pairs, paper-candidate rows, paper actions, or possible-arbitrage rows.
 
 ## Source Identity
 
