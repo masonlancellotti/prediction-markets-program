@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source_id": "forecastex_ibkr",
+  "fixture_kind": "ibkr_forecastex_instruments_sample",
+  "instruments": [
+    {
+      "instrument_id": "FEX-CPI-JUN-YES",
+      "conid": "FEX-CPI-JUN-PLACEHOLDER",
+      "symbol": "FEXCPI",
+      "exchange": "FORECASTEX",
+      "trading_class": "EVENT",
+      "currency": "USD",
+      "contract_title": "Will US CPI inflation be above 3.0% for June 2026?",
+      "question": "Will US CPI inflation be above 3.0% for June 2026?",
+      "event_category": "macro",
+      "expiration": "2026-07-15T14:00:00Z"
+    },
+    {
+      "instrument_id": "FEX-FED-JUL-YES",
+      "conid": "FEX-FED-JUL-PLACEHOLDER",
+      "symbol": "FEXFED",
+      "exchange": "FORECASTEX",
+      "trading_class": "EVENT",
+      "currency": "USD",
+      "contract_title": "Will the Federal Reserve cut rates at the July 2026 meeting?",
+      "question": "Will the Federal Reserve cut rates at the July 2026 meeting?",
+      "event_category": "macro",
+      "expiration": "2026-07-29T18:00:00Z"
+    }
+  ]
+}

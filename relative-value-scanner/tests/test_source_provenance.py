@@ -6,6 +6,7 @@ from pathlib import Path
 from relative_value.fees import FlatFeeModel, PolymarketConservativeFeeModel
 from relative_value.ibkr_forecastex_read_only_boundary import ibkr_forecastex_read_only_boundary_report
 from relative_value.provenance import STATIC_FIXTURE, build_fixture_scan_provenance, source_readiness_report
+from relative_value.source_registry import can_create_tradable_candidate_pair, get_source_entry
 from scan import (
     _OVERLAP_QUERY_PROFILES,
     _diagnostic_entities,
@@ -30,6 +31,11 @@ from scan import (
     match_live_readonly_snapshots,
     source_smoke,
     sweep_live_overlap_universe,
+)
+from venues.ibkr_forecastex import (
+    IBKR_FORECASTEX_REQUIRED_BLOCKERS,
+    IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND,
+    build_ibkr_forecastex_research_snapshot,
 )
 
 
@@ -275,6 +281,138 @@ def test_ibkr_forecastex_boundary_adds_no_transport_imports() -> None:
 
     forbidden_terms = ("ibapi", "ib_insync", "requests", "httpx", "aiohttp", "socket", "websocket")
     assert all(term not in source for term in forbidden_terms)
+
+
+def test_ibkr_forecastex_fixture_parser_emits_research_only_snapshot() -> None:
+    snapshot = build_ibkr_forecastex_research_snapshot(
+        instruments_payload={
+            "instruments": [
+                {
+                    "instrument_id": "FEX-TEST",
+                    "conid": "CONID-TEST",
+                    "symbol": "FEXTEST",
+                    "exchange": "FORECASTEX",
+                    "contract_title": "Will a fixture event happen?",
+                    "event_category": "macro",
+                    "expiration": "2026-07-01T14:00:00Z",
+                }
+            ]
+        },
+        quotes_payload={
+            "quotes": [
+                {
+                    "instrument_id": "FEX-TEST",
+                    "bid": 0.25,
+                    "ask": 0.3,
+                    "bid_size": 10,
+                    "ask_size": 12,
+                    "quote_timestamp": "2026-05-22T14:00:00Z",
+                }
+            ]
+        },
+        settlement_payload={
+            "settlements": [
+                {
+                    "instrument_id": "FEX-TEST",
+                    "settlement_wording": "Fixture settlement wording.",
+                    "close_time": "2026-07-01T14:00:00Z",
+                    "settlement_time": "2026-07-01T15:00:00Z",
+                    "fee_commission_status": "fixture_unreviewed",
+                }
+            ]
+        },
+    )
+
+    assert snapshot["schema_kind"] == IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND
+    assert snapshot["source_id"] == "forecastex_ibkr"
+    assert snapshot["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert snapshot["live_fetch_attempted"] is False
+    assert snapshot["is_executable"] is False
+    assert snapshot["can_create_candidate_pair"] is False
+    assert snapshot["can_create_paper_candidate"] is False
+    assert snapshot["execution_allowed_in_project_now"] is False
+    assert snapshot["research_market_count"] == 1
+    row = snapshot["research_markets"][0]
+    assert row["instrument_id"] == "FEX-TEST"
+    assert row["best_bid"] == 0.25
+    assert row["best_ask"] == 0.3
+    assert row["displayed_depth"]["unit"] == "fixture_displayed_contracts_unreviewed"
+    assert set(IBKR_FORECASTEX_REQUIRED_BLOCKERS).issubset(row["unresolved_blockers"])
+    serialized = json.dumps(snapshot)
+    assert "PAPER_CANDIDATE" not in serialized
+    assert "POSSIBLE_ARB" not in serialized
+
+
+def test_inspect_ibkr_forecastex_fixtures_command_writes_reports(tmp_path: Path) -> None:
+    json_output = tmp_path / "ibkr_fixture.json"
+    markdown_output = tmp_path / "ibkr_fixture.md"
+
+    result = main(
+        [
+            "inspect-ibkr-forecastex-fixtures",
+            "--json-output",
+            str(json_output),
+            "--markdown-output",
+            str(markdown_output),
+        ]
+    )
+
+    payload = json.loads(json_output.read_text(encoding="utf-8"))
+    markdown = markdown_output.read_text(encoding="utf-8")
+    assert result == 0
+    assert payload["schema_kind"] == IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND
+    assert payload["research_market_count"] >= 1
+    assert payload["live_fetch_attempted"] is False
+    assert payload["is_executable"] is False
+    assert payload["can_create_candidate_pair"] is False
+    assert payload["can_create_paper_candidate"] is False
+    assert "IBKR / ForecastEx Fixture Inspection" in markdown
+    serialized = json.dumps(payload) + markdown
+    assert "PAPER_CANDIDATE" not in serialized
+    assert "POSSIBLE_ARB" not in serialized
+
+
+def test_inspect_ibkr_forecastex_fixtures_missing_file_fails_cleanly(tmp_path: Path) -> None:
+    json_output = tmp_path / "missing_ibkr_fixture.json"
+    markdown_output = tmp_path / "missing_ibkr_fixture.md"
+
+    result = main(
+        [
+            "inspect-ibkr-forecastex-fixtures",
+            "--instruments",
+            str(tmp_path / "missing_instruments.json"),
+            "--json-output",
+            str(json_output),
+            "--markdown-output",
+            str(markdown_output),
+        ]
+    )
+
+    payload = json.loads(json_output.read_text(encoding="utf-8"))
+    markdown = markdown_output.read_text(encoding="utf-8")
+    assert result == 1
+    assert payload["schema_kind"] == IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND
+    assert payload["research_market_count"] == 0
+    assert payload["live_fetch_attempted"] is False
+    assert payload["can_create_candidate_pair"] is False
+    assert payload["can_create_paper_candidate"] is False
+    assert "FileNotFoundError" in payload["failure_reason"]
+    assert "Failure reason" in markdown
+
+
+def test_ibkr_forecastex_parser_adds_no_live_transport_imports() -> None:
+    source = (Path(__file__).parents[1] / "venues" / "ibkr_forecastex.py").read_text(encoding="utf-8")
+
+    forbidden_terms = ("ibapi", "ib_insync", "requests", "httpx", "aiohttp", "socket", "websocket")
+    assert all(term not in source for term in forbidden_terms)
+
+
+def test_ibkr_forecastex_source_registry_still_blocks_candidate_use() -> None:
+    entry = get_source_entry("forecastex_ibkr")
+
+    assert entry.implementation_status.value == "PLANNED_NOT_IMPLEMENTED"
+    assert entry.can_create_candidate_pair is False
+    assert can_create_tradable_candidate_pair("forecastex_ibkr", "kalshi") is False
 
 
 def test_executable_venue_readiness_command_writes_reports_without_secret(tmp_path: Path, monkeypatch, capsys) -> None:

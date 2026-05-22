@@ -56,6 +56,10 @@ from venues.polymarket import (
 )
 from venues.the_odds_api import FixtureTheOddsApiAdapter, TheOddsApiReadOnlyClient, write_the_odds_api_reference_snapshot
 from venues.sx_bet import SXBetReadOnlyClient, SXBetReadOnlyFetchError, build_sx_bet_failure_snapshot
+from venues.ibkr_forecastex import (
+    IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND,
+    load_ibkr_forecastex_research_fixtures,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -337,6 +341,36 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "executable_venue_readiness.md",
+    )
+
+    ibkr_fixture_parser = subparsers.add_parser(
+        "inspect-ibkr-forecastex-fixtures",
+        help="Inspect local fixture-only IBKR / ForecastEx research schema; no live transport.",
+    )
+    ibkr_fixture_parser.add_argument(
+        "--instruments",
+        type=Path,
+        default=PROJECT_ROOT / "venues" / "fixtures" / "ibkr_forecastex_instruments_sample.json",
+    )
+    ibkr_fixture_parser.add_argument(
+        "--quotes",
+        type=Path,
+        default=PROJECT_ROOT / "venues" / "fixtures" / "ibkr_forecastex_quotes_sample.json",
+    )
+    ibkr_fixture_parser.add_argument(
+        "--settlement",
+        type=Path,
+        default=PROJECT_ROOT / "venues" / "fixtures" / "ibkr_forecastex_settlement_sample.json",
+    )
+    ibkr_fixture_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_fixture_inspection.json",
+    )
+    ibkr_fixture_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_fixture_inspection.md",
     )
 
     source_smoke_parser = subparsers.add_parser(
@@ -670,6 +704,14 @@ def main(argv: list[str] | None = None) -> int:
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
+    if args.command == "inspect-ibkr-forecastex-fixtures":
+        return inspect_ibkr_forecastex_fixtures(
+            instruments_path=args.instruments,
+            quotes_path=args.quotes,
+            settlement_path=args.settlement,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
     if args.command == "source-smoke":
         return source_smoke(
             max_markets=args.max_markets,
@@ -826,6 +868,148 @@ def executable_venue_readiness(*, json_output: Path, markdown_output: Path, load
             f"can_create_paper_candidate_now={str(row['can_create_paper_candidate_now']).lower()}"
         )
     return 0
+
+
+def inspect_ibkr_forecastex_fixtures(
+    *,
+    instruments_path: Path,
+    quotes_path: Path,
+    settlement_path: Path,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        snapshot = load_ibkr_forecastex_research_fixtures(
+            instruments_path=instruments_path,
+            quotes_path=quotes_path,
+            settlement_path=settlement_path,
+        )
+        status = "OK"
+        failure_reason = None
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        snapshot = _ibkr_forecastex_fixture_failure_snapshot(
+            instruments_path=instruments_path,
+            quotes_path=quotes_path,
+            settlement_path=settlement_path,
+            exc=exc,
+        )
+        status = "FAILED"
+        failure_reason = snapshot["failure_reason"]
+    json_output.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    json_output.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_output.write_text(_ibkr_forecastex_fixture_markdown(snapshot), encoding="utf-8")
+    print(
+        f"ibkr_forecastex_fixture_inspection_status={status} "
+        "live_fetch_attempted=false "
+        f"schema_kind={snapshot.get('schema_kind')} "
+        f"research_markets={snapshot.get('research_market_count', 0)} "
+        "is_executable=false "
+        "can_create_candidate_pair=false "
+        "can_create_paper_candidate=false "
+        f"failure_reason={failure_reason or 'none'} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0 if status == "OK" else 1
+
+
+def _ibkr_forecastex_fixture_failure_snapshot(
+    *,
+    instruments_path: Path,
+    quotes_path: Path,
+    settlement_path: Path,
+    exc: Exception,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "schema_kind": IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND,
+        "source": "ibkr_forecastex_research",
+        "source_id": "forecastex_ibkr",
+        "source_type": "EXECUTABLE_VENUE",
+        "implementation_status": "PLANNED_NOT_IMPLEMENTED",
+        "permission": "FIXTURE_RESEARCH_ONLY",
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "live_fetch_attempted": False,
+        "live_fetch_succeeded": False,
+        "is_executable": False,
+        "execution_allowed_in_project_now": False,
+        "can_create_candidate_pair": False,
+        "can_create_paper_candidate": False,
+        "instrument_count": 0,
+        "quote_count": 0,
+        "settlement_count": 0,
+        "research_market_count": 0,
+        "research_markets": [],
+        "unresolved_blockers": [
+            "live_transport_not_implemented",
+            "account_permission_not_verified",
+            "instrument_mapping_not_reviewed",
+            "settlement_wording_not_normalized",
+            "fee_commission_model_not_reviewed",
+            "quote_freshness_not_reviewed",
+            "not_integrated_with_matcher_or_evaluator",
+        ],
+        "fixture_paths": {
+            "instruments": str(instruments_path),
+            "quotes": str(quotes_path),
+            "settlement": str(settlement_path),
+        },
+        "failure_reason": f"{type(exc).__name__}: {exc}",
+    }
+
+
+def _ibkr_forecastex_fixture_markdown(snapshot: dict[str, Any]) -> str:
+    lines = [
+        "# IBKR / ForecastEx Fixture Inspection",
+        "",
+        "Fixture-only inspection for the planned IBKR / ForecastEx read-only research schema.",
+        "",
+        "- Live fetch attempted: `false`",
+        "- Source role: `planned_executable_venue_research_only`",
+        "- Is executable: `false`",
+        "- Candidate-pair eligible: `false`",
+        "- Paper-candidate eligible: `false`",
+        f"- Schema kind: `{snapshot.get('schema_kind')}`",
+        f"- Research markets: `{snapshot.get('research_market_count', 0)}`",
+    ]
+    if snapshot.get("failure_reason"):
+        lines.append(f"- Failure reason: `{snapshot['failure_reason']}`")
+    lines.extend(
+        [
+            "",
+            "## Unresolved Blockers",
+            "",
+        ]
+    )
+    for blocker in snapshot.get("unresolved_blockers", []):
+        lines.append(f"- `{blocker}`")
+    lines.extend(
+        [
+            "",
+            "## Research Markets",
+            "",
+            "| Instrument | Title | Bid | Ask | Quote timestamp | Fee status | Blockers |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in snapshot.get("research_markets", []):
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row.get("instrument_id")),
+                    _markdown_cell(row.get("contract_title") or row.get("question")),
+                    _markdown_cell(row.get("best_bid")),
+                    _markdown_cell(row.get("best_ask")),
+                    _markdown_cell(row.get("quote_timestamp")),
+                    _markdown_cell(row.get("fee_commission_status")),
+                    _markdown_cell(",".join(row.get("unresolved_blockers") or [])),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def build_executable_venue_readiness_report(*, env: dict[str, str] | None = None) -> dict[str, Any]:

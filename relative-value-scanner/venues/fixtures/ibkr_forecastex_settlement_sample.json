@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "source_id": "forecastex_ibkr",
+  "fixture_kind": "ibkr_forecastex_settlement_sample",
+  "settlements": [
+    {
+      "instrument_id": "FEX-CPI-JUN-YES",
+      "settlement_wording": "Fixture placeholder: settles according to the official CPI release for June 2026. This wording is not reviewed for matching.",
+      "settlement_source": "fixture_placeholder_official_cpi_release",
+      "close_time": "2026-07-15T14:00:00Z",
+      "settlement_time": "2026-07-15T15:00:00Z",
+      "contract_multiplier": 1,
+      "fee_commission_status": "fixture_unreviewed",
+      "commission_schedule_version": "fixture_unreviewed"
+    },
+    {
+      "instrument_id": "FEX-FED-JUL-YES",
+      "settlement_wording": "Fixture placeholder: settles according to the Federal Reserve July 2026 rate decision. This wording is not reviewed for matching.",
+      "settlement_source": "fixture_placeholder_federal_reserve_decision",
+      "close_time": "2026-07-29T18:00:00Z",
+      "settlement_time": "2026-07-29T19:00:00Z",
+      "contract_multiplier": 1,
+      "fee_commission_status": "fixture_unreviewed",
+      "commission_schedule_version": "fixture_unreviewed"
+    }
+  ]
+}

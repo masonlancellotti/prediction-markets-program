@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "source_id": "forecastex_ibkr",
+  "fixture_kind": "ibkr_forecastex_quotes_sample",
+  "quotes": [
+    {
+      "instrument_id": "FEX-CPI-JUN-YES",
+      "bid": 0.42,
+      "ask": 0.46,
+      "bid_size": 120,
+      "ask_size": 95,
+      "quote_timestamp": "2026-05-22T14:00:00Z",
+      "delayed_or_realtime_status": "fixture_delayed_unknown"
+    },
+    {
+      "instrument_id": "FEX-FED-JUL-YES",
+      "bid": 0.31,
+      "ask": 0.36,
+      "bid_size": 80,
+      "ask_size": 110,
+      "quote_timestamp": "2026-05-22T14:00:00Z",
+      "delayed_or_realtime_status": "fixture_delayed_unknown"
+    }
+  ]
+}
