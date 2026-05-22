@@ -8,6 +8,7 @@ from typing import Any
 from backtest.recorded_replay import RecordedOrderbookReplayBuilder
 from config import PROJECT_ROOT
 from data.storage import Storage
+from data.weather_settlement_loader import WeatherSettlementLoader
 from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingConfig
 from research.trading_readiness import TradingReadiness
 from research.weather_edge_miner import WeatherEdgeMiner, WeatherEdgeMiningConfig
@@ -153,6 +154,157 @@ class DailyWeatherEvidenceDrilldownResult:
         for row in self.worst_signals[:5]:
             lines.append(_signal_line(row))
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class DailyWeatherEvidenceRefreshConfig:
+    start: date
+    end: date
+    max_markets: int = 25
+    min_settlement_confidence: float = 0.85
+    min_edge_after_buffers_cents: float = 5.0
+    trading_readiness_last_days: int = 7
+    force_rebuild_replay: bool = False
+
+
+@dataclass(frozen=True)
+class DailyWeatherEvidenceRefreshResult:
+    summary: dict[str, Any]
+    days: list[dict[str, Any]]
+    range_summary: dict[str, Any]
+    trading_readiness: dict[str, Any]
+    exports: dict[str, str] | None
+
+    def to_text(self) -> str:
+        lines = [
+            f"refresh_daily_weather_evidence_status={self.summary.get('status')}",
+            f"message={self.summary.get('message')}",
+            f"window={self.summary.get('start')}..{self.summary.get('end')} days_processed={self.summary.get('days_processed')} "
+            f"days_with_errors={self.summary.get('days_with_errors')}",
+            f"range_status={self.range_summary.get('status')} trading_readiness={self.trading_readiness.get('status')}",
+            f"exports={self.exports}",
+            "Daily refresh rows:",
+        ]
+        for row in self.days:
+            lines.append(
+                f"- {row.get('date')} status={row.get('status')} "
+                f"settlement_labels={row.get('settlement_labels')} "
+                f"high_confidence_labels={row.get('high_confidence_labels')} "
+                f"replay_snapshots={row.get('replay_snapshots')} "
+                f"miner_signals={row.get('miner_signals')} "
+                f"settled_signals={row.get('settled_signals')} "
+                f"net_pnl={_fmt(row.get('net_pnl_cents'))} "
+                f"stress={row.get('stress_verdict')} "
+                f"daily_status={row.get('daily_status')} "
+                f"error={row.get('error') or ''}"
+            )
+        return "\n".join(lines)
+
+
+class DailyWeatherEvidenceRefreshReporter:
+    """Safe research refresh loop for settlements, daily evidence, range summary, and readiness."""
+
+    def __init__(
+        self,
+        *,
+        settlement_loader: Any | None = None,
+        daily_reporter: Any | None = None,
+        trading_readiness: Any | None = None,
+        storage: Storage | None = None,
+    ):
+        self._custom_settlement_loader = settlement_loader is not None
+        self.settlement_loader = settlement_loader or WeatherSettlementLoader()
+        self.daily_reporter = daily_reporter or DailyWeatherEvidenceReporter()
+        self.trading_readiness = trading_readiness or TradingReadiness()
+        self.storage = storage or Storage()
+
+    def build(
+        self,
+        config: DailyWeatherEvidenceRefreshConfig,
+        *,
+        persist_exports: bool = True,
+    ) -> DailyWeatherEvidenceRefreshResult:
+        if config.end < config.start:
+            raise ValueError("--end must be on or after --start")
+        rows: list[dict[str, Any]] = []
+        cached_daily: dict[str, dict[str, Any]] = {}
+        cached_errors: dict[str, str] = {}
+        for day in _date_range(config.start, config.end):
+            try:
+                settlement = self._build_settlements_for_day(day, config)
+                daily = self.daily_reporter.build(
+                    DailyWeatherEvidenceConfig(
+                        day=day,
+                        max_markets=config.max_markets,
+                        min_settlement_confidence=config.min_settlement_confidence,
+                        min_edge_after_buffers_cents=config.min_edge_after_buffers_cents,
+                        trading_readiness_last_days=config.trading_readiness_last_days,
+                        force_rebuild_replay=config.force_rebuild_replay,
+                    ),
+                    persist_exports=persist_exports,
+                )
+                cached_daily[day.isoformat()] = daily.summary
+                rows.append(_refresh_row(day, settlement, daily.summary))
+            except Exception as exc:
+                cached_errors[day.isoformat()] = str(exc)
+                rows.append(_refresh_error_row(day, exc))
+        range_result = DailyWeatherEvidenceRangeReporter(
+            daily_reporter=_CachedDailyReporter(cached_daily, cached_errors)
+        ).build(
+            DailyWeatherEvidenceRangeConfig(
+                start=config.start,
+                end=config.end,
+                max_markets=config.max_markets,
+                min_settlement_confidence=config.min_settlement_confidence,
+                min_edge_after_buffers_cents=config.min_edge_after_buffers_cents,
+                trading_readiness_last_days=config.trading_readiness_last_days,
+                force_rebuild_replay=config.force_rebuild_replay,
+            ),
+            persist_exports=persist_exports,
+        )
+        readiness = self.trading_readiness.evaluate(last_days=config.trading_readiness_last_days)
+        readiness_summary = _readiness_summary(readiness)
+        summary = _refresh_summary(config, rows, range_result.summary, readiness_summary)
+        exports = _export_refresh(summary, rows, range_result.summary, readiness_summary) if persist_exports else None
+        return DailyWeatherEvidenceRefreshResult(
+            summary=summary,
+            days=rows,
+            range_summary=range_result.summary,
+            trading_readiness=readiness_summary,
+            exports=exports,
+        )
+
+    def _build_settlements_for_day(self, day: date, config: DailyWeatherEvidenceRefreshConfig) -> Any:
+        if self._custom_settlement_loader:
+            return self.settlement_loader.build_settlements(start=day, end=day)
+        tickers = _settlement_refresh_tickers(
+            self.storage,
+            day,
+            max_markets=config.max_markets,
+            min_settlement_confidence=config.min_settlement_confidence,
+        )
+        labels = 0
+        skipped = 0
+        warnings: list[str] = []
+        if not tickers:
+            return _SettlementRefreshResult(
+                labels=0,
+                skipped=0,
+                warnings=["no_recorded_weather_tickers_missing_high_confidence_settlement_labels"],
+            )
+        for ticker in tickers:
+            result = self.settlement_loader.build_settlements(start=day, end=day, market_ticker=ticker)
+            labels += int(getattr(result, "labels", 0) or 0)
+            skipped += int(getattr(result, "skipped", 0) or 0)
+            warnings.extend(list(getattr(result, "warnings", []) or []))
+        return _SettlementRefreshResult(labels=labels, skipped=skipped, warnings=warnings[:50])
+
+
+@dataclass
+class _SettlementRefreshResult:
+    labels: int
+    skipped: int
+    warnings: list[str]
 
 
 class DailyWeatherEvidenceDrilldownReporter:
@@ -513,6 +665,207 @@ def _export(summary: dict[str, Any]) -> dict[str, str]:
     json_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     md_path.write_text(_markdown(summary), encoding="utf-8")
     return {"json": str(json_path), "markdown": str(md_path)}
+
+
+class _CachedDailyReporter:
+    def __init__(self, summaries: dict[str, dict[str, Any]], errors: dict[str, str]):
+        self.summaries = summaries
+        self.errors = errors
+
+    def build(self, config: DailyWeatherEvidenceConfig, *, persist_exports: bool = False):
+        key = config.day.isoformat()
+        if key in self.errors:
+            raise RuntimeError(self.errors[key])
+        return type("CachedDailyWeatherEvidenceResult", (), {"summary": self.summaries[key], "exports": None})()
+
+
+def _refresh_row(day: date, settlement: Any, daily_summary: dict[str, Any]) -> dict[str, Any]:
+    range_row = _range_row(daily_summary)
+    return {
+        "date": day.isoformat(),
+        "status": "DAILY_WEATHER_EVIDENCE_REFRESHED",
+        "settlement_labels": int(getattr(settlement, "labels", 0) or 0),
+        "settlement_skipped": int(getattr(settlement, "skipped", 0) or 0),
+        "settlement_warnings": list(getattr(settlement, "warnings", []) or [])[:10],
+        "high_confidence_labels": range_row["high_confidence_labels"],
+        "overlap_tickers": range_row["overlap_tickers"],
+        "replay_snapshots": range_row["replay_snapshots"],
+        "markets": range_row["markets"],
+        "miner_signals": range_row["miner_signals"],
+        "settled_signals": range_row["settled_signals"],
+        "net_pnl_cents": range_row["net_pnl_cents"],
+        "stress_verdict": range_row["stress_verdict"],
+        "daily_status": range_row["status"],
+        "weather_market_making_verdict": range_row["weather_market_making_verdict"],
+        "trading_readiness_status": range_row["trading_readiness_status"],
+        "error": None,
+        "is_error": False,
+    }
+
+
+def _refresh_error_row(day: date, exc: Exception) -> dict[str, Any]:
+    return {
+        "date": day.isoformat(),
+        "status": "DAILY_WEATHER_EVIDENCE_REFRESH_ERROR",
+        "settlement_labels": 0,
+        "settlement_skipped": 0,
+        "settlement_warnings": [],
+        "high_confidence_labels": 0,
+        "overlap_tickers": 0,
+        "replay_snapshots": 0,
+        "markets": 0,
+        "miner_signals": 0,
+        "settled_signals": 0,
+        "net_pnl_cents": None,
+        "stress_verdict": None,
+        "daily_status": "DAILY_WEATHER_EVIDENCE_ERROR",
+        "weather_market_making_verdict": None,
+        "trading_readiness_status": None,
+        "error": str(exc),
+        "is_error": True,
+    }
+
+
+def _settlement_refresh_tickers(
+    storage: Storage,
+    day: date,
+    *,
+    max_markets: int,
+    min_settlement_confidence: float,
+) -> list[str]:
+    storage.init_db()
+    frame = storage.fetch_sql(
+        """
+        WITH parsed AS (
+            SELECT DISTINCT market_ticker
+            FROM parsed_contracts
+            WHERE market_ticker IS NOT NULL
+              AND json_extract(payload, '$.local_date') = :day
+              AND json_extract(payload, '$.variable_type') IN ('high_temp', 'low_temp')
+        ),
+        recorded AS (
+            SELECT market_ticker, COUNT(*) AS snapshots
+            FROM orderbook_snapshots_live
+            WHERE date(ts) = :day
+            GROUP BY market_ticker
+        )
+        SELECT p.market_ticker
+        FROM parsed p
+        JOIN recorded r ON r.market_ticker = p.market_ticker
+        LEFT JOIN settlement_labels s ON s.market_ticker = p.market_ticker
+        WHERE COALESCE(s.confidence, 0.0) < :min_confidence
+        ORDER BY r.snapshots DESC, p.market_ticker
+        LIMIT :limit
+        """,
+        {
+            "day": day.isoformat(),
+            "min_confidence": min_settlement_confidence,
+            "limit": max(int(max_markets), 1),
+        },
+    )
+    if frame.empty:
+        return []
+    return [str(value) for value in frame["market_ticker"].dropna().tolist()]
+
+
+def _readiness_summary(readiness: Any) -> dict[str, Any]:
+    return {
+        "status": getattr(readiness, "status", None),
+        "message": getattr(readiness, "message", None),
+        "reasons": list(getattr(readiness, "reasons", []) or []),
+        "next_command": getattr(readiness, "next_command", None),
+    }
+
+
+def _refresh_summary(
+    config: DailyWeatherEvidenceRefreshConfig,
+    rows: list[dict[str, Any]],
+    range_summary: dict[str, Any],
+    readiness_summary: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "source": "daily_weather_evidence_refresh",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "start": config.start.isoformat(),
+        "end": config.end.isoformat(),
+        "status": "DAILY_WEATHER_EVIDENCE_REFRESH_RESEARCH_ONLY",
+        "message": "Research-only weather evidence refresh completed; readiness gates are unchanged.",
+        "research_only": True,
+        "days_processed": len(rows),
+        "days_with_errors": sum(1 for row in rows if row.get("is_error")),
+        "settlement_labels_built": sum(int(row.get("settlement_labels") or 0) for row in rows),
+        "days_with_replay_snapshots": range_summary.get("days_with_replay_snapshots"),
+        "days_with_enough_labels": range_summary.get("days_with_enough_labels"),
+        "days_with_positive_miner_net_pnl": range_summary.get("days_with_positive_miner_net_pnl"),
+        "days_failing_stress": range_summary.get("days_failing_stress"),
+        "trading_readiness_status": readiness_summary.get("status"),
+        "config": {
+            "max_markets": config.max_markets,
+            "min_settlement_confidence": config.min_settlement_confidence,
+            "min_edge_after_buffers_cents": config.min_edge_after_buffers_cents,
+            "trading_readiness_last_days": config.trading_readiness_last_days,
+            "force_rebuild_replay": config.force_rebuild_replay,
+        },
+        "disclaimer": (
+            "Research-only refresh. It may upsert settlement labels and local replay/report artifacts, "
+            "but it does not trade, does not place orders, and does not promote readiness."
+        ),
+    }
+
+
+def _export_refresh(
+    summary: dict[str, Any],
+    rows: list[dict[str, Any]],
+    range_summary: dict[str, Any],
+    readiness_summary: dict[str, Any],
+) -> dict[str, str]:
+    reports = PROJECT_ROOT / "reports"
+    reports.mkdir(exist_ok=True)
+    start = str(summary.get("start"))
+    end = str(summary.get("end"))
+    json_path = reports / f"daily_weather_evidence_refresh_{start}_{end}.json"
+    md_path = reports / f"daily_weather_evidence_refresh_{start}_{end}.md"
+    payload = {
+        "summary": summary,
+        "days": rows,
+        "range_summary": range_summary,
+        "trading_readiness": readiness_summary,
+    }
+    json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    md_path.write_text(_markdown_refresh(payload), encoding="utf-8")
+    return {"json": str(json_path), "markdown": str(md_path)}
+
+
+def _markdown_refresh(payload: dict[str, Any]) -> str:
+    summary = payload["summary"]
+    lines = [
+        "# Daily Weather Evidence Refresh",
+        "",
+        str(summary.get("disclaimer")),
+        "",
+        "## Summary",
+        "",
+        f"- Window: {summary.get('start')} to {summary.get('end')}",
+        f"- Status: `{summary.get('status')}`",
+        f"- Days processed: {summary.get('days_processed')}",
+        f"- Days with errors: {summary.get('days_with_errors')}",
+        f"- Settlement labels built: {summary.get('settlement_labels_built')}",
+        f"- Trading readiness: `{summary.get('trading_readiness_status')}`",
+        "",
+        "## Daily Rows",
+        "",
+        "| Date | Status | Settlement Labels | High-Confidence Labels | Replay Snapshots | Signals | Settled | Net P&L | Stress | Daily Status | Error |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---|---|---|",
+    ]
+    for row in payload["days"]:
+        lines.append(
+            f"| {row.get('date')} | `{row.get('status')}` | {row.get('settlement_labels')} | "
+            f"{row.get('high_confidence_labels')} | {row.get('replay_snapshots')} | {row.get('miner_signals')} | "
+            f"{row.get('settled_signals')} | {_fmt(row.get('net_pnl_cents'))} | {row.get('stress_verdict')} | "
+            f"`{row.get('daily_status')}` | {row.get('error') or ''} |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _drilldown_summary(

@@ -57,6 +57,8 @@ def review_relationship_report_payload(
         raise ValueError("timestamp must include timezone information")
 
     active_client = client or StubLLMRelationshipClient()
+    if not isinstance(active_client, StubLLMRelationshipClient):
+        raise ValueError("only StubLLMRelationshipClient is supported; no real LLM clients are accepted")
     reviewed = copy.deepcopy(dict(payload))
     rows = _relationship_rows(reviewed)
     reviewed_count = 0

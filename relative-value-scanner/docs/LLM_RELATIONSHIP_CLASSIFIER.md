@@ -24,8 +24,10 @@ The in-memory audit sidecar contains `prompt_hash`, `input_payload_hash`, `model
 
 ## Saved-Report Audit Command
 
-`python scan.py llm-review-relationships --input <matcher_or_ledger>.json --output <reviewed>.json --stub` reads a saved `live_snapshot_matcher` or `paper_candidate_evaluator` report, finds rows with `contract_relationship`, and attaches `llm_review` sidecars. It does not rerun matching or evaluation, does not call a real LLM, and refuses non-stub mode.
+`python scan.py llm-review-relationships --input <matcher_or_ledger>.json --output <reviewed>.json --stub` reads a saved `live_snapshot_matcher` or `paper_candidate_evaluator` report, finds rows with `contract_relationship`, and attaches `llm_review` sidecars. It does not rerun matching or evaluation, does not call a real LLM, and refuses non-stub mode. The lower-level report transformer also rejects non-`StubLLMRelationshipClient` clients.
 
-The command preserves deterministic `contract_relationship` fields and row `action` fields unchanged. Validation errors from malformed or forbidden LLM proposals are recorded and force manual-review escalation inside the sidecar only; they do not promote actions.
+The command preserves deterministic `contract_relationship` fields and row `action` fields unchanged. It does not mutate canonical `contract_relationship.manual_review_required`. Validation errors from malformed or forbidden LLM proposals are recorded and force manual-review escalation only in `llm_review.combined_manual_review_required`; they do not promote actions.
+
+Consumers must read both the deterministic relationship object and the `llm_review` sidecar: deterministic fields remain authoritative, while the sidecar records audit-only review metadata and escalation state. This is saved-file audit metadata only, not trade permission.
 
 Semantic similarity is not settlement equivalence. A future LLM may help identify terms and uncertainty, but it cannot approve trades or override deterministic blocking reasons.

@@ -14,6 +14,8 @@ from research.daily_weather_evidence import (
     DailyWeatherEvidenceDrilldownReporter,
     DailyWeatherEvidenceRangeConfig,
     DailyWeatherEvidenceRangeReporter,
+    DailyWeatherEvidenceRefreshConfig,
+    DailyWeatherEvidenceRefreshReporter,
     DailyWeatherEvidenceReporter,
 )
 
@@ -146,6 +148,42 @@ class FakeReadiness:
     def evaluate(self, *, last_days: int):
         self.calls.append(last_days)
         return FakeReadinessResult(reasons=["No clean strategy has survived replay."], metrics={})
+
+
+@dataclass
+class FakeSettlementResult:
+    labels: int
+    skipped: int = 0
+    warnings: list[str] | None = None
+
+
+class FakeSettlementLoader:
+    def __init__(self, order_log: list[str] | None = None, failures: dict[str, Exception] | None = None):
+        self.calls = []
+        self.order_log = order_log if order_log is not None else []
+        self.failures = failures or {}
+
+    def build_settlements(self, *, start, end, market_ticker=None):
+        self.calls.append((start, end, market_ticker))
+        self.order_log.append(f"settlement:{start.isoformat()}")
+        if start.isoformat() in self.failures:
+            raise self.failures[start.isoformat()]
+        return FakeSettlementResult(labels=2, skipped=1, warnings=[])
+
+
+class FakeRefreshDailyReporter:
+    def __init__(self, summaries: dict[str, dict], order_log: list[str] | None = None):
+        self.summaries = summaries
+        self.calls = []
+        self.order_log = order_log if order_log is not None else []
+
+    def build(self, config, *, persist_exports: bool):
+        self.calls.append((config, persist_exports))
+        self.order_log.append(f"daily:{config.day.isoformat()}")
+        summary = self.summaries[config.day.isoformat()]
+        if isinstance(summary, Exception):
+            raise summary
+        return type("Result", (), {"summary": summary, "exports": None})()
 
 
 def _reporter(**overrides):
@@ -599,3 +637,104 @@ def test_daily_weather_drilldown_exports_json_and_markdown(tmp_path, monkeypatch
     assert payload["summary"]["status"] == "DAILY_WEATHER_DRILLDOWN_RESEARCH_ONLY"
     assert payload["top_signals_by_pnl"][0]["market_ticker"] == "KXHIGHAUS-26MAY21-B90"
     assert "KXHIGHAUS-26MAY21-B90" in md_path.read_text(encoding="utf-8")
+
+
+def test_refresh_daily_weather_evidence_calls_settlement_then_daily_in_order():
+    order_log: list[str] = []
+    settlement = FakeSettlementLoader(order_log)
+    daily = FakeRefreshDailyReporter(
+        {
+            "2026-05-20": _daily_summary("2026-05-20", net=12.0, stress="passes basic stress"),
+            "2026-05-21": _daily_summary("2026-05-21", net=-2.0, stress="fails 2x fees"),
+        },
+        order_log,
+    )
+    readiness = FakeReadiness()
+
+    result = DailyWeatherEvidenceRefreshReporter(
+        settlement_loader=settlement,
+        daily_reporter=daily,
+        trading_readiness=readiness,
+    ).build(
+        DailyWeatherEvidenceRefreshConfig(start=date(2026, 5, 20), end=date(2026, 5, 21)),
+        persist_exports=False,
+    )
+
+    assert order_log == [
+        "settlement:2026-05-20",
+        "daily:2026-05-20",
+        "settlement:2026-05-21",
+        "daily:2026-05-21",
+    ]
+    assert result.summary["settlement_labels_built"] == 4
+    assert result.summary["days_with_errors"] == 0
+    assert result.range_summary["days_analyzed"] == 2
+    assert readiness.calls == [7]
+
+
+def test_refresh_daily_weather_evidence_passes_force_rebuild_only_when_explicit():
+    settlement = FakeSettlementLoader()
+    daily = FakeRefreshDailyReporter({"2026-05-21": _daily_summary("2026-05-21")})
+
+    DailyWeatherEvidenceRefreshReporter(
+        settlement_loader=settlement,
+        daily_reporter=daily,
+        trading_readiness=FakeReadiness(),
+    ).build(DailyWeatherEvidenceRefreshConfig(start=date(2026, 5, 21), end=date(2026, 5, 21)), persist_exports=False)
+    assert daily.calls[-1][0].force_rebuild_replay is False
+
+    DailyWeatherEvidenceRefreshReporter(
+        settlement_loader=settlement,
+        daily_reporter=daily,
+        trading_readiness=FakeReadiness(),
+    ).build(
+        DailyWeatherEvidenceRefreshConfig(start=date(2026, 5, 21), end=date(2026, 5, 21), force_rebuild_replay=True),
+        persist_exports=False,
+    )
+    assert daily.calls[-1][0].force_rebuild_replay is True
+
+
+def test_refresh_daily_weather_evidence_one_day_error_does_not_abort_range():
+    settlement = FakeSettlementLoader(failures={"2026-05-20": RuntimeError("label refresh failed")})
+    daily = FakeRefreshDailyReporter({"2026-05-21": _daily_summary("2026-05-21", net=8.0, stress="passes basic stress")})
+
+    result = DailyWeatherEvidenceRefreshReporter(
+        settlement_loader=settlement,
+        daily_reporter=daily,
+        trading_readiness=FakeReadiness(),
+    ).build(
+        DailyWeatherEvidenceRefreshConfig(start=date(2026, 5, 20), end=date(2026, 5, 21)),
+        persist_exports=False,
+    )
+
+    assert result.summary["days_processed"] == 2
+    assert result.summary["days_with_errors"] == 1
+    assert result.days[0]["status"] == "DAILY_WEATHER_EVIDENCE_REFRESH_ERROR"
+    assert result.days[0]["error"] == "label refresh failed"
+    assert result.days[1]["status"] == "DAILY_WEATHER_EVIDENCE_REFRESHED"
+    assert result.range_summary["days_with_errors"] == 1
+
+
+def test_refresh_daily_weather_evidence_exports_json_and_markdown(tmp_path, monkeypatch):
+    import json
+    import research.daily_weather_evidence as daily_mod
+
+    monkeypatch.setattr(daily_mod, "PROJECT_ROOT", tmp_path)
+    result = DailyWeatherEvidenceRefreshReporter(
+        settlement_loader=FakeSettlementLoader(),
+        daily_reporter=FakeRefreshDailyReporter({"2026-05-21": _daily_summary("2026-05-21")}),
+        trading_readiness=FakeReadiness(),
+    ).build(
+        DailyWeatherEvidenceRefreshConfig(start=date(2026, 5, 21), end=date(2026, 5, 21)),
+        persist_exports=True,
+    )
+
+    assert result.exports is not None
+    json_path = tmp_path / "reports" / "daily_weather_evidence_refresh_2026-05-21_2026-05-21.json"
+    md_path = tmp_path / "reports" / "daily_weather_evidence_refresh_2026-05-21_2026-05-21.md"
+    assert json_path.exists()
+    assert md_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["status"] == "DAILY_WEATHER_EVIDENCE_REFRESH_RESEARCH_ONLY"
+    assert payload["trading_readiness"]["status"] == "NOT_READY_NO_EDGE"
+    assert "DAILY_WEATHER_EVIDENCE_REFRESH_RESEARCH_ONLY" in md_path.read_text(encoding="utf-8")

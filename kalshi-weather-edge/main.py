@@ -38,6 +38,8 @@ from research.daily_weather_evidence import (
     DailyWeatherEvidenceDrilldownReporter,
     DailyWeatherEvidenceRangeConfig,
     DailyWeatherEvidenceRangeReporter,
+    DailyWeatherEvidenceRefreshConfig,
+    DailyWeatherEvidenceRefreshReporter,
     DailyWeatherEvidenceReporter,
 )
 from research.market_making_replay import MarketMakingReplayBacktester, MarketMakingReplayConfig
@@ -374,6 +376,15 @@ def main(argv: list[str] | None = None) -> int:
     daily_weather_drilldown.add_argument("--min-edge-after-buffers-cents", type=float, default=5.0)
     daily_weather_drilldown.add_argument("--trading-readiness-last-days", type=int, default=7)
     daily_weather_drilldown.add_argument("--no-export", action="store_true")
+    refresh_daily_weather = sub.add_parser("refresh-daily-weather-evidence", help="Research-only refresh of recent daily weather evidence")
+    refresh_daily_weather.add_argument("--start", required=True)
+    refresh_daily_weather.add_argument("--end", required=True)
+    refresh_daily_weather.add_argument("--max-markets", type=int, default=25)
+    refresh_daily_weather.add_argument("--min-settlement-confidence", type=float, default=0.85)
+    refresh_daily_weather.add_argument("--min-edge-after-buffers-cents", type=float, default=5.0)
+    refresh_daily_weather.add_argument("--trading-readiness-last-days", type=int, default=7)
+    refresh_daily_weather.add_argument("--force-rebuild-replay", action="store_true", help="Rebuild recorded replay for dates even when rows already exist.")
+    refresh_daily_weather.add_argument("--no-export", action="store_true")
     paper_mm_drilldown = sub.add_parser("paper-market-making-drilldown", help="Read-only paper quote/fill drilldown for one market/side")
     paper_mm_drilldown.add_argument("--ticker", required=True)
     paper_mm_drilldown.add_argument("--side", choices=["BUY_YES", "BUY_NO"], required=True)
@@ -649,6 +660,18 @@ def main(argv: list[str] | None = None) -> int:
             trading_readiness_last_days=args.trading_readiness_last_days,
         )
         print(DailyWeatherEvidenceDrilldownReporter().build(cfg, persist_exports=not args.no_export).to_text())
+        return 0
+    if args.command == "refresh-daily-weather-evidence":
+        cfg = DailyWeatherEvidenceRefreshConfig(
+            start=_date_arg(args.start),
+            end=_date_arg(args.end),
+            max_markets=args.max_markets,
+            min_settlement_confidence=args.min_settlement_confidence,
+            min_edge_after_buffers_cents=args.min_edge_after_buffers_cents,
+            trading_readiness_last_days=args.trading_readiness_last_days,
+            force_rebuild_replay=args.force_rebuild_replay,
+        )
+        print(DailyWeatherEvidenceRefreshReporter().build(cfg, persist_exports=not args.no_export).to_text())
         return 0
     if args.command == "paper-market-making-drilldown":
         cfg = PaperMarketMakingDrilldownConfig(

@@ -87,7 +87,7 @@ See `docs/SOURCE_TAXONOMY.md` for the planned registry and output policy.
 python scan.py llm-review-relationships --input reports\live_snapshot_pairs.json --output reports\live_snapshot_pairs_llm_reviewed.json --stub
 ```
 
-`llm-review-relationships` is a saved-report audit transformer for matcher/evaluator JSON files that already contain `contract_relationship`. It uses the deterministic stub only, writes `llm_review` sidecars, preserves deterministic relationship fields and actions unchanged, and does not call a real LLM.
+`llm-review-relationships` is a saved-report audit transformer for matcher/evaluator JSON files that already contain `contract_relationship`. It uses the deterministic stub only, writes `llm_review` sidecars, preserves deterministic relationship fields and actions unchanged, and does not call a real LLM. It never mutates `contract_relationship.manual_review_required`; audit escalation appears only at `llm_review.combined_manual_review_required`, so consumers must inspect both the deterministic relationship and sidecar metadata.
 
 ## Live Snapshot Matching Prototype
 

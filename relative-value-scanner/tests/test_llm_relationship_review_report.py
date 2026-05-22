@@ -123,6 +123,30 @@ def test_invalid_llm_proposal_forces_manual_review_required(tmp_path: Path) -> N
     assert llm_review["combined_manual_review_required"] is True
     assert reviewed["llm_relationship_review"]["validation_error_count"] == 1
     assert reviewed["llm_relationship_review"]["manual_review_escalation_count"] == 1
+    assert reviewed["pairs"][0]["contract_relationship"]["manual_review_required"] is False
+
+
+def test_non_stub_client_is_rejected_clearly(tmp_path: Path) -> None:
+    class NonStubClient:
+        model_id = "not-stub"
+        model_version = "v1"
+
+        def propose_relationship(self, payload):
+            return {}
+
+    input_path = _write(tmp_path / "pairs.json", _matcher_report())
+
+    try:
+        review_relationship_report_file(
+            input_path=input_path,
+            output_path=tmp_path / "reviewed.json",
+            client=NonStubClient(),
+            timestamp=NOW,
+        )
+    except ValueError as exc:
+        assert "only StubLLMRelationshipClient is supported" in str(exc)
+    else:
+        raise AssertionError("expected non-stub client rejection")
 
 
 def test_cli_reviews_saved_report_with_stub_only(tmp_path: Path, capsys) -> None:
