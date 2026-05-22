@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 import scan
+from relative_value.live_snapshot_matcher import match_snapshot_files
 from relative_value.models import Action, NormalizedMarket, SourceKind
 from relative_value.scoring import score_pair
 from venues.the_odds_api import (
@@ -78,6 +79,7 @@ def test_successful_response_normalizes_reference_records() -> None:
     )
 
     assert snapshot["schema_version"] == 1
+    assert snapshot["schema_kind"] == "reference_snapshot_v1"
     assert snapshot["source_id"] == "the_odds_api"
     assert snapshot["source_type"] == "REFERENCE_ONLY"
     assert snapshot["permission"] == "REFERENCE_ONLY"
@@ -92,6 +94,8 @@ def test_successful_response_normalizes_reference_records() -> None:
     assert row["american_odds"] == -120.0
     assert row["implied_probability"] == pytest.approx(0.545455)
     assert row["no_vig_probability"] is not None
+    assert row["source_type"] == "REFERENCE_ONLY"
+    assert row["permission"] == "REFERENCE_ONLY"
     assert row["is_executable"] is False
     assert row["usable_for_trade_decision"] is False
 
@@ -222,6 +226,7 @@ def test_fetch_the_odds_api_cli_uses_client_without_network(monkeypatch, tmp_pat
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert result == 0
+    assert payload["schema_kind"] == "reference_snapshot_v1"
     assert payload["source_type"] == "REFERENCE_ONLY"
     assert payload["normalized_count"] == 4
     assert "PAPER_CANDIDATE" not in json.dumps(payload)
@@ -255,3 +260,49 @@ def test_sportsbook_reference_row_cannot_promote_to_paper_or_possible_arb() -> N
 
     assert candidate.action not in {Action.PAPER, Action.POSSIBLE_ARB}
     assert "sportsbook odds are reference-only" in candidate.reasons
+
+
+def test_reference_snapshot_fails_closed_in_live_snapshot_matcher_path(tmp_path: Path) -> None:
+    reference_snapshot = build_the_odds_api_reference_snapshot(
+        _sample_response(),
+        sport_key="basketball_nba",
+        regions="us",
+        markets="h2h",
+        odds_format="american",
+        retrieved_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    executable_snapshot = {
+        "schema_version": 1,
+        "source": "kalshi",
+        "captured_at": "2026-05-21T12:00:00+00:00",
+        "normalized_markets": [
+            {
+                "ticker": "KXNBA-26-BOS",
+                "title": "Will Boston win?",
+                "event_title": "Boston Celtics vs New York Knicks",
+                "close_time": "2026-05-21T23:00:00+00:00",
+                "end_date": "2026-05-21T23:00:00+00:00",
+                "status": "active",
+            }
+        ],
+    }
+    reference_path = tmp_path / "the_odds_api_reference_snapshot.json"
+    executable_path = tmp_path / "kalshi_snapshot.json"
+    output_path = tmp_path / "pairs.json"
+    reference_path.write_text(json.dumps(reference_snapshot), encoding="utf-8")
+    executable_path.write_text(json.dumps(executable_snapshot), encoding="utf-8")
+
+    result = match_snapshot_files(reference_path, executable_path, output_path)
+
+    assert result["pair_count"] == 0
+    assert result["pairs"] == []
+    assert "unsupported_schema_kind" in result["snapshot_issues"]["polymarket"]
+    assert "missing_normalized_markets" in result["snapshot_issues"]["polymarket"]
+
+
+def test_default_scan_output_remains_offline_fixture_scan(capsys) -> None:
+    result = scan.main([])
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "relative_value_scan_status=OFFLINE_COMPLETE candidates=7 possible_arbs=0" in output

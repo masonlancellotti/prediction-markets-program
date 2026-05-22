@@ -156,6 +156,7 @@ def build_the_odds_api_reference_snapshot(
     )
     return {
         "schema_version": 1,
+        "schema_kind": "reference_snapshot_v1",
         "source": "the_odds_api_reference",
         "source_id": "the_odds_api",
         "source_type": "REFERENCE_ONLY",

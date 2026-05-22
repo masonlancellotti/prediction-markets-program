@@ -153,6 +153,9 @@ def load_snapshot(path: Path, venue: str) -> LoadedSnapshot:
         issues.append("missing_schema_version")
     elif version != SUPPORTED_SCHEMA_VERSION:
         issues.append("unsupported_schema_version")
+    schema_kind = payload.get("schema_kind")
+    if schema_kind is not None and schema_kind != "live_snapshot_v1":
+        issues.append("unsupported_schema_kind")
     if "normalized_markets" not in payload or not isinstance(payload.get("normalized_markets"), list):
         issues.append("missing_normalized_markets")
     return LoadedSnapshot(venue=venue, path=path, payload=payload, issues=tuple(issues))

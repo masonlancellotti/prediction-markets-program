@@ -15,7 +15,7 @@ The matcher reads local JSON snapshots only:
 
 Alternate paths can be passed with `--polymarket` and `--kalshi`. Tuning flags are `--min-similarity` and `--max-snapshot-age-hours`.
 
-Snapshots must use `schema_version=1`. Missing or unsupported versions are reported as snapshot issues and no pair generation is trusted.
+Snapshots must use `schema_version=1`. Missing or unsupported versions are reported as snapshot issues and no pair generation is trusted. Reference-only sibling snapshots such as The Odds API `schema_kind=reference_snapshot_v1` reports are diagnostics only; if routed into this matcher they fail closed as an unsupported schema kind and do not produce pairs.
 
 ## Matching Approach
 

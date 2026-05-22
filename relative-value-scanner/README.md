@@ -52,9 +52,9 @@ The snapshot keeps Kalshi market discovery fields such as YES `best_bid`/`best_a
 python scan.py fetch-the-odds-api --sport-key basketball_nba --markets h2h,spreads,totals --output reports\the_odds_api_reference_snapshot.json
 ```
 
-This writes a `schema_version=1` reference-only snapshot from The Odds API. The API key is read from `THE_ODDS_API_KEY` by default or from `--api-key`; tests use mocked HTTP and do not require a real key. Rows include event title, bookmaker, market type, American odds, implied probability, no-vig probability when calculable, retrieval/stale timestamps, and provenance metadata.
+This writes a `schema_version=1`, `schema_kind=reference_snapshot_v1` reference-only snapshot from The Odds API. The API key is read from `THE_ODDS_API_KEY` by default or from `--api-key`; tests use mocked HTTP and do not require a real key. Rows include event title, bookmaker, market type, American odds, implied probability, no-vig probability when calculable, retrieval/stale timestamps, and provenance metadata.
 
-The Odds API and sportsbook rows are `REFERENCE_ONLY`, `is_executable=false`, and `usable_for_trade_decision=false`. No-vig odds are diagnostics, not guaranteed edge. They can inform `WATCH`/diagnostics only and cannot create `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
+The Odds API and sportsbook rows are `REFERENCE_ONLY`, `is_executable=false`, and `usable_for_trade_decision=false`. Reference snapshots are sibling diagnostic inputs, not executable venue snapshots for the live matcher. No-vig odds are diagnostics, not guaranteed edge. They can inform `WATCH`/diagnostics only and cannot create `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
 
 ## Snapshot Schema V1
 
@@ -75,6 +75,10 @@ Venue-specific fields are allowed, but consumers should rely only on the documen
 Kalshi and Polymarket are implemented read-only executable venues for candidate-pair research. ForecastEx/IBKR is listed as a planned executable venue but cannot create candidates yet. Manifold and Metaculus are signal-only, while The Odds API and sportsbooks are reference-only. Reference-only sources may inform `WATCH`/diagnostics only; signal-only sources may inform discovery or semantic clustering only. Neither can create `PAPER_CANDIDATE` by itself.
 
 See `docs/SOURCE_TAXONOMY.md` for the planned registry and output policy.
+
+## LLM Relationship Review Stub
+
+`relative_value/llm_relationship_classifier.py` defines a no-network, no-API-key interface for future LLM relationship review. It is audit metadata only: LLM output cannot assert `EQUIVALENT`, cannot set `same_payoff=true`, cannot approve trades, and cannot change `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB` behavior. Deterministic relationship rules remain authoritative.
 
 ## Live Snapshot Matching Prototype
 

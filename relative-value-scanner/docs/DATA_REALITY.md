@@ -90,9 +90,9 @@ The runner forwards evaluator review flags such as `--max-settlement-delta-secon
 
 ## Sportsbook Odds
 
-`python scan.py fetch-the-odds-api` writes a saved reference-only sportsbook snapshot from The Odds API. It uses an API key from `THE_ODDS_API_KEY` or `--api-key`, calls only read-only odds endpoints, and records `source_id=the_odds_api`, `source_type=REFERENCE_ONLY`, `is_executable=false`, and `usable_for_trade_decision=false`.
+`python scan.py fetch-the-odds-api` writes a saved reference-only sportsbook snapshot from The Odds API with `schema_version=1` and `schema_kind=reference_snapshot_v1`. It uses an API key from `THE_ODDS_API_KEY` or `--api-key`, calls only read-only odds endpoints, and records `source_id=the_odds_api`, `source_type=REFERENCE_ONLY`, `is_executable=false`, and `usable_for_trade_decision=false`.
 
-Sportsbook prices are reference prices only. No-vig conversion removes listed overround, but it does not make the sportsbook leg executable inside this scanner. No-vig odds are diagnostics, not guaranteed edge. A sportsbook/reference row cannot create `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
+Sportsbook prices are reference prices only. Reference snapshots are sibling diagnostic reports, not executable venue snapshots for the live matcher. No-vig conversion removes listed overround, but it does not make the sportsbook leg executable inside this scanner. No-vig odds are diagnostics, not guaranteed edge. A sportsbook/reference row cannot create `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
 
 ## Settlement Risk
 

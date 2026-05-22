@@ -16,6 +16,7 @@
 - `reference_odds.py`: American odds and no-vig sportsbook conversion.
 - `fees.py`: fee model interface plus flat, Kalshi-tiered, and no-fee implementations.
 - `contract_relationship.py`: deterministic contract-relationship classification constants and report shape for review/debugging only.
+- `llm_relationship_classifier.py`: stubbed no-network LLM relationship proposal validator and audit sidecar helpers; review metadata only.
 - `source_registry.py`: non-networked source taxonomy and output-policy registry for executable, reference-only, and signal-only sources.
 - `matching.py`: match confidence and settlement mismatch risk.
 - `scoring.py`: action ladder and POSSIBLE_ARB hard gates.
@@ -51,6 +52,7 @@
 - `test_markout_replay.py`: local JSON markout replay tests for window filling, no-midpoint logic, stale/missing statuses, fee reuse, no disallowed actions, input non-mutation, and CLI wiring.
 - `test_source_registry.py`: source taxonomy tests proving executable, reference-only, signal-only, planned, and unknown-source behavior.
 - `test_the_odds_api_live.py`: mocked The Odds API reference snapshot tests; no real API key or network required.
+- `test_llm_relationship_classifier.py`: strict LLM proposal schema, forbidden-output, audit sidecar, and no-behavior-change tests.
 
 ## `reports/`
 
