@@ -96,6 +96,8 @@ Sportsbook prices are reference prices only. Reference snapshots are sibling dia
 
 `python scan.py match-live-snapshots --reference-snapshot <path>` may load these saved reference snapshots into `reference_context` observability summaries. Stale or malformed sportsbook rows are reported as diagnostics, not semantic relationship proof. Reference rows cannot affect gross gap, net gap, fees, depth, unit checks, settlement eligibility, or action selection.
 
+`python scan.py explain-reference-context --snapshot <schema-v1 snapshot> --reference-snapshot <reference_snapshot_v1>` prints diagnostic-only plausible reference matches for review. It uses title/entity similarity as discovery, not settlement equivalence. It does not compute net edge, executable liquidity, or candidate actions; sportsbook odds and no-vig probabilities remain reference context only.
+
 ## Settlement Risk
 
 Similar event names are not enough. Missing settlement dates cap match confidence. Conflicting settlement dates create high mismatch risk and cap action severity. Different settlement rules also increase mismatch risk.

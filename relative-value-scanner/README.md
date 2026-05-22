@@ -50,11 +50,14 @@ The snapshot keeps Kalshi market discovery fields such as YES `best_bid`/`best_a
 
 ```powershell
 python scan.py fetch-the-odds-api --sport-key basketball_nba --markets h2h,spreads,totals --output reports\the_odds_api_reference_snapshot.json
+python scan.py explain-reference-context --snapshot reports\polymarket_markets_snapshot.json --reference-snapshot reports\the_odds_api_reference_snapshot.json
 ```
 
 This writes a `schema_version=1`, `schema_kind=reference_snapshot_v1` reference-only snapshot from The Odds API. The API key is read from `THE_ODDS_API_KEY` by default or from `--api-key`; tests use mocked HTTP and do not require a real key. Rows include event title, bookmaker, market type, American odds, implied probability, no-vig probability when calculable, retrieval/stale timestamps, and provenance metadata.
 
 The Odds API and sportsbook rows are `REFERENCE_ONLY`, `is_executable=false`, and `usable_for_trade_decision=false`. Reference snapshots are sibling diagnostic inputs, not executable venue snapshots for the live matcher. No-vig odds are diagnostics, not guaranteed edge. They can inform `WATCH`/diagnostics only and cannot create `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB`.
+
+`explain-reference-context` compares one executable snapshot against one reference snapshot for observability only. It reports plausible title/entity matches, bookmaker, market type, no-vig probability, retrieval/stale timestamps, and stale/malformed diagnostics. It does not compute gaps, fees, depth, settlement equivalence, or actions beyond `REFERENCE_ONLY_DIAGNOSTIC`.
 
 ## Snapshot Schema V1
 

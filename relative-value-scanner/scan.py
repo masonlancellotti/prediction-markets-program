@@ -15,6 +15,7 @@ from relative_value.paper_candidate_evaluator import (
     PaperCandidateEvaluatorConfig,
     evaluate_paper_candidate_files,
 )
+from relative_value.reference_diagnostics import explain_reference_context_files
 from relative_value.report import write_json_report, write_markdown_report
 from relative_value.scanner import RelativeValueScanner
 from venues.kalshi import (
@@ -233,6 +234,14 @@ def main(argv: list[str] | None = None) -> int:
     explain_candidates_parser.add_argument("--action", choices=["PAPER_CANDIDATE", "MANUAL_REVIEW", "WATCH"])
     explain_candidates_parser.add_argument("--limit", type=int)
 
+    explain_reference_parser = subparsers.add_parser(
+        "explain-reference-context",
+        help="Print diagnostic-only sportsbook reference context for one executable snapshot.",
+    )
+    explain_reference_parser.add_argument("--snapshot", type=Path, required=True)
+    explain_reference_parser.add_argument("--reference-snapshot", type=Path, required=True)
+    explain_reference_parser.add_argument("--min-similarity", type=float, default=0.35)
+
     parser.add_argument("--fixture-dir", type=Path, default=PROJECT_ROOT / "venues" / "fixtures")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports")
     parser.add_argument("--include-ignore", action="store_true", help="Include ignored pairs in reports.")
@@ -349,6 +358,12 @@ def main(argv: list[str] | None = None) -> int:
         return explain_pipeline_summary(args.summary)
     if args.command == "explain-paper-candidates":
         return explain_paper_candidates(args.ledger, action=args.action, limit=args.limit)
+    if args.command == "explain-reference-context":
+        return explain_reference_context(
+            args.snapshot,
+            args.reference_snapshot,
+            min_similarity=args.min_similarity,
+        )
 
     scanner = RelativeValueScanner()
     candidates = scanner.scan_from_adapters(build_fixture_adapters(args.fixture_dir), include_ignore=args.include_ignore)
@@ -1094,6 +1109,46 @@ def explain_paper_candidates(path: Path, action: str | None = None, limit: int |
         print("")
 
     print(f"explain_paper_candidates_status=OK candidates_shown={len(rows)} ledger={path}")
+    return 0
+
+
+def explain_reference_context(snapshot: Path, reference_snapshot: Path, min_similarity: float = 0.35) -> int:
+    try:
+        payload = explain_reference_context_files(
+            snapshot_path=snapshot,
+            reference_snapshot_path=reference_snapshot,
+            min_similarity=min_similarity,
+        )
+    except ValueError as exc:
+        print(f"explain_reference_context_status=FAILED message={exc}")
+        return 1
+
+    print("Reference context diagnostics: review only; sportsbook odds are not executable prices.")
+    print(f"  executable_market_count: {payload['executable_market_count']}")
+    print(f"  reference_record_count: {payload['reference_record_count']}")
+    print(f"  diagnostic_match_count: {payload['diagnostic_match_count']}")
+    print(f"  stale_reference_record_count: {payload['stale_reference_record_count']}")
+    print(f"  malformed_reference_record_count: {payload['malformed_reference_record_count']}")
+    for row in payload["diagnostic_rows"]:
+        print(f"Diagnostic: {_display_value(row.get('executable_market_id'))}")
+        print(f"  action: {_display_value(row.get('action'))}")
+        print(f"  executable_market_title: {_display_value(row.get('executable_market_title'))}")
+        print(f"  reference_event_title: {_display_value(row.get('reference_event_title'))}")
+        print(
+            "  reference: "
+            f"bookmaker={_display_value(row.get('bookmaker'))} "
+            f"market_type={_display_value(row.get('market_type'))} "
+            f"outcome={_display_value(row.get('reference_outcome_name'))}"
+        )
+        print(f"  no_vig_probability: {_display_value(row.get('no_vig_probability'))}")
+        print(f"  retrieved_at: {_display_value(row.get('retrieved_at'))}")
+        print(f"  stale_after: {_display_value(row.get('stale_after'))}")
+        print(f"  reference_status: {_display_value(row.get('reference_status'))}")
+        print(f"  match_score: {_display_value(row.get('match_score'))}")
+        print(f"  match_reason: {_display_value(row.get('match_reason'))}")
+        print(f"  diagnostics: {_format_reason_list(row.get('reference_diagnostics'))}")
+        print("")
+    print(f"explain_reference_context_status=OK matches={payload['diagnostic_match_count']}")
     return 0
 
 
