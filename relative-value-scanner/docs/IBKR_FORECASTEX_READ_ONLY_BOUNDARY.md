@@ -12,7 +12,7 @@ This is a boundary and readiness plan only. It adds no IBKR transport, no TWS/Ga
 - Display name: `IBKR / ForecastEx`
 - Source type: `EXECUTABLE_VENUE`
 - Implementation status: `PLANNED_NOT_IMPLEMENTED`
-- Current project mode: boundary design only
+- Current project mode: fixture-backed schema exists; no live transport
 - Execution allowed now: `false`
 - Candidate-pair eligible now: `false`
 - Paper-candidate eligible now: `false`
@@ -114,9 +114,9 @@ No raw network payloads should be persisted until a redaction/filtering pass is 
 
 | Stage | Status | Description |
 | --- | --- | --- |
-| 0 | Current | Boundary docs and inert metadata only. |
+| 0 | Current | Boundary docs, inert metadata, and fixture-backed schema only. |
 | 1 | Not implemented | Manual account, permission, and API boundary review. |
-| 2 | Not implemented | Static fixture-backed instrument, quote, fee, and settlement schema. |
+| 2 | Current | Static fixture-backed instrument, quote, fee, and settlement schema. |
 | 3 | Not implemented | Live read-only transport after separate review; no account/order queries. |
 | 4 | Not implemented | Normalized snapshot generation for manual review only. |
 | 5 | Not implemented | Matcher integration only after separate review and all fake-edge gates. |

@@ -12,6 +12,7 @@
       "currency": "USD",
       "contract_title": "Will US CPI inflation be above 3.0% for June 2026?",
       "question": "Will US CPI inflation be above 3.0% for June 2026?",
+      "contract_terms_url_or_text": "Fixture placeholder contract terms for a yes/no CPI event contract; not reviewed for matching.",
       "event_category": "macro",
       "expiration": "2026-07-15T14:00:00Z"
     },
@@ -24,6 +25,7 @@
       "currency": "USD",
       "contract_title": "Will the Federal Reserve cut rates at the July 2026 meeting?",
       "question": "Will the Federal Reserve cut rates at the July 2026 meeting?",
+      "contract_terms_url_or_text": "Fixture placeholder contract terms for a yes/no FOMC event contract; not reviewed for matching.",
       "event_category": "macro",
       "expiration": "2026-07-29T18:00:00Z"
     }

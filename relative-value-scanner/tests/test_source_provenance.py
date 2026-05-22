@@ -234,6 +234,7 @@ def test_executable_venue_readiness_rows_are_conservative(monkeypatch) -> None:
     ]
     assert rows["forecastex_ibkr"]["live_readonly_research_fetch_exists"] is False
     assert rows["forecastex_ibkr"]["live_readonly_candidate_adapter_exists"] is False
+    assert rows["forecastex_ibkr"]["fixture_research_schema_exists"] is True
     assert rows["forecastex_ibkr"]["can_create_candidate_pair_now"] is False
     assert rows["prophetx"]["implementation_status"] == "NOT_IMPLEMENTED"
     assert rows["crypto_com"]["source_type"] == "DO_NOT_USE_YET"
@@ -253,7 +254,8 @@ def test_ibkr_forecastex_boundary_is_inert_and_fail_closed() -> None:
     assert report["source_id"] == "forecastex_ibkr"
     assert report["source_type"] == "EXECUTABLE_VENUE"
     assert report["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
-    assert report["status"] == "boundary_design_only_no_live_transport"
+    assert report["status"] == "fixture_backed_schema_exists_no_live_transport"
+    assert report["fixture_research_schema_exists"] is True
     assert report["expected_env_vars"] == [
         "IBKR_HOST",
         "IBKR_PORT",
@@ -267,7 +269,10 @@ def test_ibkr_forecastex_boundary_is_inert_and_fail_closed() -> None:
     forbidden = next(row for row in report["data_categories"] if row["name"] == "account_balances_positions_or_orders")
     assert forbidden["allowed_read_only_research"] is False
     assert forbidden["forbidden_account_or_execution_surface"] is True
-    assert all(row["allowed"] is False for row in report["stages"] if row["stage"] > 0)
+    stages = {row["name"]: row for row in report["stages"]}
+    assert stages["fixture_backed_instrument_schema"]["allowed"] is True
+    assert stages["live_read_only_transport_after_separate_review"]["allowed"] is False
+    assert stages["matcher_integration_after_separate_review"]["allowed"] is False
     assert report["raw_redaction_policy"]["allow_raw_network_echo"] is False
     serialized = json.dumps(report)
     assert "PAPER_CANDIDATE" not in serialized
@@ -279,7 +284,20 @@ def test_ibkr_forecastex_boundary_adds_no_transport_imports() -> None:
         encoding="utf-8"
     )
 
-    forbidden_terms = ("ibapi", "ib_insync", "requests", "httpx", "aiohttp", "socket", "websocket")
+    forbidden_terms = (
+        "ibapi",
+        "ib_insync",
+        "requests",
+        "httpx",
+        "aiohttp",
+        "socket",
+        "websocket",
+        "urllib",
+        "http.client",
+        "ssl",
+        "clientportal",
+        "webapi",
+    )
     assert all(term not in source for term in forbidden_terms)
 
 
@@ -293,6 +311,7 @@ def test_ibkr_forecastex_fixture_parser_emits_research_only_snapshot() -> None:
                     "symbol": "FEXTEST",
                     "exchange": "FORECASTEX",
                     "contract_title": "Will a fixture event happen?",
+                    "contract_terms_url_or_text": "Fixture terms text.",
                     "event_category": "macro",
                     "expiration": "2026-07-01T14:00:00Z",
                 }
@@ -306,7 +325,7 @@ def test_ibkr_forecastex_fixture_parser_emits_research_only_snapshot() -> None:
                     "ask": 0.3,
                     "bid_size": 10,
                     "ask_size": 12,
-                    "quote_timestamp": "2026-05-22T14:00:00Z",
+                    "market_data_timestamp": "2026-05-22T14:00:00Z",
                 }
             ]
         },
@@ -315,8 +334,12 @@ def test_ibkr_forecastex_fixture_parser_emits_research_only_snapshot() -> None:
                 {
                     "instrument_id": "FEX-TEST",
                     "settlement_wording": "Fixture settlement wording.",
+                    "event_window": "Fixture event window.",
+                    "yes_no_payout_terms": "Fixture yes/no payout terms.",
                     "close_time": "2026-07-01T14:00:00Z",
                     "settlement_time": "2026-07-01T15:00:00Z",
+                    "per_contract_fee": 0.01,
+                    "regulatory_or_exchange_fees": 0.0,
                     "fee_commission_status": "fixture_unreviewed",
                 }
             ]
@@ -334,9 +357,19 @@ def test_ibkr_forecastex_fixture_parser_emits_research_only_snapshot() -> None:
     assert snapshot["research_market_count"] == 1
     row = snapshot["research_markets"][0]
     assert row["instrument_id"] == "FEX-TEST"
+    assert row["contract_terms_url_or_text"] == "Fixture terms text."
+    assert row["event_window"] == "Fixture event window."
+    assert row["yes_no_payout_terms"] == "Fixture yes/no payout terms."
     assert row["best_bid"] == 0.25
     assert row["best_ask"] == 0.3
+    assert row["market_data_timestamp"] == "2026-05-22T14:00:00Z"
+    assert row["quote_timestamp"] == "2026-05-22T14:00:00Z"
+    assert row["quote_timestamp_alias_of"] == "market_data_timestamp"
+    assert row["per_contract_fee"] == 0.01
+    assert row["regulatory_or_exchange_fees"] == 0.0
     assert row["displayed_depth"]["unit"] == "fixture_displayed_contracts_unreviewed"
+    assert "depth_units_not_normalized" in row["unresolved_blockers"]
+    assert "yes_no_payout_terms_not_recorded" not in row["unresolved_blockers"]
     assert set(IBKR_FORECASTEX_REQUIRED_BLOCKERS).issubset(row["unresolved_blockers"])
     serialized = json.dumps(snapshot)
     assert "PAPER_CANDIDATE" not in serialized
@@ -366,6 +399,13 @@ def test_inspect_ibkr_forecastex_fixtures_command_writes_reports(tmp_path: Path)
     assert payload["is_executable"] is False
     assert payload["can_create_candidate_pair"] is False
     assert payload["can_create_paper_candidate"] is False
+    first = payload["research_markets"][0]
+    assert first["contract_terms_url_or_text"]
+    assert first["yes_no_payout_terms"]
+    assert first["event_window"]
+    assert first["market_data_timestamp"]
+    assert first["per_contract_fee"] is not None
+    assert first["regulatory_or_exchange_fees"] is not None
     assert "IBKR / ForecastEx Fixture Inspection" in markdown
     serialized = json.dumps(payload) + markdown
     assert "PAPER_CANDIDATE" not in serialized
@@ -403,7 +443,20 @@ def test_inspect_ibkr_forecastex_fixtures_missing_file_fails_cleanly(tmp_path: P
 def test_ibkr_forecastex_parser_adds_no_live_transport_imports() -> None:
     source = (Path(__file__).parents[1] / "venues" / "ibkr_forecastex.py").read_text(encoding="utf-8")
 
-    forbidden_terms = ("ibapi", "ib_insync", "requests", "httpx", "aiohttp", "socket", "websocket")
+    forbidden_terms = (
+        "ibapi",
+        "ib_insync",
+        "requests",
+        "httpx",
+        "aiohttp",
+        "socket",
+        "websocket",
+        "urllib",
+        "http.client",
+        "ssl",
+        "clientportal",
+        "webapi",
+    )
     assert all(term not in source for term in forbidden_terms)
 
 

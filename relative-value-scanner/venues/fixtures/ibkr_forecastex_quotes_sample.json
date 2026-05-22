@@ -9,6 +9,7 @@
       "ask": 0.46,
       "bid_size": 120,
       "ask_size": 95,
+      "market_data_timestamp": "2026-05-22T14:00:00Z",
       "quote_timestamp": "2026-05-22T14:00:00Z",
       "delayed_or_realtime_status": "fixture_delayed_unknown"
     },
@@ -18,6 +19,7 @@
       "ask": 0.36,
       "bid_size": 80,
       "ask_size": 110,
+      "market_data_timestamp": "2026-05-22T14:00:00Z",
       "quote_timestamp": "2026-05-22T14:00:00Z",
       "delayed_or_realtime_status": "fixture_delayed_unknown"
     }

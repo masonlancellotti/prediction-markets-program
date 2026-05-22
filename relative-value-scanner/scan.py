@@ -57,6 +57,7 @@ from venues.polymarket import (
 from venues.the_odds_api import FixtureTheOddsApiAdapter, TheOddsApiReadOnlyClient, write_the_odds_api_reference_snapshot
 from venues.sx_bet import SXBetReadOnlyClient, SXBetReadOnlyFetchError, build_sx_bet_failure_snapshot
 from venues.ibkr_forecastex import (
+    IBKR_FORECASTEX_REQUIRED_BLOCKERS,
     IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND,
     load_ibkr_forecastex_research_fixtures,
 )
@@ -863,6 +864,7 @@ def executable_venue_readiness(*, json_output: Path, markdown_output: Path, load
             f"live_readonly_research_fetch_exists={str(row['live_readonly_research_fetch_exists']).lower()} "
             f"live_readonly_candidate_adapter_exists={str(row['live_readonly_candidate_adapter_exists']).lower()} "
             f"live_readonly_adapter_exists={str(row['live_readonly_adapter_exists']).lower()} "
+            f"fixture_research_schema_exists={str(row['fixture_research_schema_exists']).lower()} "
             f"execution_allowed_now={str(row['execution_allowed_in_project_now']).lower()} "
             f"can_create_candidate_pair_now={str(row['can_create_candidate_pair_now']).lower()} "
             f"can_create_paper_candidate_now={str(row['can_create_paper_candidate_now']).lower()}"
@@ -940,15 +942,7 @@ def _ibkr_forecastex_fixture_failure_snapshot(
         "settlement_count": 0,
         "research_market_count": 0,
         "research_markets": [],
-        "unresolved_blockers": [
-            "live_transport_not_implemented",
-            "account_permission_not_verified",
-            "instrument_mapping_not_reviewed",
-            "settlement_wording_not_normalized",
-            "fee_commission_model_not_reviewed",
-            "quote_freshness_not_reviewed",
-            "not_integrated_with_matcher_or_evaluator",
-        ],
+        "unresolved_blockers": list(IBKR_FORECASTEX_REQUIRED_BLOCKERS),
         "fixture_paths": {
             "instruments": str(instruments_path),
             "quotes": str(quotes_path),
@@ -988,7 +982,7 @@ def _ibkr_forecastex_fixture_markdown(snapshot: dict[str, Any]) -> str:
             "",
             "## Research Markets",
             "",
-            "| Instrument | Title | Bid | Ask | Quote timestamp | Fee status | Blockers |",
+            "| Instrument | Title | Bid | Ask | Market data timestamp | Fee status | Blockers |",
             "| --- | --- | --- | --- | --- | --- | --- |",
         ]
     )
@@ -1001,7 +995,7 @@ def _ibkr_forecastex_fixture_markdown(snapshot: dict[str, Any]) -> str:
                     _markdown_cell(row.get("contract_title") or row.get("question")),
                     _markdown_cell(row.get("best_bid")),
                     _markdown_cell(row.get("best_ask")),
-                    _markdown_cell(row.get("quote_timestamp")),
+                    _markdown_cell(row.get("market_data_timestamp")),
                     _markdown_cell(row.get("fee_commission_status")),
                     _markdown_cell(",".join(row.get("unresolved_blockers") or [])),
                 ]
@@ -1091,6 +1085,7 @@ def _executable_venue_readiness_row(source_id: str, env: dict[str, str]) -> dict
         "live_readonly_research_fetch_exists": live_readonly_research_fetch_exists,
         "live_readonly_candidate_adapter_exists": live_readonly_candidate_adapter_exists,
         "live_readonly_adapter_exists": live_readonly_adapter_exists,
+        "fixture_research_schema_exists": bool(definitions.get("fixture_research_schema_exists", False)),
         "live_readonly_smoke_exists": bool(definitions["live_readonly_smoke_exists"]),
         "public_market_data_possible": bool(
             definitions.get(
@@ -1193,8 +1188,9 @@ _EXECUTABLE_READINESS_DEFINITIONS: dict[str, dict[str, Any]] = {
         "live_readonly_candidate_adapter_exists": False,
         "live_readonly_adapter_exists": False,
         "live_readonly_smoke_exists": False,
-        "next_required_step": "Complete manual eligibility/API-permission review, then build fixture-backed instrument/quote/settlement schemas before any live IBKR transport.",
-        "blocked_reason": "NOT_IMPLEMENTED; account permission, instrument mapping, settlement terms, fees, and read-only API boundary are not yet reviewed.",
+        "fixture_research_schema_exists": True,
+        "next_required_step": "Complete manual eligibility/API-permission review and settlement wording catalog, then review fixture-backed schemas before any live IBKR transport.",
+        "blocked_reason": "NOT_IMPLEMENTED; fixture-backed schema exists, but account permission, instrument mapping, settlement terms, fees, and read-only API boundary are not yet reviewed.",
     },
     "sx_bet": {
         "display_name": "SX Bet",
@@ -1291,8 +1287,8 @@ def _executable_venue_readiness_markdown(report: dict[str, Any]) -> str:
         f"- Rationale: {report['recommended_next_adapter_candidate']['rationale']}",
         f"- Default scan mode: `{report['default_scan_data_source_mode']}`",
         "",
-        "| Source | Type | Status | Env configured | Research fetch | Candidate adapter | Adapter alias | Smoke | Public data | Bid/ask | Depth | Settlement | Candidate pair now | Paper candidate now | Next step |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Source | Type | Status | Env configured | Research fetch | Fixture schema | Candidate adapter | Adapter alias | Smoke | Public data | Bid/ask | Depth | Settlement | Candidate pair now | Paper candidate now | Next step |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in report["rows"]:
         lines.append(
@@ -1304,6 +1300,7 @@ def _executable_venue_readiness_markdown(report: dict[str, Any]) -> str:
                     _markdown_cell(row["implementation_status"]),
                     _markdown_cell(_env_configured_display(row["env_configured"])),
                     _markdown_cell(_yes_no(row["live_readonly_research_fetch_exists"])),
+                    _markdown_cell(_yes_no(row["fixture_research_schema_exists"])),
                     _markdown_cell(_yes_no(row["live_readonly_candidate_adapter_exists"])),
                     _markdown_cell(_yes_no(row["live_readonly_adapter_exists"])),
                     _markdown_cell(_yes_no(row["live_readonly_smoke_exists"])),

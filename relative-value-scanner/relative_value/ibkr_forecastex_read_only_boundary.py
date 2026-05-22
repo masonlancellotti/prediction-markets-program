@@ -116,9 +116,9 @@ IBKR_FORECASTEX_DATA_CATEGORIES = (
 IBKR_FORECASTEX_ADAPTER_STAGES = (
     IBKRForecastExAdapterStage(
         stage=0,
-        name="boundary_design_only",
+        name="boundary_and_fixture_schema_only",
         allowed=True,
-        description="Current inert metadata and documentation checkpoint; no transport or IBKR imports.",
+        description="Current inert metadata, documentation, and fixture-backed research schema; no live transport or IBKR imports.",
     ),
     IBKRForecastExAdapterStage(
         stage=1,
@@ -129,8 +129,8 @@ IBKR_FORECASTEX_ADAPTER_STAGES = (
     IBKRForecastExAdapterStage(
         stage=2,
         name="fixture_backed_instrument_schema",
-        allowed=False,
-        description="Use static fixtures to design instrument, quote, fee, and settlement normalization before transport.",
+        allowed=True,
+        description="Static fixtures define instrument, quote, fee, and settlement research snapshot fields before transport.",
     ),
     IBKRForecastExAdapterStage(
         stage=3,
@@ -193,7 +193,7 @@ def ibkr_forecastex_read_only_boundary_report() -> dict[str, object]:
         "display_name": "IBKR / ForecastEx",
         "source_type": "EXECUTABLE_VENUE",
         "implementation_status": "PLANNED_NOT_IMPLEMENTED",
-        "status": "boundary_design_only_no_live_transport",
+        "status": "fixture_backed_schema_exists_no_live_transport",
         "account_required": True,
         "permission_requirements": (
             "ForecastEx event-contract eligibility",
@@ -201,6 +201,7 @@ def ibkr_forecastex_read_only_boundary_report() -> dict[str, object]:
             "read-only API mode reviewed before any transport code",
         ),
         "expected_env_vars": list(IBKR_FORECASTEX_EXPECTED_ENV_VARS),
+        "fixture_research_schema_exists": True,
         "execution_allowed_in_project_now": False,
         "can_create_candidate_pair": False,
         "can_create_paper_candidate": False,
