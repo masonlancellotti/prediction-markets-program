@@ -30,6 +30,7 @@ from maintenance import ProjectMaintenance
 from research.liquidity_analysis import LiquidityAnalyzer
 from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingConfig
 from research.market_making_snapshot import MarketMakingSnapshotBuilder, MarketMakingSnapshotConfig
+from research.paper_basket_diagnostics import PaperBasketDiagnosticsReporter
 from research.paper_market_making_drilldown import PaperMarketMakingDrilldownConfig, PaperMarketMakingDrilldownReporter
 from research.paper_market_making_evidence import PaperMarketMakingEvidenceConfig, PaperMarketMakingEvidenceReporter
 from research.paper_market_making_target_review import PaperMarketMakingTargetReviewConfig, PaperMarketMakingTargetReviewer
@@ -347,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     paper_mm_basket.add_argument("--dry-run", action="store_true")
     paper_mm_basket.add_argument("--weather-only", action="store_true", help="Restrict basket target selection to tickers with parsed weather contracts.")
     paper_mm_basket.add_argument("--no-export", action="store_true")
+    sub.add_parser("paper-basket-diagnostics", help="Read-only diagnostics for the latest exported paper-market-making-basket run")
     paper_mm_evidence = sub.add_parser("paper-market-making-evidence", help="Read-only cumulative paper market-making evidence report; never sends real orders")
     paper_mm_evidence.add_argument("--stale-open-seconds", type=int, default=600)
     paper_mm_evidence.add_argument("--too-few-fills-threshold", type=int, default=5)
@@ -615,6 +617,9 @@ def main(argv: list[str] | None = None) -> int:
             weather_only=args.weather_only,
         )
         print(PaperMarketMakingBasket().run(cfg, persist_exports=not args.no_export, once=args.once or args.duration_minutes is None).to_text())
+        return 0
+    if args.command == "paper-basket-diagnostics":
+        print(PaperBasketDiagnosticsReporter().build().to_text())
         return 0
     if args.command == "paper-market-making-evidence":
         cfg = PaperMarketMakingEvidenceConfig(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
@@ -26,6 +27,7 @@ from research.market_making_analysis import (
     _summary,
     _ticker_event_date_hint,
 )
+from research.paper_basket_diagnostics import PaperBasketDiagnosticsReporter
 
 
 def _storage(tmp_path) -> Storage:
@@ -128,6 +130,241 @@ def _analyze(storage: Storage, *, weather_only: bool = False, **config_overrides
             **config_overrides,
         ),
     ).analyze(start=date(2026, 5, 1), end=date(2026, 5, 1), persist_exports=False)
+
+
+def _write_paper_basket_exports(
+    reports_dir,
+    *,
+    summary: dict | None = None,
+    actions: list[dict] | None = None,
+    targets: list[dict] | None = None,
+    target_summaries: list[dict] | None = None,
+) -> None:
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    (reports_dir / "paper_market_making_basket_summary.json").write_text(
+        json.dumps(
+            summary
+            or {
+                "status": "PAPER_BASKET_ACTIVE_NO_FILLS_YET",
+                "target_hygiene_verdict": "TARGET_HYGIENE_OK",
+                "targets": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame(actions or []).to_csv(reports_dir / "paper_market_making_basket_actions.csv", index=False)
+    pd.DataFrame(targets or []).to_csv(reports_dir / "paper_market_making_basket_targets.csv", index=False)
+    pd.DataFrame(target_summaries or []).to_csv(reports_dir / "paper_market_making_basket_target_summaries.csv", index=False)
+
+
+def test_paper_basket_diagnostics_summarizes_latest_exports(tmp_path):
+    reports_dir = tmp_path / "reports"
+    _write_paper_basket_exports(
+        reports_dir,
+        summary={
+            "status": "PAPER_BASKET_ACTIVE_NO_FILLS_YET",
+            "message": "Final target set has no fills.",
+            "target_hygiene_verdict": "TARGET_HYGIENE_OK",
+            "raw_candidate_targets": 2,
+            "survived_expiry_filter": 2,
+            "targets": 2,
+            "strict_targets": 0,
+            "exploratory_targets": 2,
+            "quotes_total": 12,
+            "open_quotes": 2,
+            "filled_quotes": 0,
+            "cancelled_quotes": 10,
+            "total_quotes_opened": 4,
+            "total_quotes_cancelled": 3,
+            "total_trade_print_fills_seen": 1,
+            "final_open_quotes": 2,
+            "final_filled_quotes": 0,
+            "final_cancelled_quotes": 10,
+            "fill_seen_in_history_but_not_final": True,
+            "quote_rejection_breakdown": {
+                "spread_below_minimum": 1,
+                "max_open_quotes_reached": 0,
+                "target_removed": 1,
+                "stale_or_expired_target": 0,
+                "no_valid_target": 0,
+                "other": 0,
+            },
+            "targets_with_any_fill": [
+                {"market_ticker": "KXRAINNYC-26MAY21-T0", "side": "BUY_NO", "tier": "REPLAY_SUPPORTED"}
+            ],
+            "targets_final": [
+                {"market_ticker": "KXMLBEXTRAS-26MAY211310CLEDET-EXTRAS", "side": "BUY_YES", "tier": "EXPLORATORY_CURRENT"},
+                {"market_ticker": "KXNBA2NDTEAMDEF-26-TCAM", "side": "BUY_YES", "tier": "EXPLORATORY_CURRENT"},
+            ],
+            "targets_removed_reason": {"KXRAINNYC-26MAY21-T0|BUY_NO": "target_removed_after_selector_refresh"},
+        },
+        actions=[
+            {
+                "action": "NO_QUOTE",
+                "market_ticker": "KXMLBEXTRAS-26MAY211310CLEDET-EXTRAS",
+                "side": "BUY_YES",
+                "reason": "Current spread 4.00c below minimum 8.00c.",
+            },
+            {
+                "action": "QUOTE_OPENED",
+                "market_ticker": "KXNBA2NDTEAMDEF-26-TCAM",
+                "side": "BUY_YES",
+                "reason": "Opened paper quote id=1 at 7.00c.",
+            },
+        ],
+        targets=[
+            {"market_ticker": "KXMLBEXTRAS-26MAY211310CLEDET-EXTRAS", "side": "BUY_YES", "tier": "EXPLORATORY_CURRENT"},
+            {"market_ticker": "KXNBA2NDTEAMDEF-26-TCAM", "side": "BUY_YES", "tier": "EXPLORATORY_CURRENT"},
+        ],
+        target_summaries=[],
+    )
+
+    result = PaperBasketDiagnosticsReporter(reports_dir=reports_dir).build()
+
+    assert result.summary["diagnostics_status"] == "PAPER_BASKET_DIAGNOSTICS_OK"
+    assert result.summary["research_only"] is True
+    assert result.summary["readiness_promotion"] == "none"
+    assert result.summary["strict_targets"] == 0
+    assert result.summary["exploratory_targets"] == 2
+    assert result.summary["fill_seen_in_history_but_not_final"] is True
+    assert result.summary["quote_rejection_breakdown"]["spread_below_minimum"] == 1
+    assert result.summary["spread_below_minimum_count"] == 1
+    assert result.summary["targets_with_any_fill"][0]["market_ticker"] == "KXRAINNYC-26MAY21-T0"
+    assert "Increase duration" in result.summary["suggested_next_settings"][0]
+    text = result.to_text()
+    assert "paper_basket_diagnostics_status=PAPER_BASKET_DIAGNOSTICS_OK" in text
+    assert "PAPER_CANDIDATE" not in text
+    assert "POSSIBLE_ARB" not in text
+
+
+def test_paper_basket_diagnostics_falls_back_to_csv_actions_and_target_summaries(tmp_path):
+    reports_dir = tmp_path / "reports"
+    _write_paper_basket_exports(
+        reports_dir,
+        summary={
+            "status": "PAPER_BASKET_COLLECTING_FILLS",
+            "target_hygiene_verdict": "TARGET_HYGIENE_OK",
+            "targets": 1,
+            "filled_quotes": 0,
+        },
+        actions=[
+            {
+                "action": "NO_QUOTE",
+                "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+                "side": "BUY_NO",
+                "reason": "Already has 1 open paper quote(s).",
+            },
+            {
+                "action": "NO_QUOTE",
+                "market_ticker": "KXLOWNY-26MAY21-T60",
+                "side": "BUY_YES",
+                "reason": "Current spread 3.00c below minimum 8.00c.",
+            },
+            {
+                "action": "QUOTE_OPENED",
+                "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+                "side": "BUY_NO",
+                "reason": "Opened paper quote id=2 at 10.00c.",
+            },
+        ],
+        targets=[{"market_ticker": "KXHIGHAUS-26MAY21-B89.5", "side": "BUY_NO", "tier": "REPLAY_SUPPORTED"}],
+        target_summaries=[
+            {
+                "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+                "side": "BUY_NO",
+                "tier": "REPLAY_SUPPORTED",
+                "filled_quotes": 1,
+            }
+        ],
+    )
+
+    result = PaperBasketDiagnosticsReporter(reports_dir=reports_dir).build()
+
+    assert result.summary["total_quotes_opened"] == 1
+    assert result.summary["quote_rejection_breakdown"]["max_open_quotes_reached"] == 1
+    assert result.summary["quote_rejection_breakdown"]["spread_below_minimum"] == 1
+    assert result.summary["strict_targets"] == 1
+    assert result.summary["exploratory_targets"] == 0
+    assert result.summary["targets_with_any_fill"] == [
+        {"market_ticker": "KXHIGHAUS-26MAY21-B89.5", "side": "BUY_NO", "tier": "REPLAY_SUPPORTED"}
+    ]
+
+
+def test_paper_basket_diagnostics_prefers_nonzero_summary_rejection_breakdown(tmp_path):
+    reports_dir = tmp_path / "reports"
+    _write_paper_basket_exports(
+        reports_dir,
+        summary={
+            "status": "PAPER_BASKET_ACTIVE_NO_FILLS_YET",
+            "target_hygiene_verdict": "TARGET_HYGIENE_OK",
+            "targets": 1,
+            "quote_rejection_breakdown": {
+                "spread_below_minimum": 1,
+                "max_open_quotes_reached": 0,
+                "target_removed": 0,
+                "stale_or_expired_target": 0,
+                "no_valid_target": 0,
+                "other": 0,
+            },
+        },
+        actions=[
+            {
+                "action": "NO_QUOTE",
+                "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+                "side": "BUY_NO",
+                "reason": "Current spread 3.00c below minimum 8.00c.",
+            }
+        ],
+        targets=[{"market_ticker": "KXHIGHAUS-26MAY21-B89.5", "side": "BUY_NO", "tier": "REPLAY_SUPPORTED"}],
+        target_summaries=[],
+    )
+
+    result = PaperBasketDiagnosticsReporter(reports_dir=reports_dir).build()
+
+    assert result.summary["quote_rejection_breakdown"]["spread_below_minimum"] == 1
+    assert result.summary["spread_below_minimum_count"] == 1
+
+
+def test_paper_basket_diagnostics_uses_csv_rejections_when_summary_breakdown_absent(tmp_path):
+    reports_dir = tmp_path / "reports"
+    _write_paper_basket_exports(
+        reports_dir,
+        summary={
+            "status": "PAPER_BASKET_ACTIVE_NO_FILLS_YET",
+            "target_hygiene_verdict": "TARGET_HYGIENE_OK",
+            "targets": 1,
+        },
+        actions=[
+            {
+                "action": "NO_QUOTE",
+                "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+                "side": "BUY_NO",
+                "reason": "Current spread 3.00c below minimum 8.00c.",
+            },
+            {
+                "action": "NO_QUOTE",
+                "market_ticker": "KXLOWNY-26MAY21-T60",
+                "side": "BUY_YES",
+                "reason": "Already has 1 open paper quote(s).",
+            },
+        ],
+        targets=[{"market_ticker": "KXHIGHAUS-26MAY21-B89.5", "side": "BUY_NO", "tier": "REPLAY_SUPPORTED"}],
+        target_summaries=[],
+    )
+
+    result = PaperBasketDiagnosticsReporter(reports_dir=reports_dir).build()
+
+    assert result.summary["quote_rejection_breakdown"]["spread_below_minimum"] == 1
+    assert result.summary["quote_rejection_breakdown"]["max_open_quotes_reached"] == 1
+
+
+def test_paper_basket_diagnostics_missing_exports_fails_safely(tmp_path):
+    result = PaperBasketDiagnosticsReporter(reports_dir=tmp_path / "reports").build()
+
+    assert result.summary["diagnostics_status"] == "PAPER_BASKET_DIAGNOSTICS_MISSING_EXPORTS"
+    assert result.summary["research_only"] is True
+    assert result.summary["readiness_promotion"] == "none"
+    assert set(result.summary["missing_exports"]) == {"summary", "actions", "targets", "target_summaries"}
 
 
 def test_market_making_scopes_have_distinct_metadata(tmp_path):
