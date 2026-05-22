@@ -10,6 +10,8 @@ from config import settings
 from data.storage import Storage
 from research.daily_weather_evidence import (
     DailyWeatherEvidenceConfig,
+    DailyWeatherEvidenceDrilldownConfig,
+    DailyWeatherEvidenceDrilldownReporter,
     DailyWeatherEvidenceRangeConfig,
     DailyWeatherEvidenceRangeReporter,
     DailyWeatherEvidenceReporter,
@@ -268,6 +270,17 @@ class FakeDailyReporter:
         return type("Result", (), {"summary": summary, "exports": None})()
 
 
+class FakeDrilldownMiner:
+    def __init__(self, signals: list[dict], summary: dict | None = None):
+        self.signals = signals
+        self.summary = summary or _mining_summary(signals)
+        self.calls = []
+
+    def mine(self, **kwargs):
+        self.calls.append(kwargs)
+        return FakeMiningResult(summary=self.summary, signals=self.signals)
+
+
 def _daily_summary(
     day: str,
     *,
@@ -307,6 +320,66 @@ def _daily_summary(
         "trading_readiness": {
             "status": readiness,
         },
+    }
+
+
+def _signal(
+    ticker: str,
+    net: float,
+    *,
+    city: str = "Austin",
+    station: str = "KAUS",
+    entry: float = 10.0,
+    edge: float = 12.0,
+    beat30: bool | None = True,
+) -> dict:
+    return {
+        "market_ticker": ticker,
+        "city": city,
+        "station_code": station,
+        "ts": datetime(2026, 5, 21, 18, tzinfo=timezone.utc),
+        "action": "BUY_NO",
+        "entry_price_cents": entry,
+        "entry_price_bucket": "5_10" if entry <= 10 else "10_20",
+        "fair_yes_price_cents": 80.0,
+        "fair_no_price_cents": 20.0,
+        "edge_after_buffers_cents": edge,
+        "gross_pnl_cents": net + 1.0,
+        "fees_cents": 1.0,
+        "net_pnl_cents": net,
+        "future_edge_30m_cents": 3.0 if beat30 else -3.0,
+        "beat_future_30m": beat30,
+        "beat_future_60m": beat30,
+        "beat_future_final": beat30,
+        "reason": "fixture",
+    }
+
+
+def _mining_summary(signals: list[dict], stress: dict | None = None) -> dict:
+    settled = [row for row in signals if row.get("net_pnl_cents") is not None]
+    net = sum(float(row.get("net_pnl_cents") or 0.0) for row in settled)
+    gross = sum(float(row.get("gross_pnl_cents") or 0.0) for row in settled)
+    fees = sum(float(row.get("fees_cents") or 0.0) for row in settled)
+    if stress is None:
+        values = sorted([float(row.get("net_pnl_cents") or 0.0) for row in settled], reverse=True)
+        stress = {
+            "two_x_fees_net_pnl": gross - 2.0 * fees,
+            "worse_fill_1c_net_pnl": net - len(settled),
+            "exclude_best_signal_net_pnl": (sum(values) - values[0]) if values else None,
+            "verdict": "passes basic stress" if settled and net > 0 else "no settled signals",
+        }
+    return {
+        "verdict": "FIXTURE",
+        "signals": len(signals),
+        "settled_signals": len(settled),
+        "gross_pnl_cents": gross,
+        "fees_cents": fees,
+        "net_pnl_cents": net,
+        "win_rate": 1.0 if settled and all(float(row.get("net_pnl_cents") or 0.0) > 0 for row in settled) else 0.0,
+        "stress": stress,
+        "future_mid_30m_beat_rate": 0.5,
+        "future_mid_60m_beat_rate": 0.5,
+        "future_mid_final_beat_rate": 0.5,
     }
 
 
@@ -442,3 +515,87 @@ def test_daily_weather_evidence_range_exports_json_and_markdown(tmp_path, monkey
     assert payload["days"][0]["status"] == "DAILY_WEATHER_EVIDENCE_ERROR"
     assert payload["days"][0]["error"] == "exported error row"
     assert "exported error row" in md_path.read_text(encoding="utf-8")
+
+
+def test_daily_weather_drilldown_positive_day_with_dominant_signal_is_fragile():
+    signals = [
+        _signal("KXHIGHAUS-26MAY21-B90", 140.0),
+        _signal("KXHIGHAUS-26MAY21-B91", -10.0),
+        _signal("KXHIGHAUS-26MAY21-B92", -5.0),
+    ]
+    miner = FakeDrilldownMiner(
+        signals,
+        _mining_summary(
+            signals,
+            stress={
+                "two_x_fees_net_pnl": 120.0,
+                "worse_fill_1c_net_pnl": 122.0,
+                "exclude_best_signal_net_pnl": -15.0,
+                "verdict": "depends on best signal",
+            },
+        ),
+    )
+
+    result = DailyWeatherEvidenceDrilldownReporter(
+        daily_reporter=FakeDailyReporter({"2026-05-21": _daily_summary("2026-05-21", net=125.0)}),
+        miner=miner,
+    ).build(DailyWeatherEvidenceDrilldownConfig(day=date(2026, 5, 21)), persist_exports=False)
+
+    assert result.summary["status"] == "DAILY_WEATHER_DRILLDOWN_RESEARCH_ONLY"
+    assert result.summary["depends_on_one_best_signal"] is True
+    assert "fragile_depends_on_one_best_signal" in result.summary["warnings"]
+    assert result.top_signals[0]["market_ticker"] == "KXHIGHAUS-26MAY21-B90"
+    assert result.summary["top_ticker"]["market_ticker"] == "KXHIGHAUS-26MAY21-B90"
+
+
+def test_daily_weather_drilldown_negative_day_reports_worst_signals():
+    signals = [
+        _signal("KXHIGHAUS-26MAY21-B90", 20.0),
+        _signal("KXHIGHAUS-26MAY21-B91", -80.0),
+        _signal("KXHIGHAUS-26MAY21-B92", -7.0),
+    ]
+    miner = FakeDrilldownMiner(signals)
+
+    result = DailyWeatherEvidenceDrilldownReporter(
+        daily_reporter=FakeDailyReporter({"2026-05-21": _daily_summary("2026-05-21", net=-67.0)}),
+        miner=miner,
+    ).build(DailyWeatherEvidenceDrilldownConfig(day=date(2026, 5, 21)), persist_exports=False)
+
+    assert "negative_net_pnl_after_fees" in result.summary["warnings"]
+    assert result.worst_signals[0]["market_ticker"] == "KXHIGHAUS-26MAY21-B91"
+    assert result.worst_signals[0]["net_pnl_cents"] == -80.0
+    assert result.summary["net_pnl_cents"] == -67.0
+
+
+def test_daily_weather_drilldown_no_signal_day_fails_safely():
+    result = DailyWeatherEvidenceDrilldownReporter(
+        daily_reporter=FakeDailyReporter({"2026-05-21": _daily_summary("2026-05-21", signals=0, settled=0, net=0.0)}),
+        miner=FakeDrilldownMiner([]),
+    ).build(DailyWeatherEvidenceDrilldownConfig(day=date(2026, 5, 21)), persist_exports=False)
+
+    assert result.summary["signals"] == 0
+    assert result.top_signals == []
+    assert result.worst_signals == []
+    assert "no_mined_signals" in result.summary["warnings"]
+    assert "no_settled_signals" in result.summary["warnings"]
+
+
+def test_daily_weather_drilldown_exports_json_and_markdown(tmp_path, monkeypatch):
+    import json
+    import research.daily_weather_evidence as daily_mod
+
+    monkeypatch.setattr(daily_mod, "PROJECT_ROOT", tmp_path)
+    result = DailyWeatherEvidenceDrilldownReporter(
+        daily_reporter=FakeDailyReporter({"2026-05-21": _daily_summary("2026-05-21")}),
+        miner=FakeDrilldownMiner([_signal("KXHIGHAUS-26MAY21-B90", 12.0)]),
+    ).build(DailyWeatherEvidenceDrilldownConfig(day=date(2026, 5, 21)), persist_exports=True)
+
+    assert result.exports is not None
+    json_path = tmp_path / "reports" / "daily_weather_evidence_drilldown_2026-05-21.json"
+    md_path = tmp_path / "reports" / "daily_weather_evidence_drilldown_2026-05-21.md"
+    assert json_path.exists()
+    assert md_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["status"] == "DAILY_WEATHER_DRILLDOWN_RESEARCH_ONLY"
+    assert payload["top_signals_by_pnl"][0]["market_ticker"] == "KXHIGHAUS-26MAY21-B90"
+    assert "KXHIGHAUS-26MAY21-B90" in md_path.read_text(encoding="utf-8")

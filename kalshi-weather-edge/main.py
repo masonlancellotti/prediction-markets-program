@@ -32,7 +32,14 @@ from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingCo
 from research.paper_market_making_drilldown import PaperMarketMakingDrilldownConfig, PaperMarketMakingDrilldownReporter
 from research.paper_market_making_evidence import PaperMarketMakingEvidenceConfig, PaperMarketMakingEvidenceReporter
 from research.paper_market_making_target_review import PaperMarketMakingTargetReviewConfig, PaperMarketMakingTargetReviewer
-from research.daily_weather_evidence import DailyWeatherEvidenceConfig, DailyWeatherEvidenceRangeConfig, DailyWeatherEvidenceRangeReporter, DailyWeatherEvidenceReporter
+from research.daily_weather_evidence import (
+    DailyWeatherEvidenceConfig,
+    DailyWeatherEvidenceDrilldownConfig,
+    DailyWeatherEvidenceDrilldownReporter,
+    DailyWeatherEvidenceRangeConfig,
+    DailyWeatherEvidenceRangeReporter,
+    DailyWeatherEvidenceReporter,
+)
 from research.market_making_replay import MarketMakingReplayBacktester, MarketMakingReplayConfig
 from research.market_universe import MarketUniverseBuilder, MarketUniverseConfig
 from research.opportunity_ranker import OpportunityRanker
@@ -360,6 +367,13 @@ def main(argv: list[str] | None = None) -> int:
     daily_weather_range.add_argument("--trading-readiness-last-days", type=int, default=7)
     daily_weather_range.add_argument("--force-rebuild-replay", action="store_true", help="Rebuild recorded replay for every date even when rows already exist.")
     daily_weather_range.add_argument("--no-export", action="store_true")
+    daily_weather_drilldown = sub.add_parser("daily-weather-evidence-drilldown", help="Research-only drilldown for one daily weather evidence result")
+    daily_weather_drilldown.add_argument("--date", required=True)
+    daily_weather_drilldown.add_argument("--max-markets", type=int, default=25)
+    daily_weather_drilldown.add_argument("--min-settlement-confidence", type=float, default=0.85)
+    daily_weather_drilldown.add_argument("--min-edge-after-buffers-cents", type=float, default=5.0)
+    daily_weather_drilldown.add_argument("--trading-readiness-last-days", type=int, default=7)
+    daily_weather_drilldown.add_argument("--no-export", action="store_true")
     paper_mm_drilldown = sub.add_parser("paper-market-making-drilldown", help="Read-only paper quote/fill drilldown for one market/side")
     paper_mm_drilldown.add_argument("--ticker", required=True)
     paper_mm_drilldown.add_argument("--side", choices=["BUY_YES", "BUY_NO"], required=True)
@@ -625,6 +639,16 @@ def main(argv: list[str] | None = None) -> int:
             force_rebuild_replay=args.force_rebuild_replay,
         )
         print(DailyWeatherEvidenceRangeReporter().build(cfg, persist_exports=not args.no_export).to_text())
+        return 0
+    if args.command == "daily-weather-evidence-drilldown":
+        cfg = DailyWeatherEvidenceDrilldownConfig(
+            day=_date_arg(args.date),
+            max_markets=args.max_markets,
+            min_settlement_confidence=args.min_settlement_confidence,
+            min_edge_after_buffers_cents=args.min_edge_after_buffers_cents,
+            trading_readiness_last_days=args.trading_readiness_last_days,
+        )
+        print(DailyWeatherEvidenceDrilldownReporter().build(cfg, persist_exports=not args.no_export).to_text())
         return 0
     if args.command == "paper-market-making-drilldown":
         cfg = PaperMarketMakingDrilldownConfig(

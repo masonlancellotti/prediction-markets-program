@@ -108,6 +108,109 @@ class DailyWeatherEvidenceRangeResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class DailyWeatherEvidenceDrilldownConfig:
+    day: date
+    max_markets: int = 25
+    min_settlement_confidence: float = 0.85
+    min_edge_after_buffers_cents: float = 5.0
+    trading_readiness_last_days: int = 7
+
+
+@dataclass(frozen=True)
+class DailyWeatherEvidenceDrilldownResult:
+    summary: dict[str, Any]
+    top_signals: list[dict[str, Any]]
+    worst_signals: list[dict[str, Any]]
+    signals_by_ticker: list[dict[str, Any]]
+    signals_by_city_station: list[dict[str, Any]]
+    exports: dict[str, str] | None
+
+    def to_text(self) -> str:
+        stress = self.summary.get("stress") or {}
+        future = self.summary.get("future_mid_confirmation") or {}
+        lines = [
+            f"daily_weather_drilldown_status={self.summary.get('status')}",
+            f"message={self.summary.get('message')}",
+            f"date={self.summary.get('date')} research_only={str(self.summary.get('research_only')).lower()}",
+            f"signals={self.summary.get('signals')} settled_signals={self.summary.get('settled_signals')} "
+            f"net_pnl={_fmt(self.summary.get('net_pnl_cents'))} "
+            f"depends_on_one_best_signal={str(self.summary.get('depends_on_one_best_signal')).lower()}",
+            f"fee_stress={_fmt(stress.get('two_x_fees_net_pnl'))} "
+            f"worse_fill_stress={_fmt(stress.get('worse_fill_1c_net_pnl'))} "
+            f"exclude_best_signal={_fmt(stress.get('exclude_best_signal_net_pnl'))}",
+            f"future_mid_30m_beat_rate={_fmt(future.get('future_mid_30m_beat_rate'))} "
+            f"future_mid_60m_beat_rate={_fmt(future.get('future_mid_60m_beat_rate'))} "
+            f"future_mid_final_beat_rate={_fmt(future.get('future_mid_final_beat_rate'))}",
+            f"exports={self.exports}",
+            "Warnings:",
+        ]
+        lines.extend(f"- {warning}" for warning in self.summary.get("warnings", []))
+        lines.append("Top mined signals by PnL:")
+        for row in self.top_signals[:5]:
+            lines.append(_signal_line(row))
+        lines.append("Worst mined signals by PnL:")
+        for row in self.worst_signals[:5]:
+            lines.append(_signal_line(row))
+        return "\n".join(lines)
+
+
+class DailyWeatherEvidenceDrilldownReporter:
+    """Research-only one-day explanation of mined weather evidence drivers."""
+
+    def __init__(self, daily_reporter: Any | None = None, miner: Any | None = None):
+        self.daily_reporter = daily_reporter or DailyWeatherEvidenceReporter()
+        self.miner = miner
+
+    def build(
+        self,
+        config: DailyWeatherEvidenceDrilldownConfig,
+        *,
+        persist_exports: bool = True,
+    ) -> DailyWeatherEvidenceDrilldownResult:
+        daily = self.daily_reporter.build(
+            DailyWeatherEvidenceConfig(
+                day=config.day,
+                max_markets=config.max_markets,
+                min_settlement_confidence=config.min_settlement_confidence,
+                min_edge_after_buffers_cents=config.min_edge_after_buffers_cents,
+                trading_readiness_last_days=config.trading_readiness_last_days,
+                force_rebuild_replay=False,
+            ),
+            persist_exports=False,
+        )
+        miner = self.miner or WeatherEdgeMiner(
+            config=WeatherEdgeMiningConfig(
+                target="range-bucket-buy-no",
+                contract_type="range_bucket",
+                action="BUY_NO",
+                min_edge_after_buffers_cents=config.min_edge_after_buffers_cents,
+            )
+        )
+        mining = miner.mine(
+            start=config.day,
+            end=config.day,
+            last_days=None,
+            persist_exports=False,
+        )
+        signals = list(getattr(mining, "signals", []) or [])
+        miner_summary = dict(getattr(mining, "summary", {}) or {})
+        top = [_signal_view(row) for row in _sorted_signals(signals, reverse=True)[:10]]
+        worst = [_signal_view(row) for row in _sorted_signals(signals, reverse=False)[:10]]
+        by_ticker = _aggregate_signals(signals, ["market_ticker"])
+        by_city_station = _aggregate_signals(signals, ["city", "station_code"])
+        summary = _drilldown_summary(config, daily.summary, miner_summary, signals, by_ticker, by_city_station)
+        exports = _export_drilldown(summary, top, worst, by_ticker, by_city_station) if persist_exports else None
+        return DailyWeatherEvidenceDrilldownResult(
+            summary=summary,
+            top_signals=top,
+            worst_signals=worst,
+            signals_by_ticker=by_ticker,
+            signals_by_city_station=by_city_station,
+            exports=exports,
+        )
+
+
 class DailyWeatherEvidenceRangeReporter:
     """Research-only multi-day summary built from daily weather evidence reports."""
 
@@ -410,6 +513,292 @@ def _export(summary: dict[str, Any]) -> dict[str, str]:
     json_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     md_path.write_text(_markdown(summary), encoding="utf-8")
     return {"json": str(json_path), "markdown": str(md_path)}
+
+
+def _drilldown_summary(
+    config: DailyWeatherEvidenceDrilldownConfig,
+    daily_summary: dict[str, Any],
+    miner_summary: dict[str, Any],
+    signals: list[dict[str, Any]],
+    by_ticker: list[dict[str, Any]],
+    by_city_station: list[dict[str, Any]],
+) -> dict[str, Any]:
+    stress = dict(miner_summary.get("stress") or {})
+    settled = int(miner_summary.get("settled_signals") or 0)
+    net = float(miner_summary.get("net_pnl_cents") or 0.0)
+    depends_on_best = _depends_on_one_best_signal(signals, stress)
+    warnings = _drilldown_warnings(settled, net, depends_on_best, len(signals))
+    return {
+        "schema_version": 1,
+        "source": "daily_weather_evidence_drilldown",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "date": config.day.isoformat(),
+        "status": "DAILY_WEATHER_DRILLDOWN_RESEARCH_ONLY",
+        "message": _drilldown_message(settled, net, depends_on_best, len(signals)),
+        "research_only": True,
+        "daily_status": daily_summary.get("status"),
+        "miner_verdict": miner_summary.get("verdict"),
+        "signals": int(miner_summary.get("signals") or len(signals)),
+        "settled_signals": settled,
+        "net_pnl_cents": net,
+        "gross_pnl_cents": float(miner_summary.get("gross_pnl_cents") or 0.0),
+        "fees_cents": float(miner_summary.get("fees_cents") or 0.0),
+        "win_rate": float(miner_summary.get("win_rate") or 0.0),
+        "depends_on_one_best_signal": depends_on_best,
+        "best_signal_net_pnl_cents": _best_signal_net(signals),
+        "stress": stress,
+        "future_mid_confirmation": {
+            "future_mid_30m_beat_rate": miner_summary.get("future_mid_30m_beat_rate"),
+            "future_mid_60m_beat_rate": miner_summary.get("future_mid_60m_beat_rate"),
+            "future_mid_final_beat_rate": miner_summary.get("future_mid_final_beat_rate"),
+            "future_mid_30m_observations": _non_null_signal_count(signals, "beat_future_30m"),
+            "future_mid_60m_observations": _non_null_signal_count(signals, "beat_future_60m"),
+            "future_mid_final_observations": _non_null_signal_count(signals, "beat_future_final"),
+        },
+        "entry_price_distribution": _bucket_counts(signals, "entry_price_bucket", "entry_price_cents", _entry_bucket),
+        "edge_after_buffers_distribution": _bucket_counts(signals, None, "edge_after_buffers_cents", _edge_bucket),
+        "fair_value_distribution": {
+            "fair_yes_price_cents": _numeric_stats(signals, "fair_yes_price_cents"),
+            "fair_no_price_cents": _numeric_stats(signals, "fair_no_price_cents"),
+            "edge_after_buffers_cents": _numeric_stats(signals, "edge_after_buffers_cents"),
+        },
+        "top_ticker": by_ticker[0] if by_ticker else None,
+        "top_city_station": by_city_station[0] if by_city_station else None,
+        "warnings": warnings,
+        "disclaimer": (
+            "Research-only weather evidence drilldown. It explains mined replay signals and stress checks; "
+            "it does not trade, does not grant paper/live permission, and does not change readiness gates."
+        ),
+    }
+
+
+def _drilldown_message(settled: int, net: float, depends_on_best: bool, signals: int) -> str:
+    if signals <= 0:
+        return "No mined signals were available for this day."
+    if settled <= 0:
+        return "Signals exist, but none have settlement labels for P&L/stress evaluation."
+    if net <= 0:
+        return "Settled mined signals lost after fees; inspect worst signals and inputs before further research."
+    if depends_on_best:
+        return "Settled mined signals are positive, but the day is fragile because net P&L depends on one best signal."
+    if settled < 30:
+        return "Settled mined signals are positive, but the sample is still small."
+    return "Settled mined signals are positive for research review only."
+
+
+def _drilldown_warnings(settled: int, net: float, depends_on_best: bool, signals: int) -> list[str]:
+    warnings = [
+        "no_paper_or_live_trade_permission",
+        "forecasts_and_observations_are_not_settlement_truth",
+        "settlement_labels_drive_realized_pnl",
+    ]
+    if signals <= 0:
+        warnings.append("no_mined_signals")
+    if settled < 30:
+        warnings.append("small_sample")
+    if settled <= 0:
+        warnings.append("no_settled_signals")
+    if net <= 0 and settled > 0:
+        warnings.append("negative_net_pnl_after_fees")
+    if depends_on_best:
+        warnings.append("fragile_depends_on_one_best_signal")
+    return warnings
+
+
+def _sorted_signals(signals: list[dict[str, Any]], *, reverse: bool) -> list[dict[str, Any]]:
+    return sorted(signals, key=lambda row: _sort_net(row), reverse=reverse)
+
+
+def _sort_net(row: dict[str, Any]) -> float:
+    value = row.get("net_pnl_cents")
+    if value is None:
+        return -1_000_000.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -1_000_000.0
+
+
+def _signal_view(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "market_ticker": row.get("market_ticker"),
+        "city": row.get("city"),
+        "station_code": row.get("station_code"),
+        "ts": str(row.get("ts")) if row.get("ts") is not None else None,
+        "action": row.get("action"),
+        "entry_price_cents": row.get("entry_price_cents"),
+        "fair_yes_price_cents": row.get("fair_yes_price_cents"),
+        "fair_no_price_cents": row.get("fair_no_price_cents"),
+        "edge_after_buffers_cents": row.get("edge_after_buffers_cents"),
+        "gross_pnl_cents": row.get("gross_pnl_cents"),
+        "fees_cents": row.get("fees_cents"),
+        "net_pnl_cents": row.get("net_pnl_cents"),
+        "future_edge_30m_cents": row.get("future_edge_30m_cents"),
+        "beat_future_30m": row.get("beat_future_30m"),
+        "reason": row.get("reason"),
+    }
+
+
+def _signal_line(row: dict[str, Any]) -> str:
+    return (
+        f"- {row.get('market_ticker')} {row.get('action')} ts={row.get('ts')} "
+        f"entry={_fmt(row.get('entry_price_cents'))} edge_after_buffers={_fmt(row.get('edge_after_buffers_cents'))} "
+        f"net={_fmt(row.get('net_pnl_cents'))} future30={_fmt(row.get('future_edge_30m_cents'))}"
+    )
+
+
+def _aggregate_signals(signals: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for row in signals:
+        key = tuple(row.get(k) or "unknown" for k in keys)
+        groups.setdefault(key, []).append(row)
+    rows: list[dict[str, Any]] = []
+    for key, group in groups.items():
+        net_values = [_num_value(row.get("net_pnl_cents")) for row in group if row.get("net_pnl_cents") is not None]
+        out = {keys[idx]: key[idx] for idx in range(len(keys))}
+        out.update(
+            {
+                "signals": len(group),
+                "settled_signals": len(net_values),
+                "net_pnl_cents": sum(net_values),
+                "best_signal_net_pnl_cents": max(net_values) if net_values else None,
+                "worst_signal_net_pnl_cents": min(net_values) if net_values else None,
+            }
+        )
+        rows.append(out)
+    rows.sort(key=lambda row: (row["net_pnl_cents"], row["signals"]), reverse=True)
+    return rows
+
+
+def _depends_on_one_best_signal(signals: list[dict[str, Any]], stress: dict[str, Any]) -> bool:
+    exclude_best = stress.get("exclude_best_signal_net_pnl")
+    if exclude_best is not None:
+        return _num_value(exclude_best) <= 0.0 and any(row.get("net_pnl_cents") is not None for row in signals)
+    net_values = sorted([_num_value(row.get("net_pnl_cents")) for row in signals if row.get("net_pnl_cents") is not None], reverse=True)
+    return bool(net_values) and sum(net_values) > 0.0 and sum(net_values[1:]) <= 0.0
+
+
+def _best_signal_net(signals: list[dict[str, Any]]) -> float | None:
+    values = [_num_value(row.get("net_pnl_cents")) for row in signals if row.get("net_pnl_cents") is not None]
+    return max(values) if values else None
+
+
+def _bucket_counts(signals: list[dict[str, Any]], label_key: str | None, value_key: str, bucket_fn) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in signals:
+        bucket = row.get(label_key) if label_key else None
+        if not bucket:
+            bucket = bucket_fn(row.get(value_key))
+        bucket = str(bucket)
+        counts[bucket] = counts.get(bucket, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _numeric_stats(signals: list[dict[str, Any]], key: str) -> dict[str, float | None]:
+    values = [_num_value(row.get(key)) for row in signals if row.get(key) is not None]
+    if not values:
+        return {"min": None, "avg": None, "max": None}
+    return {"min": min(values), "avg": sum(values) / len(values), "max": max(values)}
+
+
+def _non_null_signal_count(signals: list[dict[str, Any]], key: str) -> int:
+    return sum(1 for row in signals if row.get(key) is not None)
+
+
+def _entry_bucket(value: Any) -> str:
+    num = _num_value(value)
+    if num <= 5:
+        return "0_5"
+    if num <= 10:
+        return "5_10"
+    if num <= 20:
+        return "10_20"
+    if num <= 40:
+        return "20_40"
+    if num <= 60:
+        return "40_60"
+    return "60_plus"
+
+
+def _edge_bucket(value: Any) -> str:
+    num = _num_value(value)
+    if num < 0:
+        return "negative"
+    if num < 5:
+        return "0_5"
+    if num < 10:
+        return "5_10"
+    if num < 20:
+        return "10_20"
+    return "20_plus"
+
+
+def _num_value(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _export_drilldown(
+    summary: dict[str, Any],
+    top: list[dict[str, Any]],
+    worst: list[dict[str, Any]],
+    by_ticker: list[dict[str, Any]],
+    by_city_station: list[dict[str, Any]],
+) -> dict[str, str]:
+    reports = PROJECT_ROOT / "reports"
+    reports.mkdir(exist_ok=True)
+    day = str(summary.get("date"))
+    json_path = reports / f"daily_weather_evidence_drilldown_{day}.json"
+    md_path = reports / f"daily_weather_evidence_drilldown_{day}.md"
+    payload = {
+        "summary": summary,
+        "top_signals_by_pnl": top,
+        "worst_signals_by_pnl": worst,
+        "signals_by_ticker": by_ticker,
+        "signals_by_city_station": by_city_station,
+    }
+    json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    md_path.write_text(_markdown_drilldown(payload), encoding="utf-8")
+    return {"json": str(json_path), "markdown": str(md_path)}
+
+
+def _markdown_drilldown(payload: dict[str, Any]) -> str:
+    summary = payload["summary"]
+    stress = summary.get("stress") or {}
+    lines = [
+        "# Daily Weather Evidence Drilldown",
+        "",
+        str(summary.get("disclaimer")),
+        "",
+        "## Summary",
+        "",
+        f"- Date: {summary.get('date')}",
+        f"- Status: `{summary.get('status')}`",
+        f"- Message: {summary.get('message')}",
+        f"- Signals: {summary.get('signals')}",
+        f"- Settled signals: {summary.get('settled_signals')}",
+        f"- Net P&L cents: {_fmt(summary.get('net_pnl_cents'))}",
+        f"- Depends on one best signal: {summary.get('depends_on_one_best_signal')}",
+        f"- 2x fee stress net: {_fmt(stress.get('two_x_fees_net_pnl'))}",
+        f"- Worse-fill 1c stress net: {_fmt(stress.get('worse_fill_1c_net_pnl'))}",
+        f"- Exclude-best-signal net: {_fmt(stress.get('exclude_best_signal_net_pnl'))}",
+        "",
+        "## Warnings",
+        "",
+    ]
+    lines.extend(f"- `{warning}`" for warning in summary.get("warnings", []))
+    lines.extend(["", "## Top Signals By P&L", "", "| Ticker | Action | Entry | Edge After Buffers | Net P&L | Future 30m |", "|---|---|---:|---:|---:|---:|"])
+    for row in payload["top_signals_by_pnl"]:
+        lines.append(f"| {row.get('market_ticker')} | {row.get('action')} | {_fmt(row.get('entry_price_cents'))} | {_fmt(row.get('edge_after_buffers_cents'))} | {_fmt(row.get('net_pnl_cents'))} | {_fmt(row.get('future_edge_30m_cents'))} |")
+    lines.extend(["", "## Worst Signals By P&L", "", "| Ticker | Action | Entry | Edge After Buffers | Net P&L | Future 30m |", "|---|---|---:|---:|---:|---:|"])
+    for row in payload["worst_signals_by_pnl"]:
+        lines.append(f"| {row.get('market_ticker')} | {row.get('action')} | {_fmt(row.get('entry_price_cents'))} | {_fmt(row.get('edge_after_buffers_cents'))} | {_fmt(row.get('net_pnl_cents'))} | {_fmt(row.get('future_edge_30m_cents'))} |")
+    lines.extend(["", "## Signals By Ticker", "", "| Ticker | Signals | Settled | Net P&L | Best | Worst |", "|---|---:|---:|---:|---:|---:|"])
+    for row in payload["signals_by_ticker"][:25]:
+        lines.append(f"| {row.get('market_ticker')} | {row.get('signals')} | {row.get('settled_signals')} | {_fmt(row.get('net_pnl_cents'))} | {_fmt(row.get('best_signal_net_pnl_cents'))} | {_fmt(row.get('worst_signal_net_pnl_cents'))} |")
+    return "\n".join(lines) + "\n"
 
 
 def _date_range(start: date, end: date) -> list[date]:
