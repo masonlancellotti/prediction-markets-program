@@ -50,6 +50,44 @@ def test_forbidden_equivalent_is_rejected() -> None:
     assert "invalid_proposed_relationship" in errors
 
 
+def test_valid_near_equivalent_is_not_falsely_rejected() -> None:
+    raw_output = valid_stub_llm_output() | {"proposed_relationship": "NEAR_EQUIVALENT"}
+
+    proposal, errors = validate_llm_relationship_output(raw_output)
+
+    assert errors == []
+    assert proposal is not None
+    assert proposal.proposed_relationship == "NEAR_EQUIVALENT"
+
+
+def test_wrapped_paper_candidate_token_is_rejected() -> None:
+    raw_output = valid_stub_llm_output() | {"rationale": "review label PAPER_CANDIDATE_OK"}
+
+    proposal, errors = validate_llm_relationship_output(raw_output)
+
+    assert proposal is None
+    assert "forbidden_token:PAPER_CANDIDATE" in errors
+
+
+def test_wrapped_possible_arb_token_is_rejected() -> None:
+    raw_output = valid_stub_llm_output() | {"rationale": "looks POSSIBLE_ARBISH"}
+
+    proposal, errors = validate_llm_relationship_output(raw_output)
+
+    assert proposal is None
+    assert "forbidden_token:POSSIBLE_ARB" in errors
+
+
+def test_wrapped_equivalent_token_is_rejected() -> None:
+    raw_output = valid_stub_llm_output() | {"proposed_relationship": "EQUIVALENT_MARKET"}
+
+    proposal, errors = validate_llm_relationship_output(raw_output)
+
+    assert proposal is None
+    assert "forbidden_token:EQUIVALENT" in errors
+    assert "invalid_proposed_relationship" in errors
+
+
 def test_forbidden_action_outputs_are_rejected() -> None:
     raw_output = valid_stub_llm_output() | {"action": "PAPER_CANDIDATE because POSSIBLE_ARB"}
 
@@ -130,6 +168,30 @@ def test_llm_manual_review_false_cannot_deescalate_deterministic_review() -> Non
     review = combine_deterministic_relationship_with_llm_proposal(deterministic, audit)
 
     assert deterministic.manual_review_required is True
+    assert review["manual_review_required"] is True
+
+
+def test_invalid_llm_proposal_forces_manual_review() -> None:
+    deterministic = ContractRelationship(
+        relationship=RELATIONSHIP_NEAR_EQUIVALENT,
+        same_payoff=False,
+        confidence=0.4,
+        blocking_reasons=(),
+        manual_review_required=False,
+    )
+    audit = build_llm_relationship_audit_sidecar(
+        input_payload={"market": "text"},
+        prompt="review",
+        model_id="stub",
+        model_version="v0",
+        raw_output=valid_stub_llm_output() | {"same_payoff": True},
+        timestamp=NOW,
+    )
+
+    review = combine_deterministic_relationship_with_llm_proposal(deterministic, audit)
+
+    assert audit["parsed_output"] is None
+    assert "forbidden_field:same_payoff" in audit["validation_errors"]
     assert review["manual_review_required"] is True
 
 

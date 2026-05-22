@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -30,7 +29,6 @@ LLM_ALLOWED_FIELDS = frozenset(
 LLM_FORBIDDEN_FIELDS = frozenset({"same_payoff", "action", "trade_permission"})
 LLM_FORBIDDEN_TOKENS = frozenset({"EQUIVALENT", "PAPER_CANDIDATE", "PAPER", "POSSIBLE_ARB"})
 LLM_ALLOWED_RELATIONSHIPS = tuple(relationship for relationship in ALL_RELATIONSHIPS if relationship != RELATIONSHIP_EQUIVALENT)
-_TOKEN_RE = re.compile(r"[A-Z_]+")
 
 
 @dataclass(frozen=True)
@@ -188,14 +186,17 @@ def combine_deterministic_relationship_with_llm_proposal(
 ) -> dict[str, Any]:
     parsed_output = llm_audit_sidecar.get("parsed_output")
     llm_manual_review_required = bool(parsed_output.get("manual_review_required")) if isinstance(parsed_output, Mapping) else False
+    validation_errors = list(llm_audit_sidecar.get("validation_errors", []))
     return {
         "relationship": deterministic_relationship.to_report_dict(),
-        "manual_review_required": deterministic_relationship.manual_review_required or llm_manual_review_required,
+        "manual_review_required": deterministic_relationship.manual_review_required
+        or llm_manual_review_required
+        or bool(validation_errors),
         "llm_review": {
             "source": LLM_RELATIONSHIP_SOURCE,
             "proposal": dict(parsed_output) if isinstance(parsed_output, Mapping) else None,
             "confidence": parsed_output.get("confidence") if isinstance(parsed_output, Mapping) else None,
-            "validation_errors": list(llm_audit_sidecar.get("validation_errors", [])),
+            "validation_errors": validation_errors,
             "audit": dict(llm_audit_sidecar),
         },
     }
@@ -210,7 +211,9 @@ def _forbidden_tokens_in_value(value: Any) -> set[str]:
     tokens: set[str] = set()
     if isinstance(value, str):
         text = value.upper()
-        tokens.update(token for token in _TOKEN_RE.findall(text) if token in LLM_FORBIDDEN_TOKENS)
+        if text == RELATIONSHIP_NEAR_EQUIVALENT:
+            return tokens
+        tokens.update(token for token in LLM_FORBIDDEN_TOKENS if token in text)
         return tokens
     if isinstance(value, Mapping):
         for child in value.values():
