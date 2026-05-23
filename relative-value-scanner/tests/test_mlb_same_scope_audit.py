@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import scan
+import pytest
 from relative_value.mlb_same_scope_audit import (
     audit_same_scope_mlb_candidate_files,
+    build_mlb_world_series_pairs_report,
     build_mlb_same_scope_targeting_report,
     classify_mlb_competition_scope,
     classify_mlb_scope,
@@ -284,6 +286,177 @@ def test_same_scope_targeting_command_emits_no_forbidden_labels(tmp_path: Path, 
     assert "trade" not in output.lower()
 
 
+def test_world_series_pair_generator_accepts_ws_ws_team_alias() -> None:
+    report = build_mlb_world_series_pairs_report(
+        polymarket_snapshot=_snapshot(
+            [
+                {
+                    "market_id": "poly-tb-ws",
+                    "question": "Will the Tampa Bay Rays win the 2026 World Series?",
+                    "event_title": "MLB World Series Champion 2026",
+                }
+            ]
+        ),
+        kalshi_snapshot=_snapshot(
+            [
+                {
+                    "ticker": "KXMLB-26-TB",
+                    "market_id": "KXMLB-26-TB",
+                    "question": "Will Tampa Bay win the 2026 Pro Baseball Championship?",
+                }
+            ]
+        ),
+        generated_at=NOW,
+    )
+
+    assert report["generated_ws_ws_pair_count"] == 1
+    assert report["pairs"][0]["matched_team"]["team_id"] == "TB"
+    assert report["pairs"][0]["same_payoff_asserted"] is False
+
+
+def test_world_series_pair_generator_rejects_alcs_nlcs_and_game_scopes() -> None:
+    report = build_mlb_world_series_pairs_report(
+        polymarket_snapshot=_snapshot(
+            [
+                {"market_id": "poly-tb-ws", "question": "Will Tampa Bay Rays win the 2026 World Series?"},
+                {"market_id": "poly-tb-alcs", "question": "Will Tampa Bay Rays win the 2026 ALCS?"},
+                {"market_id": "poly-sd-nlcs", "question": "Will San Diego Padres win the 2026 NLCS?"},
+                {"market_id": "poly-game", "question": "Will Tampa Bay Rays beat Boston Red Sox on June 1?"},
+            ]
+        ),
+        kalshi_snapshot=_snapshot(
+            [{"ticker": "KXMLB-26-TB", "market_id": "KXMLB-26-TB", "question": "Will Tampa Bay win the 2026 Pro Baseball Championship?"}]
+        ),
+        generated_at=NOW,
+    )
+
+    reasons = {row["reason"] for row in report["rejected_rows"]}
+    assert report["generated_ws_ws_pair_count"] == 1
+    assert "polymarket_scope_alcs_rejected" in reasons
+    assert "polymarket_scope_nlcs_rejected" in reasons
+    assert "polymarket_scope_game_rejected" in reasons
+
+
+def test_world_series_pair_generator_rejects_dodgers_vs_angels_laa() -> None:
+    report = build_mlb_world_series_pairs_report(
+        polymarket_snapshot=_snapshot(
+            [{"market_id": "poly-lad-ws", "question": "Will the Los Angeles Dodgers win the 2026 World Series?"}]
+        ),
+        kalshi_snapshot=_snapshot(
+            [{"ticker": "KXMLB-26-LAA", "market_id": "KXMLB-26-LAA", "question": "Will Los Angeles A win the 2026 Pro Baseball Championship?"}]
+        ),
+        generated_at=NOW,
+    )
+
+    assert report["generated_ws_ws_pair_count"] == 0
+    assert report["rejected_candidate_pairs"][0]["reason"] == "team_entity_mismatch_dodgers_vs_angels_laa"
+
+
+def test_world_series_pair_generator_rejects_red_sox_vs_white_sox() -> None:
+    report = build_mlb_world_series_pairs_report(
+        polymarket_snapshot=_snapshot(
+            [{"market_id": "poly-bos-ws", "question": "Will the Boston Red Sox win the 2026 World Series?"}]
+        ),
+        kalshi_snapshot=_snapshot(
+            [{"ticker": "KXMLB-26-CWS", "market_id": "KXMLB-26-CWS", "question": "Will Chicago W win the 2026 Pro Baseball Championship?"}]
+        ),
+        generated_at=NOW,
+    )
+
+    assert report["generated_ws_ws_pair_count"] == 0
+    assert report["rejected_candidate_pairs"][0]["reason"] == "team_entity_mismatch_red_sox_vs_white_sox"
+
+
+def test_world_series_pair_generator_command_emits_no_forbidden_labels(tmp_path: Path, capsys) -> None:
+    poly = _snapshot([{"market_id": "poly-tb-ws", "question": "Will Tampa Bay Rays win the 2026 World Series?"}])
+    kalshi = _snapshot([{"ticker": "KXMLB-26-TB", "market_id": "KXMLB-26-TB", "question": "Will Tampa Bay win the 2026 Pro Baseball Championship?"}])
+
+    result = scan.main(
+        [
+            "build-mlb-world-series-pairs",
+            "--polymarket-snapshot",
+            str(_write(tmp_path / "poly.json", poly)),
+            "--kalshi-snapshot",
+            str(_write(tmp_path / "kalshi.json", kalshi)),
+            "--json-output",
+            str(tmp_path / "pairs.json"),
+            "--markdown-output",
+            str(tmp_path / "pairs.md"),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert "PAPER" not in output
+    assert "POSSIBLE_ARB" not in output
+    assert "trade" not in output.lower()
+
+
+def test_world_series_pair_generator_warns_empty_polymarket_snapshot() -> None:
+    report = build_mlb_world_series_pairs_report(
+        polymarket_snapshot=_snapshot([]),
+        kalshi_snapshot=_snapshot(
+            [{"ticker": "KXMLB-26-TB", "market_id": "KXMLB-26-TB", "question": "Will Tampa Bay win the 2026 Pro Baseball Championship?"}]
+        ),
+        generated_at=NOW,
+    )
+
+    warnings = report["summary"]["warnings"]
+    assert "polymarket_snapshot_empty_likely_wrong_file_or_failed_fetch" in warnings
+    assert "polymarket_snapshot_has_zero_world_series_rows" in warnings
+    assert report["recommended_next_commands"] == ["no pairs generated — fix snapshot inputs and rerun build-mlb-world-series-pairs"]
+
+
+def test_world_series_pair_generator_warns_wrong_sport_and_zero_ws() -> None:
+    report = build_mlb_world_series_pairs_report(
+        polymarket_snapshot=_snapshot(
+            [{"market_id": "poly-nfl", "question": "Will Philadelphia Eagles win the 2026 NFC East?"}],
+            query="NFL",
+        ),
+        kalshi_snapshot=_snapshot(
+            [{"ticker": "KXMLB-26-TB", "market_id": "KXMLB-26-TB", "question": "Will Tampa Bay win the 2026 Pro Baseball Championship?"}]
+        ),
+        generated_at=NOW,
+    )
+
+    warnings = report["summary"]["warnings"]
+    assert "snapshot_targeted_at_different_sport:polymarket=NFL" in warnings
+    assert "polymarket_snapshot_has_zero_world_series_rows" in warnings
+
+
+def test_world_series_pair_generator_warns_stale_but_keeps_pair() -> None:
+    stale = "2026-05-21T12:00:00+00:00"
+    report = build_mlb_world_series_pairs_report(
+        polymarket_snapshot=_snapshot(
+            [{"market_id": "poly-tb-ws", "question": "Will Tampa Bay Rays win the 2026 World Series?"}],
+            captured_at=stale,
+        ),
+        kalshi_snapshot=_snapshot(
+            [{"ticker": "KXMLB-26-TB", "market_id": "KXMLB-26-TB", "question": "Will Tampa Bay win the 2026 Pro Baseball Championship?"}],
+            captured_at=stale,
+        ),
+        generated_at=NOW,
+    )
+
+    warnings = report["summary"]["warnings"]
+    assert report["generated_ws_ws_pair_count"] == 1
+    assert "snapshot_stale:polymarket=48.0h" in warnings
+    assert "snapshot_stale:kalshi=48.0h" in warnings
+
+
+def test_world_series_pair_generator_cli_requires_snapshot_arguments() -> None:
+    with pytest.raises(SystemExit):
+        scan.main(
+            [
+                "build-mlb-world-series-pairs",
+                "--json-output",
+                "unused.json",
+                "--markdown-output",
+                "unused.md",
+            ]
+        )
+
+
 def test_default_scan_py_remains_static_fixture(capsys) -> None:
     result = scan.main([])
 
@@ -307,6 +480,16 @@ def _minimal_evaluator_pairs(contract_relationship: dict) -> dict:
             }
         ],
     }
+
+
+def _snapshot(rows: list[dict], *, query: str | None = None, captured_at: str | None = None) -> dict:
+    payload = {"schema_version": 1, "normalized_count": len(rows), "normalized_markets": rows}
+    if query is not None:
+        payload["overlap_universe"] = {"query": query}
+    if captured_at is not None:
+        payload["captured_at"] = captured_at
+        payload["provenance"] = {"captured_at": captured_at}
+    return payload
 
 
 def _minimal_poly_snapshot() -> dict:

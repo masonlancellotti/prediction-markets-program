@@ -32,6 +32,7 @@ from relative_value.markout_replay import MarkoutReplayConfig, replay_paper_cand
 from relative_value.market_graph_diagnostics import build_market_graph_diagnostics_files
 from relative_value.market_graph_hints import explain_market_graph_diagnostics_files
 from relative_value.mlb_same_scope_audit import audit_same_scope_mlb_candidate_files
+from relative_value.mlb_same_scope_audit import build_mlb_world_series_pairs_files
 from relative_value.mlb_same_scope_audit import diagnose_mlb_same_scope_targeting_files
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot_file
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot
@@ -333,6 +334,39 @@ def main(argv: list[str] | None = None) -> int:
     mlb_targeting_parser.add_argument("--scope", choices=["all", "world_series", "alcs", "nlcs"], default="all")
     mlb_targeting_parser.add_argument("--json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_same_scope_targeting.json")
     mlb_targeting_parser.add_argument("--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_same_scope_targeting.md")
+
+    mlb_ws_pairs_parser = subparsers.add_parser(
+        "build-mlb-world-series-pairs",
+        help="Build saved-file-only MLB World Series Kalshi/Polymarket candidate pairs by team entity.",
+    )
+    mlb_ws_pairs_parser.add_argument(
+        "--polymarket-snapshot",
+        type=Path,
+        required=True,
+        help="Saved MLB-targeted Polymarket snapshot. Do not use generic live_readonly snapshots unless they currently contain MLB inventory.",
+    )
+    mlb_ws_pairs_parser.add_argument(
+        "--kalshi-snapshot",
+        type=Path,
+        required=True,
+        help="Saved MLB-targeted Kalshi snapshot. Do not use generic live_readonly snapshots unless they currently contain MLB inventory.",
+    )
+    mlb_ws_pairs_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_pairs.json",
+    )
+    mlb_ws_pairs_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_pairs.md",
+    )
+    mlb_ws_pairs_parser.add_argument(
+        "--match-report",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "live_readonly_match_report.json",
+        help="Optional saved prior matcher report used only to explain old ranking behavior.",
+    )
 
     graph_parser = subparsers.add_parser(
         "market-graph-diagnostics",
@@ -857,6 +891,14 @@ def main(argv: list[str] | None = None) -> int:
             scope=args.scope,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
+        )
+    if args.command == "build-mlb-world-series-pairs":
+        return build_mlb_world_series_pairs(
+            polymarket_snapshot=args.polymarket_snapshot,
+            kalshi_snapshot=args.kalshi_snapshot,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            match_report=args.match_report,
         )
     if args.command == "market-graph-diagnostics":
         return market_graph_diagnostics(
@@ -7396,6 +7438,50 @@ def diagnose_mlb_same_scope_targeting(
         f"overlap_scopes={','.join(summary['overlap_scopes']) or 'none'} "
         f"json={json_output} markdown={markdown_output}"
     )
+    return 0
+
+
+def build_mlb_world_series_pairs(
+    *,
+    polymarket_snapshot: Path,
+    kalshi_snapshot: Path,
+    json_output: Path,
+    markdown_output: Path,
+    match_report: Path | None = None,
+) -> int:
+    try:
+        payload = build_mlb_world_series_pairs_files(
+            polymarket_snapshot_path=polymarket_snapshot,
+            kalshi_snapshot_path=kalshi_snapshot,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+            match_report_path=match_report,
+        )
+    except ValueError as exc:
+        print(f"mlb_world_series_pairs_status=FAILED message={exc}")
+        return 1
+
+    summary = payload["summary"]
+    counts = summary["source_counts_by_scope"]
+    warnings = summary.get("warnings") or []
+    provenance = payload.get("input_provenance") if isinstance(payload.get("input_provenance"), dict) else {}
+    print(
+        "mlb_world_series_pairs_status=OK "
+        f"ws_ws_pairs={summary['generated_ws_ws_pair_count']} "
+        f"polymarket_ws={counts['polymarket'].get('WORLD_SERIES', 0)} "
+        f"kalshi_ws={counts['kalshi'].get('WORLD_SERIES', 0)} "
+        f"warnings={','.join(warnings) if warnings else 'none'} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    for source in ("polymarket", "kalshi"):
+        info = provenance.get(source) if isinstance(provenance.get(source), dict) else {}
+        print(
+            "mlb_world_series_pairs_input_provenance "
+            f"source={source} "
+            f"captured_at={info.get('captured_at') or 'unknown'} "
+            f"normalized_count={info.get('normalized_count', 'unknown')} "
+            f"overlap_universe_query={info.get('overlap_universe_query') or 'none'}"
+        )
     return 0
 
 
