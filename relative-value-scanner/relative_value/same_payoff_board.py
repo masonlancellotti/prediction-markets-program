@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from relative_value.mlb_scope import mlb_world_series_profile
+from relative_value.mlb_scope import same_mlb_world_series_team
+
 
 SCHEMA_VERSION = 1
 DEFAULT_SETTLEMENT_TOLERANCE_SECONDS = 3600.0
@@ -69,6 +72,95 @@ def build_same_payoff_board_files(
         markdown_output_path.parent.mkdir(parents=True, exist_ok=True)
         markdown_output_path.write_text(render_same_payoff_board_markdown(payload), encoding="utf-8")
     return payload
+
+
+def diagnose_mlb_world_series_board_blockers_files(
+    *,
+    board_path: Path,
+    pairs_path: Path,
+    json_output_path: Path,
+    markdown_output_path: Path,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    generated_at = now or datetime.now(timezone.utc)
+    _require_tz_aware(generated_at, "now")
+    board_payload = _load_json_object(board_path, "same_payoff_board")
+    pairs_payload = _load_json_object(pairs_path, "pairs")
+    payload = diagnose_mlb_world_series_board_blockers(
+        board_payload=board_payload,
+        pairs_payload=pairs_payload,
+        generated_at=generated_at,
+        inputs={"board": str(board_path), "pairs": str(pairs_path)},
+    )
+    json_output_path.parent.mkdir(parents=True, exist_ok=True)
+    json_output_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_output_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output_path.write_text(render_mlb_world_series_board_blockers_markdown(payload), encoding="utf-8")
+    return payload
+
+
+def diagnose_mlb_world_series_board_blockers(
+    *,
+    board_payload: dict[str, Any],
+    pairs_payload: dict[str, Any],
+    generated_at: datetime | None = None,
+    inputs: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    generated = generated_at or datetime.now(timezone.utc)
+    _require_tz_aware(generated, "generated_at")
+    rows = [row for row in board_payload.get("rows") or [] if isinstance(row, dict)]
+    pairs = [pair for pair in pairs_payload.get("pairs") or [] if isinstance(pair, dict)]
+    blocker_counts = Counter(blocker for row in rows for blocker in row.get("blockers", []))
+    missing_counts = Counter(missing for row in rows for missing in row.get("missing_fields", []))
+    strict_pass_distribution = Counter(str(row.get("strict_pass_count")) for row in rows)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source": "mlb_world_series_board_blocker_diagnostics_v1",
+        "generated_at": generated.isoformat(),
+        "inputs": inputs or {"board": "<in-memory>", "pairs": "<in-memory>"},
+        "row_count": len(rows),
+        "pair_count": len(pairs),
+        "strict_pass_distribution": dict(sorted(strict_pass_distribution.items())),
+        "blockers": [{"blocker": blocker, "count": count} for blocker, count in blocker_counts.most_common()],
+        "missing_fields": [{"field": field, "count": count} for field, count in missing_counts.most_common()],
+        "semantic_normalization_notes": _semantic_normalization_notes(rows),
+        "safety": {
+            "saved_file_only": True,
+            "live_fetch_attempted": False,
+            "execution_or_trading_logic_added": False,
+            "thresholds_or_relationship_gates_lowered": False,
+        },
+        "disclaimer": BOARD_DISCLAIMER,
+    }
+
+
+def render_mlb_world_series_board_blockers_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# MLB World Series Board Blockers",
+        "",
+        "Saved-file diagnostic only.",
+        "",
+        f"Rows: {payload.get('row_count', 0)}",
+        f"Pairs: {payload.get('pair_count', 0)}",
+        "",
+        "## Blockers",
+        "",
+        "| Blocker | Count |",
+        "| --- | ---: |",
+    ]
+    blockers = payload.get("blockers") or []
+    if not blockers:
+        lines.append("| none | 0 |")
+    for row in blockers:
+        lines.append(f"| {_md(row.get('blocker'))} | {_md(row.get('count'))} |")
+    lines.extend(["", "## Missing Fields", "", "| Field | Count |", "| --- | ---: |"])
+    missing = payload.get("missing_fields") or []
+    if not missing:
+        lines.append("| none | 0 |")
+    for row in missing:
+        lines.append(f"| {_md(row.get('field'))} | {_md(row.get('count'))} |")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def build_same_payoff_board(
@@ -312,12 +404,38 @@ def _settlement_time_comparator(polymarket: dict[str, Any], kalshi: dict[str, An
             "settlement_time",
             "FAIL",
             blockers=["settlement_date_drift"],
-            values={"delta_seconds": delta, "tolerance_seconds": tolerance_seconds},
+            values={
+                "delta_seconds": delta,
+                "tolerance_seconds": tolerance_seconds,
+                "polymarket": _time_diagnostics(polymarket),
+                "kalshi": _time_diagnostics(kalshi),
+            },
         )
-    return _evidence("settlement_time", "PASS", values={"delta_seconds": delta, "tolerance_seconds": tolerance_seconds})
+    return _evidence(
+        "settlement_time",
+        "PASS",
+        values={
+            "delta_seconds": delta,
+            "tolerance_seconds": tolerance_seconds,
+            "polymarket": _time_diagnostics(polymarket),
+            "kalshi": _time_diagnostics(kalshi),
+        },
+    )
 
 
 def _entity_comparator(pair: dict[str, Any], polymarket: dict[str, Any], kalshi: dict[str, Any]) -> dict[str, Any]:
+    poly_market = _merged_pair_market(pair.get("polymarket"), polymarket)
+    kal_market = _merged_pair_market(pair.get("kalshi"), kalshi)
+    if same_mlb_world_series_team(poly_market, kal_market):
+        return _evidence(
+            "market_event_entity",
+            "PASS",
+            values={
+                "normalization": "mlb_world_series_team",
+                "polymarket": mlb_world_series_profile(poly_market),
+                "kalshi": mlb_world_series_profile(kal_market),
+            },
+        )
     poly = " ".join(str(value or "") for value in [_market_question(pair.get("polymarket"), polymarket), polymarket.get("event_title")])
     kal = " ".join(str(value or "") for value in [_market_question(pair.get("kalshi"), kalshi), kalshi.get("event_title")])
     poly_tokens = _entity_tokens(poly)
@@ -335,6 +453,16 @@ def _entity_comparator(pair: dict[str, Any], polymarket: dict[str, Any], kalshi:
 
 
 def _sports_comparator(polymarket: dict[str, Any], kalshi: dict[str, Any]) -> dict[str, Any]:
+    if same_mlb_world_series_team(polymarket, kalshi):
+        return _evidence(
+            "sports_league_team",
+            "PASS",
+            values={
+                "normalization": "mlb_world_series_team_scope",
+                "polymarket": mlb_world_series_profile(polymarket),
+                "kalshi": mlb_world_series_profile(kalshi),
+            },
+        )
     poly = _sports_profile(polymarket)
     kal = _sports_profile(kalshi)
     if not poly["is_sports"] and not kal["is_sports"]:
@@ -350,6 +478,16 @@ def _sports_comparator(polymarket: dict[str, Any], kalshi: dict[str, Any]) -> di
 
 
 def _threshold_comparator(polymarket: dict[str, Any], kalshi: dict[str, Any]) -> dict[str, Any]:
+    if same_mlb_world_series_team(polymarket, kalshi) and _is_non_threshold_championship_outright(polymarket, kalshi):
+        return _evidence(
+            "threshold_strike",
+            "PASS",
+            values={
+                "normalization": "mlb_world_series_outright_no_threshold",
+                "polymarket": [],
+                "kalshi": [],
+            },
+        )
     poly = _numeric_tokens(_comparison_text(polymarket))
     kal = _numeric_tokens(_comparison_text(kalshi))
     if poly != kal:
@@ -362,6 +500,12 @@ def _market_type_comparator(polymarket: dict[str, Any], kalshi: dict[str, Any]) 
     kal = _market_type(kalshi)
     if not poly or not kal:
         return _evidence("market_type", "MISSING", missing_fields=["market_type"], values={"polymarket": poly, "kalshi": kal})
+    if same_mlb_world_series_team(polymarket, kalshi) and _compatible_binary_market_types(poly, kal):
+        return _evidence(
+            "market_type",
+            "PASS",
+            values={"market_type": "binary_event", "polymarket": poly, "kalshi": kal, "normalization": "mlb_world_series_binary"},
+        )
     if poly != kal:
         return _evidence("market_type", "FAIL", blockers=["market_type_mismatch"], values={"polymarket": poly, "kalshi": kal})
     return _evidence("market_type", "PASS", values={"market_type": poly})
@@ -510,6 +654,20 @@ def _recommended_next_action(strict_same_payoff: bool, blockers: list[str], miss
     return "RELATIONSHIP_REVIEW"
 
 
+def _semantic_normalization_notes(rows: list[dict[str, Any]]) -> dict[str, int]:
+    notes: Counter[str] = Counter()
+    for row in rows:
+        evidence = row.get("same_payoff_evidence") if isinstance(row.get("same_payoff_evidence"), dict) else {}
+        for comparator in evidence.values():
+            if not isinstance(comparator, dict):
+                continue
+            values = comparator.get("values") if isinstance(comparator.get("values"), dict) else {}
+            normalization = values.get("normalization")
+            if normalization:
+                notes[str(normalization)] += 1
+    return dict(sorted(notes.items()))
+
+
 def _evidence(
     name: str,
     status: str,
@@ -612,6 +770,18 @@ def _time_value(market: dict[str, Any]) -> Any:
     return market.get("end_date") or market.get("close_time") or market.get("settlement_time")
 
 
+def _time_diagnostics(market: dict[str, Any]) -> dict[str, Any]:
+    raw = market.get("raw") if isinstance(market.get("raw"), dict) else {}
+    return {
+        "selected_value": _time_value(market),
+        "end_date": market.get("end_date"),
+        "close_time": market.get("close_time"),
+        "settlement_time": market.get("settlement_time"),
+        "raw_close_time": raw.get("close_time") or raw.get("closeTime"),
+        "raw_expiration_time": raw.get("expiration_time") or raw.get("expirationTime"),
+    }
+
+
 def _comparison_text(market: dict[str, Any]) -> str:
     raw = market.get("raw") if isinstance(market.get("raw"), dict) else {}
     return " ".join(
@@ -627,6 +797,15 @@ def _comparison_text(market: dict[str, Any]) -> str:
             raw.get("market_type"),
         )
     )
+
+
+def _merged_pair_market(pair_side: Any, enriched: dict[str, Any]) -> dict[str, Any]:
+    pair_side = pair_side if isinstance(pair_side, dict) else {}
+    merged = dict(enriched)
+    for key in ("question", "title", "event_title", "market_id", "ticker"):
+        if not merged.get(key) and pair_side.get(key):
+            merged[key] = pair_side.get(key)
+    return merged
 
 
 def _entity_tokens(text: str) -> set[str]:
@@ -665,6 +844,22 @@ def _sports_profile(market: dict[str, Any]) -> dict[str, Any]:
 
 def _numeric_tokens(text: str) -> list[str]:
     return sorted(_NUMBER_RE.findall(text.lower()))
+
+
+def _threshold_numbers(text: str) -> list[str]:
+    tokens = set(_TOKEN_RE.findall(text.lower()))
+    if not (tokens & (_OVER_TOKENS | _UNDER_TOKENS | {"line", "spread", "threshold", "total"})):
+        return []
+    return _numeric_tokens(text)
+
+
+def _is_non_threshold_championship_outright(polymarket: dict[str, Any], kalshi: dict[str, Any]) -> bool:
+    return not _threshold_numbers(_comparison_text(polymarket)) and not _threshold_numbers(_comparison_text(kalshi))
+
+
+def _compatible_binary_market_types(left: str, right: str) -> bool:
+    compatible = {"binary", "binary_event", "binary event", "yes_no", "yes no"}
+    return left in compatible and right in compatible
 
 
 def _market_type(market: dict[str, Any]) -> str:
@@ -740,6 +935,8 @@ def _fee_available(market: dict[str, Any]) -> bool:
         return True
     raw = market.get("raw") if isinstance(market.get("raw"), dict) else {}
     if raw.get("fee_model") or raw.get("fee_rate") is not None:
+        return True
+    if raw.get("feeSchedule") or raw.get("fee_schedule") or raw.get("feeType") or raw.get("fee_type"):
         return True
     enrichment = _enrichment(market)
     return enrichment.get("fee_model") is not None or enrichment.get("fee_rate") is not None

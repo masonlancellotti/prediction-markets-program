@@ -115,6 +115,77 @@ def _first(payload: dict) -> dict:
     return payload["rows"][0]
 
 
+def _mlb_pair(poly_id: str = "poly-mlb", kalshi_ticker: str = "KXMLB-26-NYY") -> dict:
+    payload = _pair(poly_id=poly_id, kalshi_ticker=kalshi_ticker)
+    payload["pairs"][0]["polymarket"] = {
+        "market_id": poly_id,
+        "question": "Will the New York Yankees win the 2026 World Series?",
+        "event_title": "MLB World Series Champion 2026",
+    }
+    payload["pairs"][0]["kalshi"] = {
+        "ticker": kalshi_ticker,
+        "question": "Will New York Y win the 2026 Pro Baseball Championship?",
+        "event_title": None,
+    }
+    return payload
+
+
+def _mlb_market(
+    venue: str,
+    *,
+    team_question: str,
+    ticker: str = "KXMLB-26-NYY",
+    event_title: str | None = "MLB World Series Champion 2026",
+    market_type: str | None = None,
+    settlement_rule: str = "official mlb world series winner",
+    end_date: str = "2026-11-01T04:00:00+00:00",
+) -> dict:
+    row = _market(
+        venue,
+        question=team_question,
+        event_title=event_title,
+        settlement_rule=settlement_rule,
+        end_date=end_date,
+        source_type="EXECUTABLE_VENUE",
+    )
+    row["raw"] = {"series_ticker": "KXMLB", "event_ticker": "KXMLB-26"}
+    if market_type is not None:
+        row["market_type"] = market_type
+        row["raw"]["market_type"] = market_type
+    if venue == "kalshi":
+        row["ticker"] = ticker
+        row["market_id"] = ticker
+        row["event_title"] = event_title
+    else:
+        row["market_id"] = "poly-mlb"
+    return row
+
+
+def _mlb_board(*, poly: dict | None = None, kalshi: dict | None = None, pairs: dict | None = None) -> dict:
+    return build_same_payoff_board(
+        pairs_payload=pairs or _mlb_pair(),
+        polymarket_payload=_snapshot(
+            "polymarket",
+            poly
+            or _mlb_market(
+                "polymarket",
+                team_question="Will the New York Yankees win the 2026 World Series?",
+                market_type="binary_event",
+            ),
+        ),
+        kalshi_payload=_snapshot(
+            "kalshi",
+            kalshi
+            or _mlb_market(
+                "kalshi",
+                team_question="Will New York Y win the 2026 Pro Baseball Championship?",
+                market_type="binary",
+            ),
+        ),
+        generated_at=NOW,
+    )
+
+
 def test_exact_same_payoff_fixture_passes_evidence_checks() -> None:
     row = _first(_board())
 
@@ -236,6 +307,147 @@ def test_world_series_vs_alcs_is_subset_or_superset_not_same_payoff() -> None:
     assert row["same_payoff"] is False
     assert "relationship_shape_subset_or_superset" in row["blockers"]
     assert row["same_payoff_evidence"]["relationship_shape"]["values"]["relationship"] == "SUBSET_OR_SUPERSET"
+
+
+def test_mlb_yankees_world_series_entity_scope_comparators_pass() -> None:
+    row = _first(_mlb_board())
+
+    assert row["same_payoff_evidence"]["market_event_entity"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["sports_league_team"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["market_type"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["threshold_strike"]["status"] == "PASS"
+    assert "market_event_entity_mismatch" not in row["blockers"]
+    assert "sports_league_team_mismatch" not in row["blockers"]
+    assert "market_type_mismatch" not in row["blockers"]
+    assert "threshold_strike_mismatch" not in row["blockers"]
+
+
+def test_mlb_tampa_bay_world_series_entity_scope_comparators_pass() -> None:
+    pairs = _mlb_pair(poly_id="poly-tb", kalshi_ticker="KXMLB-26-TB")
+    pairs["pairs"][0]["polymarket"]["question"] = "Will the Tampa Bay Rays win the 2026 World Series?"
+    pairs["pairs"][0]["kalshi"]["question"] = "Will Tampa Bay win the 2026 Pro Baseball Championship?"
+    poly = _mlb_market(
+        "polymarket",
+        team_question="Will the Tampa Bay Rays win the 2026 World Series?",
+        market_type="binary_event",
+    )
+    poly["market_id"] = "poly-tb"
+    kalshi = _mlb_market(
+        "kalshi",
+        team_question="Will Tampa Bay win the 2026 Pro Baseball Championship?",
+        ticker="KXMLB-26-TB",
+        market_type="binary",
+    )
+
+    row = _first(_mlb_board(poly=poly, kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff_evidence"]["market_event_entity"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["sports_league_team"]["status"] == "PASS"
+
+
+def test_mlb_dodgers_vs_angels_laa_still_blocks() -> None:
+    pairs = _mlb_pair(poly_id="poly-lad", kalshi_ticker="KXMLB-26-LAA")
+    pairs["pairs"][0]["polymarket"]["question"] = "Will the Los Angeles Dodgers win the 2026 World Series?"
+    pairs["pairs"][0]["kalshi"]["question"] = "Will Los Angeles A win the 2026 Pro Baseball Championship?"
+    poly = _mlb_market("polymarket", team_question="Will the Los Angeles Dodgers win the 2026 World Series?")
+    poly["market_id"] = "poly-lad"
+    kalshi = _mlb_market("kalshi", team_question="Will Los Angeles A win the 2026 Pro Baseball Championship?", ticker="KXMLB-26-LAA")
+
+    row = _first(_mlb_board(poly=poly, kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "market_event_entity_mismatch" in row["blockers"]
+    assert "sports_league_team_mismatch" in row["blockers"]
+
+
+def test_mlb_red_sox_vs_white_sox_still_blocks() -> None:
+    pairs = _mlb_pair(poly_id="poly-bos", kalshi_ticker="KXMLB-26-CWS")
+    pairs["pairs"][0]["polymarket"]["question"] = "Will the Boston Red Sox win the 2026 World Series?"
+    pairs["pairs"][0]["kalshi"]["question"] = "Will Chicago WS win the 2026 Pro Baseball Championship?"
+    poly = _mlb_market("polymarket", team_question="Will the Boston Red Sox win the 2026 World Series?")
+    poly["market_id"] = "poly-bos"
+    kalshi = _mlb_market("kalshi", team_question="Will Chicago WS win the 2026 Pro Baseball Championship?", ticker="KXMLB-26-CWS")
+
+    row = _first(_mlb_board(poly=poly, kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "market_event_entity_mismatch" in row["blockers"]
+    assert "sports_league_team_mismatch" in row["blockers"]
+
+
+def test_mlb_binary_type_compatibility_is_narrow() -> None:
+    row = _first(_mlb_board())
+    non_mlb_poly = _market("polymarket")
+    non_mlb_kalshi = _market("kalshi")
+    non_mlb_kalshi["market_type"] = "binary"
+    non_mlb_kalshi["raw"]["market_type"] = "binary"
+    non_mlb_row = _first(_board(poly=non_mlb_poly, kalshi=non_mlb_kalshi))
+
+    assert row["same_payoff_evidence"]["market_type"]["status"] == "PASS"
+    assert non_mlb_row["same_payoff_evidence"]["market_type"]["status"] == "FAIL"
+    assert "market_type_mismatch" in non_mlb_row["blockers"]
+
+
+def test_mlb_non_threshold_outright_does_not_fail_threshold_strike() -> None:
+    row = _first(_mlb_board())
+
+    assert row["same_payoff_evidence"]["threshold_strike"]["status"] == "PASS"
+    assert "threshold_strike_mismatch" not in row["blockers"]
+
+
+def test_threshold_mismatch_still_fails_when_threshold_exists() -> None:
+    poly = _market("polymarket", question="Will Cleveland Cavaliers score over 91.5 points?")
+    kalshi = _market("kalshi", question="Will Cleveland Cavaliers score over 92.5 points?")
+
+    row = _first(_board(poly=poly, kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["threshold_strike"]["status"] == "FAIL"
+    assert "threshold_strike_mismatch" in row["blockers"]
+
+
+def test_mlb_settlement_date_drift_remains_blocker_without_safe_evidence() -> None:
+    kalshi = _mlb_market(
+        "kalshi",
+        team_question="Will New York Y win the 2026 Pro Baseball Championship?",
+        market_type="binary",
+        end_date="2026-11-01T08:30:01+00:00",
+    )
+
+    row = _first(_mlb_board(kalshi=kalshi))
+
+    assert row["same_payoff"] is False
+    assert "settlement_date_drift" in row["blockers"]
+    assert row["same_payoff_evidence"]["settlement_time"]["values"]["kalshi"]["end_date"] == "2026-11-01T08:30:01+00:00"
+
+
+def test_mlb_missing_settlement_source_remains_missing_if_genuine() -> None:
+    kalshi = _mlb_market(
+        "kalshi",
+        team_question="Will New York Y win the 2026 Pro Baseball Championship?",
+        market_type="binary",
+        settlement_rule="",
+    )
+    kalshi.pop("settlement_rule", None)
+
+    row = _first(_mlb_board(kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_source"]["status"] == "MISSING"
+    assert "kalshi_settlement_source_or_rule" in row["missing_fields"]
+
+
+def test_mlb_stale_quote_remains_blocker_not_semantic_mismatch() -> None:
+    poly = _mlb_market(
+        "polymarket",
+        team_question="Will the New York Yankees win the 2026 World Series?",
+        market_type="binary_event",
+    )
+    poly["orderbook_enrichment"]["orderbook_captured_at"] = "2026-05-23T10:00:00+00:00"
+
+    row = _first(_mlb_board(poly=poly))
+
+    assert "polymarket_stale_quote" in row["blockers"]
+    assert "market_event_entity_mismatch" not in row["blockers"]
+    assert "sports_league_team_mismatch" not in row["blockers"]
 
 
 def test_btc_threshold_subset_or_superset_is_not_same_payoff() -> None:

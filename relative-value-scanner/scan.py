@@ -45,6 +45,7 @@ from relative_value.reference_diagnostics import explain_reference_context_files
 from relative_value.report import write_json_report, write_markdown_report
 from relative_value.scanner import RelativeValueScanner
 from relative_value.same_payoff_board import build_same_payoff_board_files
+from relative_value.same_payoff_board import diagnose_mlb_world_series_board_blockers_files
 from relative_value.same_payoff_evidence import attach_same_payoff_evidence_files
 from relative_value.source_registry import ImplementationStatus, SOURCE_REGISTRY, SourceType
 from relative_value.executable_venue_plan import PLANNED_EXECUTABLE_VENUE_CAPABILITIES
@@ -254,6 +255,23 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "same_payoff_candidate_board.md",
+    )
+
+    mlb_ws_board_blockers_parser = subparsers.add_parser(
+        "diagnose-mlb-world-series-board-blockers",
+        help="Summarize saved MLB World Series same-payoff board blockers.",
+    )
+    mlb_ws_board_blockers_parser.add_argument("--board", type=Path, required=True)
+    mlb_ws_board_blockers_parser.add_argument("--pairs", type=Path, required=True)
+    mlb_ws_board_blockers_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_board_blockers.json",
+    )
+    mlb_ws_board_blockers_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_board_blockers.md",
     )
 
     attach_same_payoff_parser = subparsers.add_parser(
@@ -860,6 +878,13 @@ def main(argv: list[str] | None = None) -> int:
             pairs=args.pairs,
             polymarket_enriched=args.polymarket_enriched,
             kalshi_enriched=args.kalshi_enriched,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+    if args.command == "diagnose-mlb-world-series-board-blockers":
+        return diagnose_mlb_world_series_board_blockers(
+            board=args.board,
+            pairs=args.pairs,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
@@ -7330,6 +7355,32 @@ def same_payoff_board(
         f"rows={payload['row_count']} "
         f"strict_same_payoff_passes={payload['strict_same_payoff_pass_count']} "
         f"relationship_review={review_count} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
+
+
+def diagnose_mlb_world_series_board_blockers(
+    *,
+    board: Path,
+    pairs: Path,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        payload = diagnose_mlb_world_series_board_blockers_files(
+            board_path=board,
+            pairs_path=pairs,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"mlb_world_series_board_blockers_status=FAILED message={exc}")
+        return 1
+
+    print(
+        "mlb_world_series_board_blockers_status=OK "
+        f"rows={payload['row_count']} "
         f"json={json_output} markdown={markdown_output}"
     )
     return 0
