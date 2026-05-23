@@ -23,6 +23,7 @@ Last updated: 2026-05-20.
 - Generated reports in `reports/`.
 - Hardened graph diagnostics with reference-only node handling, SAME_EVENT_REWORDED settlement-source proof gates, threshold-chain same-basis checks, stale-node blockers, LLM-source action caps, probability-only magnitude metadata, and report summaries for edge source/review/stale/reference-only status.
 - Added graph-local relative-value hint exports at `reports/market_graph_relative_value_hints.json` and `reports/market_graph_relative_value_hints.md`; they are research-only hints, not evaluator inputs or permission for orders.
+- Added the formal hint export schema at `schemas/relative_value_hint.schema.json`; future consumers should reject hint files that do not validate against it.
 - Added structural fixture coverage for sports champion-to-conference implications, BTC threshold monotonicity with same source/window proof, complete and incomplete mutually exclusive groups, and downgrade cases.
 
 ## Commands Run
@@ -48,6 +49,7 @@ git diff --stat
 - `python scan.py` loads 7 fixture markets, 5 edges, and 1 exclusion set.
 - `python scan.py --snapshots-dir "../relative-value-scanner/reports"` loaded 59 saved schema-v1 snapshot markets in read-only inspection mode during this run.
 - The scan writes `reports/graph_consistency_summary.json`, `reports/graph_consistency_summary.md`, `reports/market_graph_consistency_diagnostics.json`, `reports/market_graph_consistency_diagnostics.md`, `reports/market_graph_relative_value_hints.json`, and `reports/market_graph_relative_value_hints.md`.
+- `reports/market_graph_relative_value_hints.json` validates against `schemas/relative_value_hint.schema.json`; schema validation is a contract guard only and does not make graph hints executable.
 - The fixture report contains known findings for implication, subset, rewording, exclusion-set sum, and ambiguous wording.
 - Saved snapshot prototype mode intentionally loads no relationships and produced 0 findings in this run.
 - Saved snapshot Markdown scope uses saved snapshot notes instead of fixture wording.
@@ -74,7 +76,7 @@ git diff --stat
 - Positive/negative correlation and proxy relationships are documented but do not produce hard v1 price checks.
 - Fixture prices are synthetic and cannot establish real market state.
 - Saved schema-v1 snapshots are consumed as files only and do not prove semantic consistency without curated relationships.
-- Any future evaluator integration must stay separate, explicit, and fail-closed on missing settlement/source/window proof.
+- Any future evaluator integration must stay separate, explicit, schema-validated, and fail-closed on missing settlement/source/window proof.
 
 ## Blockers
 
