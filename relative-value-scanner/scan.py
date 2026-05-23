@@ -35,6 +35,7 @@ from relative_value.mlb_same_scope_audit import audit_same_scope_mlb_candidate_f
 from relative_value.mlb_same_scope_audit import build_mlb_world_series_pairs_files
 from relative_value.mlb_same_scope_audit import diagnose_mlb_same_scope_targeting_files
 from relative_value.mlb_world_series_execution_diagnostics import diagnose_mlb_world_series_execution_blockers_files
+from relative_value.mlb_world_series_execution_diagnostics import diagnose_mlb_world_series_evaluator_blockers_files
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot_file
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot
 from relative_value.paper_candidate_evaluator import (
@@ -292,6 +293,25 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "mlb_world_series_execution_blockers.md",
+    )
+
+    mlb_ws_evaluator_blockers_parser = subparsers.add_parser(
+        "diagnose-mlb-world-series-evaluator-blockers",
+        help="Summarize saved MLB World Series evaluator WATCH blockers and quote/gap details.",
+    )
+    mlb_ws_evaluator_blockers_parser.add_argument("--evaluator", type=Path, required=True)
+    mlb_ws_evaluator_blockers_parser.add_argument("--pairs", type=Path, required=True)
+    mlb_ws_evaluator_blockers_parser.add_argument("--polymarket-enriched", type=Path, required=True)
+    mlb_ws_evaluator_blockers_parser.add_argument("--kalshi-enriched", type=Path, required=True)
+    mlb_ws_evaluator_blockers_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_blockers.json",
+    )
+    mlb_ws_evaluator_blockers_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_blockers.md",
     )
 
     attach_same_payoff_parser = subparsers.add_parser(
@@ -914,6 +934,15 @@ def main(argv: list[str] | None = None) -> int:
             polymarket_enriched=args.polymarket_enriched,
             kalshi_enriched=args.kalshi_enriched,
             evaluator=args.evaluator,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+    if args.command == "diagnose-mlb-world-series-evaluator-blockers":
+        return diagnose_mlb_world_series_evaluator_blockers(
+            evaluator=args.evaluator,
+            pairs=args.pairs,
+            polymarket_enriched=args.polymarket_enriched,
+            kalshi_enriched=args.kalshi_enriched,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
@@ -7452,6 +7481,41 @@ def diagnose_mlb_world_series_execution_blockers(
         f"stale_quote_blockers={summary['stale_quote_blockers']} "
         f"missing_fields={summary['missing_fields']} "
         f"no_liquidity_fields={summary['no_liquidity_fields']} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
+
+
+def diagnose_mlb_world_series_evaluator_blockers(
+    *,
+    evaluator: Path,
+    pairs: Path,
+    polymarket_enriched: Path,
+    kalshi_enriched: Path,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        payload = diagnose_mlb_world_series_evaluator_blockers_files(
+            evaluator_path=evaluator,
+            pairs_path=pairs,
+            polymarket_enriched_path=polymarket_enriched,
+            kalshi_enriched_path=kalshi_enriched,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"mlb_world_series_evaluator_blockers_status=FAILED message={exc}")
+        return 1
+
+    summary = payload["summary"]
+    print(
+        "mlb_world_series_evaluator_blockers_status=OK "
+        f"rows={payload['row_count']} "
+        f"actions={summary['action_counts']} "
+        f"missed_fill_reasons={summary['missed_fill_reason_counts']} "
+        f"blocker_categories={summary['blocker_category_counts']} "
+        f"dominant_blocker={summary['dominant_blocker']} "
         f"json={json_output} markdown={markdown_output}"
     )
     return 0

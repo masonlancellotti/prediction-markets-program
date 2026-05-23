@@ -23,6 +23,7 @@ from relative_value.paper_candidate_evaluator import (
     evaluate_paper_candidates,
 )
 from relative_value.mlb_world_series_execution_diagnostics import diagnose_mlb_world_series_execution_blockers
+from relative_value.mlb_world_series_execution_diagnostics import diagnose_mlb_world_series_evaluator_blockers
 from relative_value.same_payoff_evidence import SAME_PAYOFF_BOARD_CLASSIFIER_VERSION, SAME_PAYOFF_BOARD_SOURCE
 
 
@@ -495,6 +496,112 @@ def test_mlb_execution_diagnostic_command_emits_no_forbidden_labels(tmp_path: Pa
             str(kalshi_path),
             "--evaluator",
             str(evaluator_path),
+            "--json-output",
+            str(output_path),
+            "--markdown-output",
+            str(markdown_path),
+        ]
+    )
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "PAPER" not in stdout
+    assert "POSSIBLE_ARB" not in stdout
+    assert "trade" not in stdout.lower()
+
+
+def test_mlb_evaluator_blocker_diagnostic_summarizes_watch_reasons() -> None:
+    relationship = _trusted_same_payoff_relationship()
+    evaluator = {
+        "schema_version": 1,
+        "ledger": [
+            {
+                "candidate_id": "poly-1__KXKNICKS",
+                "action": ACTION_WATCH,
+                "missed_fill_reason": "estimated_net_gap_below_minimum",
+                "ineligibility_reasons": ["estimated_net_gap_below_minimum"],
+                "gap": {
+                    "gross_gap": 0.02,
+                    "polymarket_fee": 0.011,
+                    "kalshi_fee": 0.01,
+                    "estimated_net_gap": -0.001,
+                    "settlement_delta_seconds": 0,
+                },
+                "polymarket": {
+                    "best_bid": 0.6,
+                    "best_ask": 0.62,
+                    "depth_at_best_bid": 10,
+                    "depth_at_best_ask": 8,
+                    "quote_captured_at": "2026-05-20T11:59:30+00:00",
+                },
+                "kalshi": {
+                    "ticker": "KXKNICKS",
+                    "best_bid": 0.59,
+                    "best_ask": 0.60,
+                    "depth_at_best_bid": 7,
+                    "depth_at_best_ask": 9,
+                    "quote_captured_at": "2026-05-20T11:59:35+00:00",
+                },
+            }
+        ],
+    }
+
+    payload = diagnose_mlb_world_series_evaluator_blockers(
+        evaluator_payload=evaluator,
+        pairs_payload=_pairs_payload(contract_relationship=relationship),
+        polymarket_payload=_polymarket_payload(),
+        kalshi_payload=_kalshi_payload(),
+    )
+
+    assert payload["summary"]["action_counts"] == {ACTION_WATCH: 1}
+    assert payload["summary"]["missed_fill_reason_counts"] == {"estimated_net_gap_below_minimum": 1}
+    assert payload["summary"]["blocker_category_counts"] == {"estimated_net_gap_below_minimum": 1}
+    assert payload["rows"][0]["trusted_same_payoff_board_v1"] is True
+    assert payload["rows"][0]["estimated_net_gap"] == -0.001
+
+
+def test_mlb_evaluator_blocker_command_emits_no_forbidden_labels(tmp_path: Path, capsys) -> None:
+    evaluator_path = tmp_path / "evaluator.json"
+    pairs_path = tmp_path / "pairs.json"
+    poly_path = tmp_path / "poly.json"
+    kalshi_path = tmp_path / "kalshi.json"
+    output_path = tmp_path / "eval_blockers.json"
+    markdown_path = tmp_path / "eval_blockers.md"
+    evaluator_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "ledger": [
+                    {
+                        "candidate_id": "poly-1__KXKNICKS",
+                        "action": ACTION_WATCH,
+                        "missed_fill_reason": "settlement_delta_exceeds_limit",
+                        "ineligibility_reasons": ["settlement_delta_exceeds_limit"],
+                        "gap": {"gross_gap": 0.01, "settlement_delta_seconds": 14700},
+                        "polymarket": {"best_bid": 0.5, "best_ask": 0.51},
+                        "kalshi": {"ticker": "KXKNICKS", "best_bid": 0.49, "best_ask": 0.50},
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    pairs_path.write_text(json.dumps(_pairs_payload(contract_relationship=_trusted_same_payoff_relationship()), indent=2), encoding="utf-8")
+    poly_path.write_text(json.dumps(_polymarket_payload(), indent=2), encoding="utf-8")
+    kalshi_path.write_text(json.dumps(_kalshi_payload(), indent=2), encoding="utf-8")
+
+    result = scan.main(
+        [
+            "diagnose-mlb-world-series-evaluator-blockers",
+            "--evaluator",
+            str(evaluator_path),
+            "--pairs",
+            str(pairs_path),
+            "--polymarket-enriched",
+            str(poly_path),
+            "--kalshi-enriched",
+            str(kalshi_path),
             "--json-output",
             str(output_path),
             "--markdown-output",

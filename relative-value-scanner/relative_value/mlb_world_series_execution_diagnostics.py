@@ -50,6 +50,144 @@ def diagnose_mlb_world_series_execution_blockers_files(
     return payload
 
 
+def diagnose_mlb_world_series_evaluator_blockers_files(
+    *,
+    evaluator_path: Path,
+    pairs_path: Path,
+    polymarket_enriched_path: Path,
+    kalshi_enriched_path: Path,
+    json_output_path: Path,
+    markdown_output_path: Path,
+) -> dict[str, Any]:
+    payload = diagnose_mlb_world_series_evaluator_blockers(
+        evaluator_payload=_load_json_object(evaluator_path, "evaluator"),
+        pairs_payload=_load_json_object(pairs_path, "pairs"),
+        polymarket_payload=_load_json_object(polymarket_enriched_path, "polymarket_enriched"),
+        kalshi_payload=_load_json_object(kalshi_enriched_path, "kalshi_enriched"),
+        inputs={
+            "evaluator": str(evaluator_path),
+            "pairs": str(pairs_path),
+            "polymarket_enriched": str(polymarket_enriched_path),
+            "kalshi_enriched": str(kalshi_enriched_path),
+        },
+    )
+    json_output_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output_path.parent.mkdir(parents=True, exist_ok=True)
+    json_output_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_output_path.write_text(render_mlb_world_series_evaluator_blockers_markdown(payload), encoding="utf-8")
+    return payload
+
+
+def diagnose_mlb_world_series_evaluator_blockers(
+    *,
+    evaluator_payload: dict[str, Any],
+    pairs_payload: dict[str, Any],
+    polymarket_payload: dict[str, Any],
+    kalshi_payload: dict[str, Any],
+    inputs: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    _validate_schema_one("evaluator", evaluator_payload)
+    _validate_schema_one("pairs", pairs_payload)
+    _validate_schema_one("polymarket_enriched", polymarket_payload)
+    _validate_schema_one("kalshi_enriched", kalshi_payload)
+    ledger = evaluator_payload.get("ledger")
+    if not isinstance(ledger, list):
+        raise ValueError("evaluator input must contain ledger list")
+    pairs_by_identity = _pairs_by_identity(pairs_payload)
+
+    rows = []
+    action_counts = Counter()
+    missed_counts = Counter()
+    blocker_categories = Counter()
+    trusted_counts = Counter()
+    for entry in ledger:
+        if not isinstance(entry, dict):
+            continue
+        row = _evaluator_diagnostic_row(entry, pairs_by_identity)
+        rows.append(row)
+        action_counts.update([row["action"]])
+        missed_counts.update([row["missed_fill_reason"] or "none"])
+        blocker_categories.update(row["blocker_categories"])
+        trusted_counts.update(["trusted" if row["trusted_same_payoff_board_v1"] else "not_trusted"])
+
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "source": "mlb_world_series_evaluator_blockers_v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "inputs": inputs or {
+            "evaluator": "<in-memory>",
+            "pairs": "<in-memory>",
+            "polymarket_enriched": "<in-memory>",
+            "kalshi_enriched": "<in-memory>",
+        },
+        "row_count": len(rows),
+        "summary": {
+            "action_counts": dict(sorted(action_counts.items())),
+            "missed_fill_reason_counts": dict(sorted(missed_counts.items())),
+            "blocker_category_counts": dict(sorted(blocker_categories.items())),
+            "trusted_relationship_counts": dict(sorted(trusted_counts.items())),
+            "dominant_blocker": _dominant_from_counter(missed_counts),
+            "rows_with_positive_gross_gap": sum(1 for row in rows if _positive(row["gross_gap"])),
+            "rows_with_estimated_net_gap": sum(1 for row in rows if row["estimated_net_gap"] is not None),
+            "rows_close_to_candidate_after_current_gate": _close_to_candidate_count(rows),
+        },
+        "rows": rows,
+        "safety": {
+            "saved_file_only": True,
+            "live_fetch_attempted": False,
+            "execution_or_order_logic_added": False,
+            "thresholds_or_relationship_gates_lowered": False,
+        },
+        "disclaimer": DISCLAIMER,
+    }
+    return payload
+
+
+def render_mlb_world_series_evaluator_blockers_markdown(payload: dict[str, Any]) -> str:
+    summary = payload["summary"]
+    lines = [
+        "# MLB World Series Evaluator Blockers",
+        "",
+        payload["disclaimer"],
+        "",
+        "## Summary",
+        "",
+        f"- Row count: `{payload['row_count']}`",
+        f"- Actions: `{summary['action_counts']}`",
+        f"- Missed fill reasons: `{summary['missed_fill_reason_counts']}`",
+        f"- Blocker categories: `{summary['blocker_category_counts']}`",
+        f"- Trusted relationships: `{summary['trusted_relationship_counts']}`",
+        f"- Dominant blocker: `{summary['dominant_blocker']}`",
+        f"- Rows with positive gross gap: `{summary['rows_with_positive_gross_gap']}`",
+        f"- Rows with estimated net gap: `{summary['rows_with_estimated_net_gap']}`",
+        f"- Rows close after current gate: `{summary['rows_close_to_candidate_after_current_gate']}`",
+        "",
+        "## Rows",
+        "",
+        "| Team/Ticker | Action | Primary Blocker | PM Bid/Ask/Depth | Kalshi Bid/Ask/Depth | Gross | Fees | Net | Trusted |",
+        "|---|---|---|---|---|---:|---:|---:|---|",
+    ]
+    for row in payload["rows"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _md(row["team_or_ticker"]),
+                    _md(row["action"]),
+                    _md(row["missed_fill_reason"]),
+                    _md(_quote_summary(row["polymarket"])),
+                    _md(_quote_summary(row["kalshi"])),
+                    _md(row["gross_gap"]),
+                    _md(row["estimated_total_fees"]),
+                    _md(row["estimated_net_gap"]),
+                    _md(row["trusted_same_payoff_board_v1"]),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
 def diagnose_mlb_world_series_execution_blockers(
     *,
     pairs_payload: dict[str, Any],
@@ -330,6 +468,139 @@ def _diagnostic_row(
         "kalshi_top_level_best_bid": (kalshi or {}).get("best_bid"),
         "kalshi_top_level_best_ask": (kalshi or {}).get("best_ask"),
     }
+
+
+def _evaluator_diagnostic_row(entry: dict[str, Any], pairs_by_identity: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+    candidate_id = str(entry.get("candidate_id") or "")
+    poly_id, kalshi_ticker = _split_candidate_id(candidate_id)
+    pair = pairs_by_identity.get((poly_id, kalshi_ticker), {})
+    gap = entry.get("gap") if isinstance(entry.get("gap"), dict) else {}
+    polymarket = entry.get("polymarket") if isinstance(entry.get("polymarket"), dict) else {}
+    kalshi = entry.get("kalshi") if isinstance(entry.get("kalshi"), dict) else {}
+    missed = str(entry.get("missed_fill_reason") or "")
+    ineligibility = entry.get("ineligibility_reasons") if isinstance(entry.get("ineligibility_reasons"), list) else []
+    total_fees = _sum_optional(gap.get("polymarket_fee"), gap.get("kalshi_fee"))
+    return {
+        "candidate_id": candidate_id,
+        "team_or_ticker": kalshi_ticker or _question_team(kalshi.get("question")),
+        "action": entry.get("action"),
+        "missed_fill_reason": missed,
+        "blocker_categories": _blocker_categories(missed, ineligibility),
+        "ineligibility_reasons": sorted(str(reason) for reason in ineligibility if reason is not None),
+        "trusted_same_payoff_board_v1": _trusted_same_payoff(pair),
+        "polymarket": _evaluator_venue_quote(polymarket),
+        "kalshi": _evaluator_venue_quote(kalshi),
+        "gross_gap": gap.get("gross_gap"),
+        "polymarket_fee": gap.get("polymarket_fee"),
+        "kalshi_fee": gap.get("kalshi_fee"),
+        "estimated_total_fees": total_fees,
+        "estimated_net_gap": gap.get("estimated_net_gap"),
+        "settlement_delta_seconds": gap.get("settlement_delta_seconds"),
+        "unit_warning": gap.get("size_unit_warning"),
+        "relationship_after_evaluator": entry.get("contract_relationship") if isinstance(entry.get("contract_relationship"), dict) else None,
+    }
+
+
+def _evaluator_venue_quote(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("market_id") or row.get("ticker"),
+        "question": row.get("question"),
+        "quote_captured_at": row.get("quote_captured_at"),
+        "best_bid": row.get("best_bid"),
+        "best_ask": row.get("best_ask"),
+        "depth_at_best_bid": row.get("depth_at_best_bid"),
+        "depth_at_best_ask": row.get("depth_at_best_ask"),
+        "would_enter_side": row.get("would_enter_side"),
+        "would_enter_price": row.get("would_enter_price"),
+        "would_enter_size": row.get("would_enter_size"),
+    }
+
+
+def _blocker_categories(missed_fill_reason: str, ineligibility_reasons: list[Any]) -> list[str]:
+    reasons = {missed_fill_reason, *(str(reason) for reason in ineligibility_reasons if reason is not None)}
+    categories: set[str] = set()
+    if any("missing_best_bid_or_ask" in reason or "best_bid" in reason or "best_ask" in reason for reason in reasons):
+        categories.add("missing_bid_or_ask")
+    if any("depth" in reason for reason in reasons):
+        categories.add("missing_or_insufficient_depth")
+    if any("stale_quote" in reason or "quote_time" in reason for reason in reasons):
+        categories.add("stale_quote")
+    if any("settlement_delta" in reason for reason in reasons):
+        categories.add("settlement_delta")
+    if any("unit_mismatch" in reason for reason in reasons):
+        categories.add("unit_mismatch")
+    if any("fee" in reason for reason in reasons):
+        categories.add("fee_or_model")
+    if any("no_positive_bid_ask_gap" in reason for reason in reasons):
+        categories.add("no_positive_bid_ask_gap")
+    if any("estimated_net_gap_below_minimum" in reason for reason in reasons):
+        categories.add("estimated_net_gap_below_minimum")
+    if not categories:
+        categories.add("unknown_or_other")
+    return sorted(categories)
+
+
+def _pairs_by_identity(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    pairs = payload.get("pairs")
+    if not isinstance(pairs, list):
+        raise ValueError("pairs input must contain pairs list")
+    rows = {}
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        rows[(_pair_polymarket_id(pair), _pair_kalshi_ticker(pair))] = pair
+    return rows
+
+
+def _split_candidate_id(candidate_id: str) -> tuple[str, str]:
+    if "__" not in candidate_id:
+        return candidate_id, ""
+    left, right = candidate_id.split("__", 1)
+    return left, right
+
+
+def _sum_optional(left: Any, right: Any) -> float | None:
+    left_num = float_or_none(left)
+    right_num = float_or_none(right)
+    if left_num is None or right_num is None:
+        return None
+    return round(left_num + right_num, 6)
+
+
+def _dominant_from_counter(counter: Counter) -> str | None:
+    if not counter:
+        return None
+    return counter.most_common(1)[0][0]
+
+
+def _close_to_candidate_count(rows: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if row.get("trusted_same_payoff_board_v1") is True
+        and row.get("action") == "WATCH"
+        and row.get("missed_fill_reason") in {"settlement_delta_exceeds_limit", "estimated_net_gap_below_minimum"}
+        and row.get("gross_gap") is not None
+    )
+
+
+def _positive(value: Any) -> bool:
+    number = float_or_none(value)
+    return number is not None and number > 0
+
+
+def _question_team(question: Any) -> str:
+    if not question:
+        return ""
+    return str(question).replace("Will ", "").replace(" win the 2026 Pro Baseball Championship?", "")
+
+
+def _quote_summary(row: dict[str, Any]) -> str:
+    return (
+        f"{row.get('best_bid')}/{row.get('best_ask')} "
+        f"depth {row.get('depth_at_best_bid')}/{row.get('depth_at_best_ask')} "
+        f"fresh {row.get('quote_captured_at')}"
+    )
 
 
 def _fee_model_diagnosis(polymarket_payload: dict[str, Any], kalshi_payload: dict[str, Any]) -> dict[str, Any]:
