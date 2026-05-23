@@ -982,6 +982,8 @@ def _unit_tokens(market: dict[str, Any]) -> set[str]:
 
 
 def _fee_available(market: dict[str, Any]) -> bool:
+    if str(market.get("venue") or "").strip().lower() == "kalshi":
+        return True
     if market.get("fee_model") or market.get("fee_rate") is not None:
         return True
     raw = market.get("raw") if isinstance(market.get("raw"), dict) else {}

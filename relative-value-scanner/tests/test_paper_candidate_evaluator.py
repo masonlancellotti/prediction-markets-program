@@ -22,6 +22,7 @@ from relative_value.paper_candidate_evaluator import (
     PaperCandidateEvaluatorConfig,
     evaluate_paper_candidates,
 )
+from relative_value.mlb_world_series_execution_diagnostics import diagnose_mlb_world_series_execution_blockers
 from relative_value.same_payoff_evidence import SAME_PAYOFF_BOARD_CLASSIFIER_VERSION, SAME_PAYOFF_BOARD_SOURCE
 
 
@@ -388,6 +389,69 @@ def test_trusted_same_payoff_with_stale_quote_still_fails_paper_candidate() -> N
     assert row["action"] == ACTION_WATCH
     assert row["missed_fill_reason"] == "stale_or_missing_quote_time"
     assert payload["counts_by_action"][ACTION_PAPER_CANDIDATE] == 0
+
+
+def test_mlb_execution_diagnostic_separates_stale_missing_depth_and_fee_model() -> None:
+    poly = _polymarket_payload()
+    kalshi = _kalshi_payload()
+    poly["normalized_markets"][0]["orderbook_enrichment"]["orderbook_captured_at"] = "2026-05-20T11:00:00+00:00"
+    kalshi["normalized_markets"][0]["orderbook_enrichment"]["orderbook_captured_at"] = "2026-05-20T11:00:00+00:00"
+    kalshi["normalized_markets"][0]["best_bid"] = 0.0
+    kalshi["normalized_markets"][0]["orderbook_enrichment"]["best_bid"] = None
+    kalshi["normalized_markets"][0]["orderbook_enrichment"]["depth_at_best_bid"] = None
+    relationship = _trusted_same_payoff_relationship()
+
+    payload = diagnose_mlb_world_series_execution_blockers(
+        pairs_payload=_pairs_payload(contract_relationship=relationship),
+        polymarket_payload=poly,
+        kalshi_payload=kalshi,
+        generated_at=NOW,
+        max_quote_age_seconds=1800.0,
+    )
+
+    assert payload["summary"]["stale_quote_blockers"] == {
+        "kalshi_stale_quote": 1,
+        "polymarket_stale_quote": 1,
+    }
+    assert payload["summary"]["no_liquidity_fields"] == {
+        "kalshi_best_bid": 1,
+        "kalshi_depth_at_best_bid": 1,
+    }
+    assert payload["fee_model_diagnosis"]["kalshi_conservative_fee_model_available"] is True
+    assert payload["fee_model_diagnosis"]["kalshi_row_fee_fields_present_count"] == 0
+
+
+def test_mlb_execution_diagnostic_command_emits_no_forbidden_labels(tmp_path: Path, capsys) -> None:
+    pairs_path = tmp_path / "pairs.json"
+    poly_path = tmp_path / "poly.json"
+    kalshi_path = tmp_path / "kalshi.json"
+    output_path = tmp_path / "execution.json"
+    markdown_path = tmp_path / "execution.md"
+    pairs_path.write_text(json.dumps(_pairs_payload(contract_relationship=_trusted_same_payoff_relationship()), indent=2), encoding="utf-8")
+    poly_path.write_text(json.dumps(_polymarket_payload(), indent=2), encoding="utf-8")
+    kalshi_path.write_text(json.dumps(_kalshi_payload(), indent=2), encoding="utf-8")
+
+    result = scan.main(
+        [
+            "diagnose-mlb-world-series-execution-blockers",
+            "--pairs",
+            str(pairs_path),
+            "--polymarket-enriched",
+            str(poly_path),
+            "--kalshi-enriched",
+            str(kalshi_path),
+            "--json-output",
+            str(output_path),
+            "--markdown-output",
+            str(markdown_path),
+        ]
+    )
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "PAPER" not in stdout
+    assert "POSSIBLE_ARB" not in stdout
+    assert "trade" not in stdout.lower()
 
 
 def test_depth_on_actual_hit_side_is_required() -> None:

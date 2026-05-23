@@ -194,7 +194,7 @@ def test_exact_same_payoff_fixture_passes_evidence_checks() -> None:
     assert row["strict_blockers"] == []
     assert row["strict_missing_fields"] == []
     assert row["info_blockers"] == []
-    assert "kalshi_fee_model_or_rate" in row["info_missing_fields"]
+    assert "kalshi_fee_model_or_rate" not in row["info_missing_fields"]
     assert "polymarket_fee_model_or_rate" in row["info_missing_fields"]
     assert row["blockers"] == []
     assert row["same_payoff_evidence"]["settlement_source"]["status"] == "PASS"
