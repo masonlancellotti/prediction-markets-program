@@ -69,6 +69,10 @@ def enrich_orderbook_snapshot(
     markets = payload["normalized_markets"]
 
     enriched_count = 0
+    existing_top_of_book_present_count = 0
+    full_orderbook_missing_count = 0
+    fetch_failed_count = 0
+    stale_existing_top_of_book_count = 0
     for row in markets:
         if not isinstance(row, dict):
             continue
@@ -82,6 +86,15 @@ def enrich_orderbook_snapshot(
         )
         if enrichment.get("enrichment_status") == "enriched":
             enriched_count += 1
+        if _top_of_book_present(row):
+            existing_top_of_book_present_count += 1
+            if enrichment.get("enrichment_status") != "enriched":
+                stale_existing_top_of_book_count += 1
+        if enrichment.get("enrichment_status") != "enriched":
+            full_orderbook_missing_count += 1
+        warnings = enrichment.get("enrichment_warnings") if isinstance(enrichment.get("enrichment_warnings"), list) else []
+        if "orderbook_unavailable" in warnings or "parse_error" in warnings:
+            fetch_failed_count += 1
         row["orderbook_enrichment"] = enrichment
 
     payload["orderbook_enrichment"] = {
@@ -91,7 +104,12 @@ def enrich_orderbook_snapshot(
         "captured_at": captured_at.isoformat(),
         "market_count": len(markets),
         "enriched_count": enriched_count,
+        "fresh_orderbook_fetch_enriched_count": enriched_count,
         "unenriched_count": len(markets) - enriched_count,
+        "existing_top_of_book_present_count": existing_top_of_book_present_count,
+        "full_orderbook_missing_count": full_orderbook_missing_count,
+        "fetch_failed_count": fetch_failed_count,
+        "stale_existing_top_of_book_count": stale_existing_top_of_book_count,
         "snapshot_warnings": stale_reasons,
         "disclaimer": "Read-only depth enrichment only; no trading, scoring, or executable-liquidity claim.",
     }
@@ -169,6 +187,10 @@ def _snapshot_stale_reasons(snapshot: dict[str, Any], now: datetime, max_snapsho
     if age_hours > max_snapshot_age_hours:
         return ["stale_snapshot"]
     return []
+
+
+def _top_of_book_present(row: dict[str, Any]) -> bool:
+    return row.get("best_bid") is not None or row.get("best_ask") is not None
 
 
 def _polymarket_yes_token_id(row: dict[str, Any]) -> str | None:

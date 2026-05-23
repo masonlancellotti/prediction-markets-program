@@ -190,6 +190,8 @@ def test_polymarket_missing_token_id_is_unenriched_without_guessing() -> None:
 def test_stale_snapshot_marks_market_unenriched() -> None:
     snapshot = _kalshi_snapshot()
     snapshot["captured_at"] = "2026-05-18T11:30:00+00:00"
+    snapshot["normalized_markets"][0]["best_bid"] = 0.42
+    snapshot["normalized_markets"][0]["best_ask"] = 0.44
 
     enriched = enrich_orderbook_snapshot(
         snapshot,
@@ -203,6 +205,11 @@ def test_stale_snapshot_marks_market_unenriched() -> None:
     enrichment = enriched["normalized_markets"][0]["orderbook_enrichment"]
     assert enrichment["enrichment_status"] == "unenriched"
     assert enrichment["enrichment_warnings"] == ["stale_snapshot"]
+    summary = enriched["orderbook_enrichment"]
+    assert summary["fresh_orderbook_fetch_enriched_count"] == 0
+    assert summary["existing_top_of_book_present_count"] == 1
+    assert summary["full_orderbook_missing_count"] == 1
+    assert summary["stale_existing_top_of_book_count"] == 1
 
 
 def test_kalshi_orderbook_client_url_contract_and_user_agent(monkeypatch) -> None:
@@ -271,6 +278,11 @@ def test_enrich_orderbooks_cli_uses_saved_json_without_network(monkeypatch, tmp_
             "market_count": 1,
             "enriched_count": 1,
             "unenriched_count": 0,
+            "fresh_orderbook_fetch_enriched_count": 1,
+            "existing_top_of_book_present_count": 1,
+            "full_orderbook_missing_count": 0,
+            "fetch_failed_count": 0,
+            "stale_existing_top_of_book_count": 0,
         }
         kwargs["output_path"].write_text(json.dumps(payload), encoding="utf-8")
         return payload
@@ -291,4 +303,8 @@ def test_enrich_orderbooks_cli_uses_saved_json_without_network(monkeypatch, tmp_
 
     assert result == 0
     assert output.exists()
-    assert "orderbook_enrichment_status=OK venue=kalshi markets=1 enriched=1 unenriched=0" in capsys.readouterr().out
+    stdout = capsys.readouterr().out
+    assert "orderbook_enrichment_status=OK venue=kalshi markets=1 enriched=1 unenriched=0" in stdout
+    assert "fresh_orderbook_fetch_enriched=1" in stdout
+    assert "existing_top_of_book_present=1" in stdout
+    assert "full_orderbook_missing=0" in stdout

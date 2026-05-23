@@ -421,15 +421,68 @@ def test_mlb_execution_diagnostic_separates_stale_missing_depth_and_fee_model() 
     assert payload["fee_model_diagnosis"]["kalshi_row_fee_fields_present_count"] == 0
 
 
+def test_mlb_execution_diagnostic_distinguishes_existing_top_of_book_from_fresh_enrichment() -> None:
+    poly = _polymarket_payload()
+    kalshi = _kalshi_payload()
+    for payload in (poly, kalshi):
+        payload["orderbook_enrichment"] = {
+            "enriched_count": 0,
+            "unenriched_count": 1,
+            "snapshot_warnings": ["stale_snapshot"],
+        }
+        row = payload["normalized_markets"][0]
+        row["best_bid"] = 0.5
+        row["best_ask"] = 0.6
+        row["orderbook_enrichment"] = {
+            "enrichment_status": "unenriched",
+            "enrichment_warnings": ["stale_snapshot"],
+            "orderbook_captured_at": "2026-05-20T12:00:00+00:00",
+            "best_bid": None,
+            "best_ask": None,
+            "depth_at_best_bid": None,
+            "depth_at_best_ask": None,
+        }
+
+    payload = diagnose_mlb_world_series_execution_blockers(
+        pairs_payload=_pairs_payload(contract_relationship=_trusted_same_payoff_relationship()),
+        polymarket_payload=poly,
+        kalshi_payload=kalshi,
+        generated_at=NOW,
+    )
+
+    assert payload["enrichment_diagnosis"]["polymarket"]["diagnosis"] == "fresh_fetch_not_attempted_stale_snapshot_existing_top_of_book_present"
+    assert payload["enrichment_diagnosis"]["kalshi"]["existing_top_of_book_present"] == 1
+    assert payload["rows"][0]["top_level_quote"]["polymarket"] == {"best_bid": 0.5, "best_ask": 0.6}
+    assert payload["rows"][0]["orderbook_enrichment_status"]["polymarket"] == "unenriched"
+
+
 def test_mlb_execution_diagnostic_command_emits_no_forbidden_labels(tmp_path: Path, capsys) -> None:
     pairs_path = tmp_path / "pairs.json"
     poly_path = tmp_path / "poly.json"
     kalshi_path = tmp_path / "kalshi.json"
+    evaluator_path = tmp_path / "evaluator.json"
     output_path = tmp_path / "execution.json"
     markdown_path = tmp_path / "execution.md"
     pairs_path.write_text(json.dumps(_pairs_payload(contract_relationship=_trusted_same_payoff_relationship()), indent=2), encoding="utf-8")
     poly_path.write_text(json.dumps(_polymarket_payload(), indent=2), encoding="utf-8")
     kalshi_path.write_text(json.dumps(_kalshi_payload(), indent=2), encoding="utf-8")
+    evaluator_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "ledger": [
+                    {
+                        "candidate_id": "poly-1__KXKNICKS",
+                        "action": ACTION_WATCH,
+                        "missed_fill_reason": "stale_or_missing_quote_time",
+                        "ineligibility_reasons": ["polymarket_stale_quote"],
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     result = scan.main(
         [
@@ -440,6 +493,8 @@ def test_mlb_execution_diagnostic_command_emits_no_forbidden_labels(tmp_path: Pa
             str(poly_path),
             "--kalshi-enriched",
             str(kalshi_path),
+            "--evaluator",
+            str(evaluator_path),
             "--json-output",
             str(output_path),
             "--markdown-output",
