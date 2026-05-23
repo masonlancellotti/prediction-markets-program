@@ -9,7 +9,7 @@ from typing import Any
 
 from relative_value._numeric import float_or_none
 from relative_value.contract_relationship import classify_contract_relationship, report_blocking_reasons
-from relative_value.fees import FeeModel, KalshiTieredFeeModel, NoFeeModel
+from relative_value.fees import FeeModel, KalshiTieredFeeModel, PolymarketConservativeFeeModel
 from relative_value.same_payoff_evidence import SAME_PAYOFF_BOARD_CLASSIFIER_VERSION, SAME_PAYOFF_BOARD_SOURCE
 
 
@@ -32,7 +32,8 @@ class PaperCandidateEvaluatorConfig:
     min_top_of_book_size: float = 1.0
     min_net_gap: float = 0.01
     accept_unit_mismatch: bool = False
-    polymarket_fee_model: FeeModel = field(default_factory=NoFeeModel)
+    trusted_settlement_normalizations: frozenset[str] = frozenset()
+    polymarket_fee_model: FeeModel = field(default_factory=PolymarketConservativeFeeModel)
     kalshi_fee_model: FeeModel = field(default_factory=KalshiTieredFeeModel)
 
 
@@ -194,7 +195,11 @@ def _evaluate_pair(
             settlement.reason,
             settlement_direction,
         )
-    if settlement.reason:
+    if settlement.reason and not _relationship_allows_settlement_delta_convention(
+        pair.get("contract_relationship"),
+        settlement.delta_seconds,
+        cfg,
+    ):
         return _ledger_row(
             pair,
             polymarket,
@@ -290,6 +295,41 @@ def _settlement_status(polymarket: dict[str, Any], kalshi: dict[str, Any], max_d
     if delta > max_delta_seconds:
         return _SettlementStatus("settlement_delta_exceeds_limit", delta_seconds=delta)
     return _SettlementStatus(None, delta_seconds=delta)
+
+
+def _relationship_allows_settlement_delta_convention(
+    relationship: Any,
+    measured_delta_seconds: float | None,
+    cfg: PaperCandidateEvaluatorConfig,
+) -> bool:
+    if measured_delta_seconds is None:
+        return False
+    if not isinstance(relationship, dict):
+        return False
+    if not _relationship_allows_paper_candidate(relationship):
+        return False
+    if relationship.get("source") != SAME_PAYOFF_BOARD_SOURCE:
+        return False
+    if relationship.get("blocking_reasons") != []:
+        return False
+    evidence = relationship.get("same_payoff_board_evidence")
+    if not isinstance(evidence, dict):
+        return False
+    if evidence.get("classifier_version") != SAME_PAYOFF_BOARD_CLASSIFIER_VERSION:
+        return False
+    normalization = evidence.get("settlement_time_normalization")
+    if normalization != "mlb_world_series_timezone_convention_drift":
+        return False
+    if normalization not in cfg.trusted_settlement_normalizations:
+        return False
+    evidence_delta = float_or_none(evidence.get("settlement_time_normalization_delta_seconds"))
+    if evidence_delta is None:
+        return False
+    if abs(float(measured_delta_seconds) - evidence_delta) > 60.0:
+        return False
+    if float(measured_delta_seconds) > 5 * 3600 + 600:
+        return False
+    return True
 
 
 def _settlement_time_value(market: dict[str, Any]) -> str | None:
@@ -411,6 +451,10 @@ def _contract_relationship_row(pair: dict[str, Any], reasons: list[str], missed_
 
 def _pair_relationship_allows_paper_candidate(pair: dict[str, Any]) -> bool:
     relationship = pair.get("contract_relationship")
+    return _relationship_allows_paper_candidate(relationship)
+
+
+def _relationship_allows_paper_candidate(relationship: Any) -> bool:
     if not isinstance(relationship, dict):
         return False
     if relationship.get("relationship") != "EQUIVALENT":

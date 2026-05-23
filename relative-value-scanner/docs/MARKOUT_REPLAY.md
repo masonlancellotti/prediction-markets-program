@@ -53,7 +53,7 @@ Replay uses the original ledger direction:
 - original `BUY_YES` uses the later best ask
 - original `SELL_YES` uses the later best bid
 
-It never uses midpoint prices, never assumes a fill, and never walks the book. Later gross gap and estimated net gap reuse the evaluator's fee defaults: Polymarket no-fee placeholder and Kalshi conservative tiered fee estimate.
+It never uses midpoint prices, never assumes a fill, and never walks the book. Later gross gap and estimated net gap reuse the evaluator's fee defaults: Polymarket conservative CLOB fee estimate and Kalshi conservative tiered fee estimate.
 
 ## Output Fields
 

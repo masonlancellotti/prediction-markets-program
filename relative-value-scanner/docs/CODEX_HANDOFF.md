@@ -57,7 +57,7 @@
 - Paper candidate evaluation emits only `WATCH`, `MANUAL_REVIEW`, or `PAPER_CANDIDATE`; it must never emit `PAPER` or `POSSIBLE_ARB`.
 - Paper candidate gaps use bid/ask only, subtract per-leg fees, require fresh enriched orderbooks, and always warn that Polymarket shares and Kalshi contracts are not unit-normalized.
 - Paper candidate settlement comparison prefers normalized `end_date`, then falls back to `close_time` only when `end_date` is missing; bad present `end_date` values fail safely.
-- Paper candidate fee defaults are split by venue: Polymarket uses `NoFeeModel()`, Kalshi uses `KalshiTieredFeeModel()`.
+- Paper candidate fee defaults are split by venue: Polymarket uses `PolymarketConservativeFeeModel()` with the conservative unknown-category fallback, Kalshi uses `KalshiTieredFeeModel()`.
 - The paper candidate CLI defaults to `--max-quote-age-seconds 1800` for saved-file workflows; tighten it when evaluating freshly captured snapshots.
 - Markout replay reads an existing paper candidate ledger plus later saved enriched snapshots only; it must not call live APIs or mutate the input ledger.
 - Markout replay matches rows by Polymarket `market_id` and Kalshi `ticker`, reuses the original ledger bid/ask direction, and never uses midpoint prices.

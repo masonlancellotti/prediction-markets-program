@@ -32,7 +32,7 @@ The CLI default `--max-quote-age-seconds` is `1800` because this command evaluat
 
 ## Fees
 
-Fees are split by venue. The Polymarket leg defaults to `NoFeeModel()` because venue-specific fee wiring is not modeled here yet. The Kalshi leg defaults to `KalshiTieredFeeModel()`, a conservative upper-bound estimate. Both fees are recorded separately in the ledger and subtracted from the bid/ask gross gap.
+Fees are split by venue. The Polymarket leg defaults to `PolymarketConservativeFeeModel()`, which uses the reviewed public CLOB fee formula with a conservative unknown-category fallback when exact category is unavailable. The Kalshi leg defaults to `KalshiTieredFeeModel()`, a conservative upper-bound estimate. Both fees are recorded separately in the ledger and subtracted from the bid/ask gross gap.
 
 ## Actions
 

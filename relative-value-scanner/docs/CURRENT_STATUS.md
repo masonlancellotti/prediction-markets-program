@@ -418,7 +418,7 @@ Completed:
 - Added `docs/MARKOUT_REPLAY.md`.
 - Replay matches by Polymarket `market_id` and Kalshi `ticker`.
 - Replay uses the original ledger bid/ask direction: `BUY_YES` uses later best ask and `SELL_YES` uses later best bid.
-- Replay reuses the evaluator fee defaults: Polymarket no-fee placeholder and Kalshi conservative tiered estimate.
+- Replay reuses the evaluator fee defaults: Polymarket conservative CLOB fee estimate and Kalshi conservative tiered estimate.
 - Replay never uses midpoint prices, never assumes fills, never walks books, and never calls live APIs.
 - Missing, stale, too-early, or too-late windows stay null with `markout_status`.
 - Added local JSON tests for filled windows, null windows, no-midpoint behavior, missing markets, stale quotes, fee logic, disallowed action guardrails, input non-mutation, and CLI wiring.

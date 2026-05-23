@@ -14,6 +14,7 @@ from relative_value.contract_relationship import (
     RELATIONSHIP_NEAR_EQUIVALENT,
     classify_contract_relationship,
 )
+from relative_value.fees import KalshiTieredFeeModel, NoFeeModel, PolymarketConservativeFeeModel
 from relative_value.paper_candidate_evaluator import (
     ACTION_MANUAL_REVIEW,
     ACTION_PAPER_CANDIDATE,
@@ -130,6 +131,8 @@ def _evaluate(
     accept_unit_mismatch: bool = False,
     min_net_gap: float = 0.01,
     max_settlement_delta_seconds: float = 3600.0,
+    trusted_settlement_normalizations: frozenset[str] = frozenset(),
+    polymarket_fee_model=None,
 ) -> dict:
     return evaluate_paper_candidates(
         pairs_payload=pairs or _pairs_payload(),
@@ -140,6 +143,8 @@ def _evaluate(
             accept_unit_mismatch=accept_unit_mismatch,
             min_net_gap=min_net_gap,
             max_settlement_delta_seconds=max_settlement_delta_seconds,
+            trusted_settlement_normalizations=trusted_settlement_normalizations,
+            polymarket_fee_model=polymarket_fee_model or PolymarketConservativeFeeModel(),
         ),
     )
 
@@ -170,13 +175,27 @@ def _trusted_same_payoff_relationship(**overrides) -> dict:
     return relationship
 
 
+def _trusted_mlb_ws_timezone_relationship(**overrides) -> dict:
+    relationship = _trusted_same_payoff_relationship()
+    relationship["same_payoff_board_evidence"].update(
+        {
+            "settlement_time_normalization": "mlb_world_series_timezone_convention_drift",
+            "settlement_time_normalization_delta_seconds": 14700.0,
+            "settlement_time_normalization_tolerance_seconds": 3600.0,
+        }
+    )
+    relationship.update(overrides)
+    return relationship
+
+
 def test_clean_positive_gap_caps_at_manual_review_without_unit_ack() -> None:
     row = _first(_evaluate())
 
     assert row["action"] == ACTION_MANUAL_REVIEW
     assert row["opportunity_class"] == "near_equivalent_manual_review"
     assert row["gap"]["gross_gap"] == pytest.approx(0.06)
-    assert row["gap"]["estimated_net_gap"] == pytest.approx(0.04)
+    assert row["gap"]["polymarket_fee"] == pytest.approx(0.01122)
+    assert row["gap"]["estimated_net_gap"] == pytest.approx(0.02878)
     assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
     assert row["gap"]["size_unit_warning"] == UNIT_WARNING
     assert row["missed_fill_reason"] == "unit_mismatch_not_accepted"
@@ -187,10 +206,56 @@ def test_clean_positive_gap_caps_at_manual_review_without_unit_ack() -> None:
 
 
 def test_default_fees_are_split_by_venue() -> None:
+    cfg = PaperCandidateEvaluatorConfig()
     row = _first(_evaluate())
 
-    assert row["gap"]["polymarket_fee"] == 0.0
+    assert isinstance(cfg.polymarket_fee_model, PolymarketConservativeFeeModel)
+    assert not isinstance(cfg.polymarket_fee_model, NoFeeModel)
+    assert isinstance(cfg.kalshi_fee_model, KalshiTieredFeeModel)
+    assert row["gap"]["polymarket_fee"] > 0.0
     assert row["gap"]["kalshi_fee"] > 0.0
+
+
+def test_polymarket_conservative_default_blocks_margin_that_only_clears_with_no_fee() -> None:
+    relationship = _trusted_same_payoff_relationship()
+    poly_row = _polymarket_payload()["normalized_markets"][0]
+    poly_row["orderbook_enrichment"]["best_bid"] = 0.09
+    poly_row["orderbook_enrichment"]["best_ask"] = 0.096
+    poly = _polymarket_payload()
+    poly["normalized_markets"][0] = poly_row
+    kalshi_row = _kalshi_payload()["normalized_markets"][0]
+    kalshi_row["orderbook_enrichment"]["best_bid"] = 0.117
+    kalshi_row["orderbook_enrichment"]["best_ask"] = 0.12
+    kalshi = _kalshi_payload()
+    kalshi["normalized_markets"][0] = kalshi_row
+
+    default_row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            poly=poly,
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+        )
+    )
+    no_fee_row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            poly=poly,
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+            polymarket_fee_model=NoFeeModel(),
+        )
+    )
+
+    assert default_row["gap"]["gross_gap"] == pytest.approx(0.021)
+    assert default_row["gap"]["polymarket_fee"] == pytest.approx(0.004339)
+    assert default_row["gap"]["kalshi_fee"] == pytest.approx(0.00819)
+    assert default_row["gap"]["estimated_net_gap"] == pytest.approx(0.008471)
+    assert default_row["action"] == ACTION_WATCH
+    assert default_row["missed_fill_reason"] == "estimated_net_gap_below_minimum"
+    assert no_fee_row["gap"]["polymarket_fee"] == pytest.approx(0.0)
+    assert no_fee_row["gap"]["estimated_net_gap"] == pytest.approx(0.01281)
+    assert no_fee_row["action"] == ACTION_PAPER_CANDIDATE
 
 
 @pytest.mark.parametrize(
@@ -553,7 +618,7 @@ def test_mlb_evaluator_blocker_diagnostic_summarizes_watch_reasons() -> None:
         kalshi_payload=_kalshi_payload(),
     )
 
-    assert payload["summary"]["action_counts"] == {ACTION_WATCH: 1}
+    assert payload["summary"]["action_counts"] == {"watch": 1}
     assert payload["summary"]["missed_fill_reason_counts"] == {"estimated_net_gap_below_minimum": 1}
     assert payload["summary"]["blocker_category_counts"] == {"estimated_net_gap_below_minimum": 1}
     assert payload["rows"][0]["trusted_same_payoff_board_v1"] is True
@@ -653,6 +718,149 @@ def test_settlement_delta_over_limit_is_watch() -> None:
     assert relationship["same_payoff"] is False
     assert "settlement_delta_exceeds_limit" in relationship["blocking_reasons"]
     assert UNIT_WARNING in relationship["blocking_reasons"]
+
+
+def test_trusted_mlb_world_series_settlement_normalization_opt_in_clears_delta_gate() -> None:
+    relationship = _trusted_mlb_ws_timezone_relationship()
+    kalshi = _kalshi_payload(close_time="2026-05-20T17:05:00+00:00")
+
+    row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+        )
+    )
+
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(14700.0)
+    assert row["missed_fill_reason"] is None
+    assert row["action"] == ACTION_PAPER_CANDIDATE
+
+
+def test_trusted_mlb_world_series_settlement_normalization_requires_opt_in() -> None:
+    relationship = _trusted_mlb_ws_timezone_relationship()
+    kalshi = _kalshi_payload(close_time="2026-05-20T17:05:00+00:00")
+
+    row = _first(_evaluate(pairs=_pairs_payload(contract_relationship=relationship), kalshi=kalshi, accept_unit_mismatch=True))
+
+    assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(14700.0)
+
+
+def test_trusted_settlement_normalization_requires_allowed_source_and_classifier() -> None:
+    kalshi = _kalshi_payload(close_time="2026-05-20T17:05:00+00:00")
+    source_relationship = _trusted_mlb_ws_timezone_relationship(source="test_deterministic_fixture")
+    missing_classifier = _trusted_mlb_ws_timezone_relationship()
+    missing_classifier["same_payoff_board_evidence"].pop("classifier_version")
+
+    for relationship in (source_relationship, missing_classifier):
+        row = _first(
+            _evaluate(
+                pairs=_pairs_payload(contract_relationship=relationship),
+                kalshi=kalshi,
+                accept_unit_mismatch=True,
+                trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+            )
+        )
+        assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
+
+
+def test_trusted_settlement_normalization_requires_matching_delta() -> None:
+    relationship = _trusted_mlb_ws_timezone_relationship()
+    kalshi = _kalshi_payload(close_time="2026-05-20T17:07:00+00:00")
+
+    row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+        )
+    )
+
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(14820.0)
+    assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
+
+
+def test_non_normalized_four_hour_drift_still_blocks() -> None:
+    relationship = _trusted_same_payoff_relationship()
+    kalshi = _kalshi_payload(close_time="2026-05-20T17:00:00+00:00")
+
+    row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+        )
+    )
+
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(14400.0)
+    assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
+
+
+def test_settlement_normalization_does_not_bypass_execution_gates() -> None:
+    relationship = _trusted_mlb_ws_timezone_relationship()
+    kalshi = _kalshi_payload(close_time="2026-05-20T17:05:00+00:00")
+    poly_row = _polymarket_payload()["normalized_markets"][0]
+    poly_row["orderbook_enrichment"]["orderbook_captured_at"] = "2026-05-20T11:58:59+00:00"
+    stale_poly = _polymarket_payload()
+    stale_poly["normalized_markets"][0] = poly_row
+
+    stale_row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            poly=stale_poly,
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+        )
+    )
+    assert stale_row["missed_fill_reason"] == "stale_or_missing_quote_time"
+
+    missing_bid_row = _kalshi_payload(close_time="2026-05-20T17:05:00+00:00")["normalized_markets"][0]
+    missing_bid_row["orderbook_enrichment"]["best_bid"] = None
+    missing_bid_kalshi = _kalshi_payload()
+    missing_bid_kalshi["normalized_markets"][0] = missing_bid_row
+    missing_row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            kalshi=missing_bid_kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+        )
+    )
+    assert missing_row["missed_fill_reason"] == "missing_best_bid_or_ask"
+
+    thin_depth_row = _kalshi_payload(close_time="2026-05-20T17:05:00+00:00")["normalized_markets"][0]
+    thin_depth_row["orderbook_enrichment"]["depth_at_best_ask"] = 0.5
+    thin_kalshi = _kalshi_payload()
+    thin_kalshi["normalized_markets"][0] = thin_depth_row
+    thin_row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            kalshi=thin_kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+        )
+    )
+    assert thin_row["missed_fill_reason"] == "insufficient_top_of_book_depth"
+
+    marginal_poly_row = _polymarket_payload()["normalized_markets"][0]
+    marginal_poly_row["orderbook_enrichment"]["best_bid"] = 0.625
+    marginal_poly = _polymarket_payload()
+    marginal_poly["normalized_markets"][0] = marginal_poly_row
+    fee_row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            poly=marginal_poly,
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"mlb_world_series_timezone_convention_drift"}),
+        )
+    )
+    assert fee_row["missed_fill_reason"] == "estimated_net_gap_below_minimum"
 
 
 def test_settlement_delta_seconds_is_null_when_settlement_check_is_skipped() -> None:

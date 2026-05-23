@@ -147,11 +147,11 @@ def test_fills_correct_window_when_later_snapshot_is_within_tolerance() -> None:
     assert markout["later_kalshi_best_bid"] == 0.58
     assert markout["later_kalshi_best_ask"] == 0.61
     assert markout["later_gross_gap"] == pytest.approx(0.03)
-    assert markout["later_polymarket_fee"] == 0.0
+    assert markout["later_polymarket_fee"] == pytest.approx(0.01152)
     assert markout["later_kalshi_fee"] == 0.02
-    assert markout["later_estimated_net_gap"] == pytest.approx(0.01)
-    assert markout["change_in_estimated_net_gap"] == pytest.approx(-0.03)
-    assert markout["spread_closed_boolean"] is False
+    assert markout["later_estimated_net_gap"] == pytest.approx(-0.00152)
+    assert markout["change_in_estimated_net_gap"] == pytest.approx(-0.04152)
+    assert markout["spread_closed_boolean"] is True
 
 
 def test_leaves_other_windows_null_when_snapshot_is_too_early() -> None:
@@ -172,7 +172,7 @@ def test_no_midpoint_use_in_markout_gap() -> None:
 
     assert markout["markout_status"] == "filled"
     assert markout["later_gross_gap"] == pytest.approx(-0.01)
-    assert markout["later_estimated_net_gap"] == pytest.approx(-0.03)
+    assert markout["later_estimated_net_gap"] == pytest.approx(-0.0425)
     assert markout["spread_closed_boolean"] is True
 
 
@@ -207,7 +207,7 @@ def test_missing_later_orderbook_produces_missing_orderbook() -> None:
 def test_net_gap_uses_same_default_fee_config_as_evaluator() -> None:
     markout = _replay()["ledger"][0]["markouts"]["t_plus_30s"]
 
-    assert markout["later_polymarket_fee"] == 0.0
+    assert markout["later_polymarket_fee"] == pytest.approx(0.01152)
     assert markout["later_kalshi_fee"] == 0.02
     assert markout["later_estimated_net_gap"] == pytest.approx(
         markout["later_gross_gap"] - markout["later_polymarket_fee"] - markout["later_kalshi_fee"]
