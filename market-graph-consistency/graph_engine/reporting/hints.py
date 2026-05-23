@@ -10,16 +10,15 @@ from graph_engine.models import ConsistencyViolation, ExclusionCompleteness, Gra
 from graph_engine.reporting.json_report import _assert_safe_violation_schema
 
 
-BANNER = "Research-only graph hint. Not paper-trade permission."
+BANNER = "Research-only graph hint. Not permission for any market action."
 ALLOWED_ACTIONS = ["WATCH", "MANUAL_REVIEW"]
 
 
 def build_relative_value_hints_report(snapshot: GraphSnapshot, violations: list[ConsistencyViolation]) -> dict[str, Any]:
     hints = _build_hints(snapshot, violations)
-    _assert_safe_violation_schema(hints)
     relation_counts = Counter(hint["relation_type"] for hint in hints)
     action_counts = Counter(hint["max_action_cap"] for hint in hints)
-    return {
+    report = {
         "diagnostic_only": True,
         "banner": BANNER,
         "snapshot_id": snapshot.snapshot_id,
@@ -29,6 +28,8 @@ def build_relative_value_hints_report(snapshot: GraphSnapshot, violations: list[
         "counts_by_max_action_cap": dict(sorted(action_counts.items())),
         "hints": hints,
     }
+    _assert_safe_violation_schema(report)
+    return report
 
 
 def write_relative_value_hints_report(
@@ -77,7 +78,7 @@ def render_relative_value_hints_markdown(report: dict[str, Any]) -> str:
             )
             + " |"
         )
-    lines.extend(["", "These hints are not evaluator input and do not grant execution permission.", ""])
+    lines.extend(["", "These hints are research notes only and are not downstream approval.", ""])
     return "\n".join(lines)
 
 
@@ -103,12 +104,12 @@ def _build_hints(snapshot: GraphSnapshot, violations: list[ConsistencyViolation]
 
 
 def _edge_hint(violation: ConsistencyViolation, edge: RelationshipEdge) -> dict[str, Any]:
-    return {
+    hint = {
         "graph_hint_id": f"hint:{violation.violation_id}",
         "source_market_id": edge.src_market_id,
         "target_market_id": edge.dst_market_id,
         "relation_type": _relation_type(edge.relation, violation),
-        "direction": _direction(edge.relation),
+        "direction": _direction(edge.relation, violation),
         "hard_bound_type": _hard_bound_type(edge.relation, violation),
         "diagnostic_only": True,
         "allowed_actions": ALLOWED_ACTIONS,
@@ -119,6 +120,9 @@ def _edge_hint(violation: ConsistencyViolation, edge: RelationshipEdge) -> dict[
         "reviewed_by": edge.reviewed_by,
         "banner": BANNER,
     }
+    if edge.relation == RelationshipType.SAME_EVENT_REWORDED:
+        hint["settlement_source_proven"] = edge.settlement_source_proven
+    return hint
 
 
 def _exclusion_hint(
@@ -151,7 +155,7 @@ def _exclusion_hint(
 
 def _relation_type(relation: RelationshipType, violation: ConsistencyViolation) -> str:
     if violation.kind == ViolationKind.AMBIGUOUS_WORDING:
-        return "MANUAL_REVIEW"
+        return "AMBIGUOUS_WORDING"
     if relation == RelationshipType.SAME_EVENT_REWORDED:
         return "SAME_PAYOFF"
     if relation == RelationshipType.IMPLICATION:
@@ -160,10 +164,12 @@ def _relation_type(relation: RelationshipType, violation: ConsistencyViolation) 
         return "SUBSET"
     if relation == RelationshipType.SUPERSET:
         return "SUPERSET"
-    return "MANUAL_REVIEW"
+    return "AMBIGUOUS_WORDING"
 
 
-def _direction(relation: RelationshipType) -> str:
+def _direction(relation: RelationshipType, violation: ConsistencyViolation) -> str:
+    if violation.kind == ViolationKind.AMBIGUOUS_WORDING:
+        return "none"
     if relation in {RelationshipType.IMPLICATION, RelationshipType.SUBSET}:
         return "source_implies_target"
     if relation == RelationshipType.SUPERSET:

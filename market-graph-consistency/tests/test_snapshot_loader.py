@@ -116,6 +116,6 @@ def test_scan_snapshot_mode_falls_back_to_fixtures_when_no_usable_snapshots(tmp_
     captured = capsys.readouterr().out
     assert "falling back to bundled fixtures" in captured
     assert mode == "fixtures"
-    assert len(snapshot.nodes) == 7
-    assert len(snapshot.edges) == 5
-    assert len(metadata) == 3
+    assert len(snapshot.nodes) == 21
+    assert len(snapshot.edges) == 10
+    assert len(metadata) == 6

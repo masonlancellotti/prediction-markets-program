@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 import json
+import re
 
 from graph_engine.consistency.runner import run_consistency_checks
-from graph_engine.reporting.hints import BANNER, build_relative_value_hints_report
+from graph_engine.reporting.hints import BANNER, build_relative_value_hints_report, write_relative_value_hints_report
+from graph_engine.reporting.json_report import PROHIBITED_VIOLATION_FIELDS
+
+
+PROHIBITED_REPORT_TOKENS = sorted(
+    PROHIBITED_VIOLATION_FIELDS
+    | {
+        "PAPER_CANDIDATE",
+        "PAPER",
+        "POSSIBLE_ARB",
+        "executable-arb",
+        "fill-size",
+        "trade-permission",
+    }
+)
 
 
 def _hints_by_relation(report: dict, relation_type: str) -> list[dict]:
@@ -18,8 +33,19 @@ def test_relative_value_hints_export_is_diagnostic_only(fixture_snapshot) -> Non
     assert report["allowed_actions"] == ["WATCH", "MANUAL_REVIEW"]
     assert report["banner"] == BANNER
     assert report["hint_count"] > 0
-    for prohibited in ("pnl", "profit", "dollars", "fill", "edge_bps", "possible_arb"):
+    assert "MANUAL_REVIEW" not in {hint["relation_type"] for hint in report["hints"]}
+    for prohibited in PROHIBITED_VIOLATION_FIELDS:
         assert prohibited not in serialized
+
+
+def test_written_relative_value_hint_reports_contain_no_prohibited_tokens(tmp_path, fixture_snapshot) -> None:
+    json_path = tmp_path / "market_graph_relative_value_hints.json"
+    md_path = tmp_path / "market_graph_relative_value_hints.md"
+    write_relative_value_hints_report(fixture_snapshot, run_consistency_checks(fixture_snapshot), json_path, md_path)
+
+    combined = json_path.read_text(encoding="utf-8") + md_path.read_text(encoding="utf-8")
+    for token in PROHIBITED_REPORT_TOKENS:
+        assert re.search(rf"\b{re.escape(token)}\b", combined, flags=re.IGNORECASE) is None
 
 
 def test_sports_structural_implication_hints_are_emitted(fixture_snapshot) -> None:
@@ -40,8 +66,18 @@ def test_btc_same_window_hint_and_different_window_downgrade(fixture_snapshot) -
 
     assert same_window["relation_type"] == "SUBSET"
     assert same_window["hard_bound_type"] == "upper_probability_bound"
-    assert different_window["relation_type"] == "MANUAL_REVIEW"
+    assert different_window["relation_type"] == "AMBIGUOUS_WORDING"
+    assert different_window["direction"] == "none"
     assert "threshold_basis_mismatch" in different_window["blockers"]
+
+
+def test_same_payoff_hint_surfaces_settlement_source_proof(fixture_snapshot) -> None:
+    report = build_relative_value_hints_report(fixture_snapshot, run_consistency_checks(fixture_snapshot))
+    same_payoff = _hints_by_relation(report, "SAME_PAYOFF")
+
+    assert same_payoff
+    assert all("settlement_source_proven" in hint for hint in same_payoff)
+    assert all(hint["settlement_source_proven"] is True for hint in same_payoff)
 
 
 def test_exhaustive_group_requires_complete_set_for_exhaustive_hint(fixture_snapshot) -> None:

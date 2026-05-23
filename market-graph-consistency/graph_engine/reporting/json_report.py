@@ -47,7 +47,7 @@ def _reviewers(snapshot: GraphSnapshot) -> list[str]:
     return sorted({edge.reviewed_by for edge in snapshot.edges if edge.reviewed_by})
 
 
-def _assert_safe_violation_schema(rows: list[dict[str, Any]]) -> None:
+def _assert_safe_violation_schema(payload: Any) -> None:
     def visit(value: Any, path: str) -> list[str]:
         if isinstance(value, dict):
             found: list[str] = []
@@ -64,9 +64,7 @@ def _assert_safe_violation_schema(rows: list[dict[str, Any]]) -> None:
             return found
         return []
 
-    forbidden = []
-    for index, row in enumerate(rows):
-        forbidden.extend(visit(row, f"violations[{index}]"))
+    forbidden = visit(payload, "")
     if forbidden:
         raise ValueError(f"prohibited violation fields present: {sorted(forbidden)}")
 
@@ -81,8 +79,7 @@ def build_json_report(
     edge_source_counts = Counter(edge.source.value for edge in snapshot.edges)
     cap_counts = Counter(violation.max_action_cap_reason for violation in violations)
     violation_rows = [violation.to_dict() for violation in violations]
-    _assert_safe_violation_schema(violation_rows)
-    return {
+    report = {
         "generated_at": utc_now().astimezone(timezone.utc).isoformat(),
         "snapshot_id": snapshot.snapshot_id,
         "notes": list(snapshot.notes),
@@ -107,6 +104,8 @@ def build_json_report(
         "violations": violation_rows,
         "source_fixture_metadata": fixture_metadata or [],
     }
+    _assert_safe_violation_schema(report)
+    return report
 
 
 def write_json_report(
