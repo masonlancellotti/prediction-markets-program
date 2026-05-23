@@ -18,6 +18,14 @@ python scan.py evaluate-paper-candidates --pairs reports\live_snapshot_pairs.jso
 
 Use `--accept-unit-mismatch` only when the operator explicitly accepts the unresolved Polymarket-shares versus Kalshi-contracts unit mismatch. Without that flag, otherwise clean positive gaps are capped at `MANUAL_REVIEW`. The flag is not sufficient by itself: otherwise clean rows must also carry an existing proven same-payoff relationship object from the trusted board write-back workflow before they can reach `PAPER_CANDIDATE`.
 
+For the current MLB World Series workflow, use the explicit paper-check runner to keep quote freshness inside the review window:
+
+```powershell
+python scan.py run-mlb-world-series-paper-check --polymarket-snapshot reports\mlb_kxmlb_48h_unitok_after_guardrails_polymarket_snapshot.json --kalshi-snapshot reports\mlb_kxmlb_48h_unitok_after_guardrails_kalshi_snapshot.json --pairs reports\mlb_world_series_pairs.json --accept-unit-mismatch --trust-settlement-normalization mlb_world_series_timezone_convention_drift
+```
+
+The runner performs read-only orderbook enrichment for both saved snapshots, builds the same-payoff board, writes derived pairs with `same_payoff_board_v1` evidence, evaluates the existing paper gates, and writes a compact JSON/Markdown summary. It does not lower thresholds or change evaluator gates. If `PAPER_CANDIDATE` appears, it prints `STOP_AND_REVIEW` and performs no further action.
+
 ## Freshness vs. Saved-File Workflow
 
 The CLI default `--max-quote-age-seconds` is `1800` because this command evaluates saved snapshots that may have been fetched and enriched minutes earlier. Direct library use remains strict by default. Operators should tighten this value for near-real-time review or raise it only when deliberately inspecting older saved files.

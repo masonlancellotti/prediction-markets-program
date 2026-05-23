@@ -2,7 +2,7 @@
 
 ## Root Files
 
-- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `fetch-live-overlap-universe`, `match-live-snapshots`, `same-payoff-board`, `explain-reference-context`, `llm-review-relationships`, `source-readiness`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
+- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `fetch-live-overlap-universe`, `match-live-snapshots`, `same-payoff-board`, `attach-same-payoff-evidence`, `run-mlb-world-series-paper-check`, `market-graph-diagnostics`, `explain-reference-context`, `llm-review-relationships`, `source-readiness`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
 - `README.md`: quick-start and action ladder.
 - `requirements.txt`: test dependency list.
 - `.env.example`: documents that this scaffold is offline/read-only.
@@ -21,6 +21,7 @@
 - `ibkr_forecastex_read_only_boundary.py`: inert design metadata for future IBKR / ForecastEx read-only account-permission, instrument, quote/depth, settlement, fee, redaction, and fail-closed review.
 - `llm_relationship_classifier.py`: stubbed no-network LLM relationship proposal validator and audit sidecar helpers; review metadata only.
 - `llm_relationship_review_report.py`: saved-report transformer that attaches stubbed LLM review sidecars to matcher/evaluator rows without changing deterministic fields or actions.
+- `market_graph_diagnostics.py`: fixture-backed deterministic relationship graph diagnostics for exact same payoff, complements, subset/superset, mutually exclusive and exhaustive groups, overlap, correlation, unrelated, and manual-review edges; emits WATCH/MANUAL_REVIEW only.
 - `prophetx_read_only_boundary.py`: inert design metadata for future ProphetX read-only API-permission, market discovery, orderbook/depth, settlement, fee, redaction, and fail-closed review.
 - `reference_diagnostics.py`: diagnostic-only executable-to-reference snapshot comparison for The Odds API observability; no action promotion or edge math.
 - `source_registry.py`: non-networked source taxonomy and output-policy registry for executable, reference-only, signal-only, and do-not-use-yet sources.
@@ -57,13 +58,14 @@
 - `test_live_snapshot_matcher.py`: saved snapshot matching tests with local JSON only, including precision-aid guardrails.
 - `test_kalshi_live.py`: mocked Kalshi live discovery parsing, targeted URL construction, cursor following, schema, filters, and CLI tests.
 - `test_polymarket_live.py`: mocked Polymarket Gamma parsing, targeted tag URL construction, schema, filters, HTTP failure, and CLI tests.
-- `test_orderbook_enrichment.py`: mocked orderbook parser, client, failure-mode, and CLI tests.
+- `test_orderbook_enrichment.py`: mocked orderbook parser, client, failure-mode, CLI, and MLB World Series paper-check runner composition tests.
 - `test_paper_candidate_evaluator.py`: local JSON evaluator tests for gates, fee subtraction, unit mismatch cap, ledger shape, CLI success/failure, and no-midpoint behavior.
 - `test_markout_replay.py`: local JSON markout replay tests for window filling, no-midpoint logic, stale/missing statuses, fee reuse, no disallowed actions, input non-mutation, and CLI wiring.
 - `test_source_registry.py`: source taxonomy tests proving executable, reference-only, signal-only, planned, and unknown-source behavior.
 - `test_the_odds_api_live.py`: mocked The Odds API reference snapshot tests; no real API key or network required.
 - `test_llm_relationship_classifier.py`: strict LLM proposal schema, forbidden-output, audit sidecar, and no-behavior-change tests.
 - `test_llm_relationship_review_report.py`: saved matcher/evaluator report LLM audit sidecar tests; no real LLM or network calls.
+- `test_market_graph_diagnostics.py`: fixture-backed relationship graph diagnostics tests for subset/superset, threshold monotonicity, mutually exclusive and exhaustive groups, unrelated city-token sports teams, action safety, and default fixture mode.
 - `test_reference_diagnostics.py`: saved-file reference-context diagnostics tests for plausible matches, stale/malformed rows, and no disallowed actions.
 - `test_source_provenance.py`: fixture provenance and key-safe source-readiness tests.
 - `test_sx_bet_feasibility.py`: static SX Bet research-snapshot fixture/parser tests; no live API, wallet, signing, or execution behavior.
@@ -82,6 +84,8 @@ Generated scan outputs:
 - `paper_candidates_ledger.json`
 - `paper_candidates_ledger_marked.json`
 - `the_odds_api_reference_snapshot.json`
+- `market_graph_consistency_diagnostics.json`
+- `market_graph_consistency_diagnostics.md`
 
 These report files are generated artifacts and are ignored by `.gitignore`.
 
@@ -108,3 +112,7 @@ Design note for source types, planned source entries, and source-specific output
 ## `docs/MARKOUT_REPLAY.md`
 
 Design note for saved-file-only markout replay and its research-only limits.
+
+## `docs/MARKET_GRAPH_CONSISTENCY.md`
+
+Design note for fixture-backed market graph relationship diagnostics and their review-only limits.

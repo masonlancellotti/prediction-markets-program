@@ -45,6 +45,7 @@
 - 2026-05-23 Market Graph Consistency: added fixture-backed `market-graph-diagnostics` for deterministic relationship edges only; outputs remain `WATCH`/`MANUAL_REVIEW`, `STATIC_FIXTURE`, and disconnected from evaluator promotion paths.
 - 2026-05-23 Same-Payoff Evidence Write-Back: added `attach-same-payoff-evidence` to write a derived matcher-pairs file with typed `same_payoff_board_v1` evidence only when strict board rows fully clear; original matcher files are not mutated.
 - 2026-05-23 Paper Candidate Evaluator: tightened same-payoff promotion to allow only allowlisted `same_payoff_board_v1` relationships with `same-payoff-board-v1` classifier evidence and equal strict pass/comparator counts.
+- 2026-05-23 MLB World Series Paper Check: semantic equivalence is solved for the current MLB WS saved pair set (`strict_same_payoff_passes=30`, `trusted_relationships=30`). The evaluator remains the paper gate and is blocked by execution freshness, depth, and fee-adjusted net gap when fresh quotes do not clear. Added the explicit `run-mlb-world-series-paper-check` runner to compress enrichment, board, evidence, evaluator, and summary into one saved-file workflow.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

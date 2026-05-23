@@ -69,10 +69,10 @@
 
 ## Current Next Task
 
-Run the targeted pipeline for the current NBA/KXNBA universe, then use the printed markout command later after separate later snapshots are captured. Do not promote pipeline or markout output to `PAPER`, `POSSIBLE_ARB`, or trading decisions.
+Run the explicit MLB World Series paper-check runner against the saved MLB-targeted snapshots and generated WS/WS pairs. Semantic equivalence is solved for the current MLB World Series set; the next blocker diagnosis is execution freshness, depth, and fee-adjusted net gap inside the evaluator.
 
 ```powershell
-python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba
+python scan.py run-mlb-world-series-paper-check --polymarket-snapshot reports\mlb_kxmlb_48h_unitok_after_guardrails_polymarket_snapshot.json --kalshi-snapshot reports\mlb_kxmlb_48h_unitok_after_guardrails_kalshi_snapshot.json --pairs reports\mlb_world_series_pairs.json --accept-unit-mismatch --trust-settlement-normalization mlb_world_series_timezone_convention_drift
 ```
 
 ## Last Known Test Command
@@ -86,6 +86,7 @@ Current result after paper candidate evaluator housekeeping: 127 passed.
 Current result after live snapshot matcher precision aids: 133 passed.
 Current result after targeted fetch controls: 140 passed.
 Current result after markout replay: 150 passed.
+Current focused result after MLB World Series paper-check runner completion: `python -m pytest tests/test_paper_candidate_evaluator.py tests/test_same_payoff_evidence.py tests/test_orderbook_enrichment.py -q` -> 71 passed.
 
 ## Last Known Scan Command
 

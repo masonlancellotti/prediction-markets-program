@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,6 +7,7 @@ from urllib.error import HTTPError
 import pytest
 import scan
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot
+from relative_value.paper_candidate_evaluator import ACTION_MANUAL_REVIEW, ACTION_PAPER_CANDIDATE, ACTION_WATCH
 from venues.orderbooks import (
     KalshiOrderbookClient,
     PolymarketOrderbookClient,
@@ -308,3 +310,286 @@ def test_enrich_orderbooks_cli_uses_saved_json_without_network(monkeypatch, tmp_
     assert "fresh_orderbook_fetch_enriched=1" in stdout
     assert "existing_top_of_book_present=1" in stdout
     assert "full_orderbook_missing=0" in stdout
+
+
+def _paper_check_pairs() -> dict:
+    return {
+        "schema_version": 1,
+        "source": "mlb_world_series_saved_pair_generator_v1",
+        "pair_count": 1,
+        "pairs": [
+            {
+                "action": "WATCH",
+                "polymarket": {"market_id": "poly-ws", "question": "Will Team win the World Series?"},
+                "kalshi": {"ticker": "KXMLB-TEAM", "question": "Will Team win the Pro Baseball Championship?"},
+                "ineligibility_reasons": [],
+            }
+        ],
+    }
+
+
+def _paper_check_snapshot(venue: str) -> dict:
+    market_id = "poly-ws" if venue == "polymarket" else "KXMLB-TEAM"
+    row = {
+        "venue": venue,
+        "market_id": market_id,
+        "question": "Will Team win the championship?",
+        "outcomes": [{"name": "Yes"}, {"name": "No"}],
+        "active": True,
+        "closed": False,
+    }
+    if venue == "polymarket":
+        row["raw"] = {"outcomes": '["Yes", "No"]', "clobTokenIds": '["yes-token", "no-token"]'}
+    else:
+        row["ticker"] = market_id
+    return {
+        "schema_version": 1,
+        "source": f"{venue}_snapshot",
+        "captured_at": "2026-05-20T11:59:00+00:00",
+        "market_count": 1,
+        "normalized_count": 1,
+        "normalized_markets": [row],
+    }
+
+
+def _paper_check_enriched(venue: str) -> dict:
+    payload = _paper_check_snapshot(venue)
+    payload["normalized_markets"][0]["orderbook_enrichment"] = {
+        "orderbook_captured_at": "2026-05-20T12:00:00+00:00",
+        "best_bid": 0.55,
+        "best_ask": 0.57,
+        "depth_at_best_bid": 10,
+        "depth_at_best_ask": 11,
+        "enrichment_status": "enriched",
+        "enrichment_warnings": [],
+    }
+    payload["orderbook_enrichment"] = {
+        "market_count": 1,
+        "enriched_count": 1,
+        "unenriched_count": 0,
+        "fresh_orderbook_fetch_enriched_count": 1,
+        "existing_top_of_book_present_count": 0,
+        "full_orderbook_missing_count": 0,
+        "fetch_failed_count": 0,
+        "stale_existing_top_of_book_count": 0,
+        "snapshot_warnings": [],
+    }
+    return payload
+
+
+def _install_paper_check_fakes(monkeypatch, *, action: str = ACTION_WATCH, missed_fill_reason: str | None = None) -> list[str]:
+    calls: list[str] = []
+
+    def fake_enrich_orderbook_snapshot_file(**kwargs):
+        calls.append(f"enrich:{kwargs['venue']}")
+        payload = _paper_check_enriched(kwargs["venue"])
+        kwargs["output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    def fake_build_same_payoff_board_files(**kwargs):
+        calls.append("board")
+        payload = {
+            "schema_version": 1,
+            "strict_same_payoff_pass_count": 1,
+            "row_count": 1,
+            "rows": [],
+            "counts_by_recommended_next_action": {},
+        }
+        kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        kwargs["markdown_output_path"].write_text("# board\n", encoding="utf-8")
+        return payload
+
+    def fake_attach_same_payoff_evidence_files(pairs_path, board_path, output_path):
+        calls.append("attach")
+        payload = _paper_check_pairs()
+        payload["same_payoff_evidence_attachment"] = {
+            "trusted_relationship_attached_count": 1,
+            "pair_count": 1,
+            "diagnostic_evidence_attached_count": 0,
+            "ambiguous_identity_count": 0,
+            "unmatched_pair_count": 0,
+        }
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    def fake_evaluate_paper_candidate_files(**kwargs):
+        calls.append("evaluate")
+        counts = {ACTION_PAPER_CANDIDATE: 0, ACTION_MANUAL_REVIEW: 0, ACTION_WATCH: 0}
+        counts[action] = 1
+        reasons = ["polymarket_stale_quote"] if missed_fill_reason == "stale_or_missing_quote_time" else []
+        payload = {
+            "schema_version": 1,
+            "source": "paper_candidate_evaluator",
+            "generated_at": "2026-05-20T12:00:00+00:00",
+            "ledger_count": 1,
+            "counts_by_action": counts,
+            "ledger": [
+                {
+                    "candidate_id": "poly-ws__KXMLB-TEAM",
+                    "action": action,
+                    "missed_fill_reason": missed_fill_reason,
+                    "ineligibility_reasons": reasons,
+                    "polymarket": {"quote_captured_at": "2026-05-20T11:00:00+00:00"},
+                    "kalshi": {"quote_captured_at": "2026-05-20T11:59:30+00:00"},
+                    "gap": {},
+                }
+            ],
+        }
+        kwargs["output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "enrich_orderbook_snapshot_file", fake_enrich_orderbook_snapshot_file)
+    monkeypatch.setattr(scan, "build_same_payoff_board_files", fake_build_same_payoff_board_files)
+    monkeypatch.setattr(scan, "attach_same_payoff_evidence_files", fake_attach_same_payoff_evidence_files)
+    monkeypatch.setattr(scan, "evaluate_paper_candidate_files", fake_evaluate_paper_candidate_files)
+    return calls
+
+
+def _write(path: Path, payload: dict) -> Path:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_mlb_world_series_paper_check_requires_explicit_inputs(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        scan.main(["run-mlb-world-series-paper-check"])
+
+    assert exc.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "--polymarket-snapshot" in stderr
+    assert "--kalshi-snapshot" in stderr
+    assert "--pairs" in stderr
+
+
+def test_default_scan_remains_static_fixture(capsys) -> None:
+    result = scan.main([])
+
+    assert result == 0
+    assert "data_source_mode=STATIC_FIXTURE" in capsys.readouterr().out
+
+
+def test_mlb_world_series_paper_check_composes_steps_without_mutating_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+    poly_path = tmp_path / "poly_snapshot.json"
+    kalshi_path = tmp_path / "kalshi_snapshot.json"
+    pairs_path = tmp_path / "pairs.json"
+    poly_path.write_text(json.dumps(_paper_check_snapshot("polymarket"), sort_keys=True), encoding="utf-8")
+    kalshi_path.write_text(json.dumps(_paper_check_snapshot("kalshi"), sort_keys=True), encoding="utf-8")
+    pairs_path.write_text(json.dumps(_paper_check_pairs(), sort_keys=True), encoding="utf-8")
+    before_hashes = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (poly_path, kalshi_path, pairs_path)}
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--polymarket-enriched-output",
+            str(tmp_path / "poly_enriched.json"),
+            "--kalshi-enriched-output",
+            str(tmp_path / "kalshi_enriched.json"),
+            "--board-json-output",
+            str(tmp_path / "board.json"),
+            "--board-markdown-output",
+            str(tmp_path / "board.md"),
+            "--derived-pairs-output",
+            str(tmp_path / "derived_pairs.json"),
+            "--evaluator-output",
+            str(tmp_path / "evaluator.json"),
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+            "--accept-unit-mismatch",
+            "--trust-settlement-normalization",
+            "mlb_world_series_timezone_convention_drift",
+        ]
+    )
+
+    assert result == 0
+    assert calls == ["enrich:polymarket", "enrich:kalshi", "board", "attach", "evaluate"]
+    assert {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in before_hashes} == before_hashes
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["evaluator_counts"] == {ACTION_PAPER_CANDIDATE: 0, ACTION_MANUAL_REVIEW: 1, ACTION_WATCH: 0}
+    assert summary["strict_same_payoff_passes"] == 1
+    assert summary["trusted_relationships"] == 1
+    stdout = capsys.readouterr().out
+    assert "manual_review=1" in stdout
+    assert "watch=0" in stdout
+    assert "paper=0" in stdout
+
+
+def test_mlb_world_series_paper_check_stop_and_review_for_paper_candidate(monkeypatch, tmp_path: Path, capsys) -> None:
+    _install_paper_check_fakes(monkeypatch, action=ACTION_PAPER_CANDIDATE)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs())
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+        ]
+    )
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "paper=1" in stdout
+    assert "STOP_AND_REVIEW" in stdout
+    assert "no_trading_or_execution_performed=true" in stdout
+    assert "poly-ws__KXMLB-TEAM" in stdout
+
+
+def test_mlb_world_series_paper_check_reports_stale_quote_warning(monkeypatch, tmp_path: Path, capsys) -> None:
+    _install_paper_check_fakes(monkeypatch, action=ACTION_WATCH, missed_fill_reason="stale_or_missing_quote_time")
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs())
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--max-quote-age-seconds",
+            "1800",
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+        ]
+    )
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "stale_quote_warning=true" in stdout
+    assert "STALE_QUOTE_WARNING" in stdout
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["quote_freshness"]["stale_quote_warning"] is True
+
+
+def test_mlb_world_series_paper_check_help_shows_required_arguments(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        scan.main(["run-mlb-world-series-paper-check", "--help"])
+
+    assert exc.value.code == 0
+    stdout = capsys.readouterr().out
+    assert "--polymarket-snapshot POLYMARKET_SNAPSHOT" in stdout
+    assert "--kalshi-snapshot KALSHI_SNAPSHOT" in stdout
+    assert "--pairs PAIRS" in stdout

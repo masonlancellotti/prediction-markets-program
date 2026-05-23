@@ -240,6 +240,12 @@ def main(argv: list[str] | None = None) -> int:
             "Polymarket share units and Kalshi contract units are not normalized."
         ),
     )
+    evaluate_parser.add_argument(
+        "--trust-settlement-normalization",
+        action="append",
+        default=[],
+        help="Default-off trusted same-payoff-board settlement normalization to honor, for example mlb_world_series_timezone_convention_drift.",
+    )
 
     same_payoff_parser = subparsers.add_parser(
         "same-payoff-board",
@@ -425,6 +431,31 @@ def main(argv: list[str] | None = None) -> int:
         default=PROJECT_ROOT / "reports" / "live_readonly_match_report.json",
         help="Optional saved prior matcher report used only to explain old ranking behavior.",
     )
+
+    mlb_ws_paper_check_parser = subparsers.add_parser(
+        "run-mlb-world-series-paper-check",
+        help="Explicit read-only MLB World Series same-payoff paper check using saved snapshots and fresh orderbook enrichment.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    mlb_ws_paper_check_parser.add_argument("--polymarket-snapshot", type=Path, required=True, help="Saved Polymarket MLB World Series schema-v1 snapshot.")
+    mlb_ws_paper_check_parser.add_argument("--kalshi-snapshot", type=Path, required=True, help="Saved Kalshi MLB World Series schema-v1 snapshot.")
+    mlb_ws_paper_check_parser.add_argument("--pairs", type=Path, required=True, help="Saved WS/WS Kalshi-Polymarket pairs file.")
+    mlb_ws_paper_check_parser.add_argument("--timeout-seconds", type=float, default=10.0, help="Read-only orderbook request timeout.")
+    mlb_ws_paper_check_parser.add_argument("--max-snapshot-age-hours", type=float, default=24.0, help="Maximum age for input snapshots before enrichment fails closed.")
+    mlb_ws_paper_check_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0, help="Evaluator and board quote freshness limit.")
+    mlb_ws_paper_check_parser.add_argument("--max-settlement-delta-seconds", type=float, default=3600.0, help="Evaluator settlement-time delta limit before trusted normalizations.")
+    mlb_ws_paper_check_parser.add_argument("--min-top-of-book-size", type=float, default=1.0, help="Evaluator hit-side depth requirement.")
+    mlb_ws_paper_check_parser.add_argument("--min-net-gap", type=float, default=0.01, help="Evaluator fee-adjusted net gap requirement.")
+    mlb_ws_paper_check_parser.add_argument("--accept-unit-mismatch", action="store_true", help="Forward explicit unit-mismatch acknowledgement to the evaluator.")
+    mlb_ws_paper_check_parser.add_argument("--trust-settlement-normalization", action="append", default=[], help="Trusted board settlement normalization to honor, e.g. mlb_world_series_timezone_convention_drift.")
+    mlb_ws_paper_check_parser.add_argument("--polymarket-enriched-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_fresh_polymarket_enriched.json", help="Output path for freshly enriched Polymarket snapshot.")
+    mlb_ws_paper_check_parser.add_argument("--kalshi-enriched-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_fresh_kalshi_enriched.json", help="Output path for freshly enriched Kalshi snapshot.")
+    mlb_ws_paper_check_parser.add_argument("--board-json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.json", help="Output path for same-payoff board JSON.")
+    mlb_ws_paper_check_parser.add_argument("--board-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.md", help="Output path for same-payoff board Markdown.")
+    mlb_ws_paper_check_parser.add_argument("--derived-pairs-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_pairs_with_evidence_fresh.json", help="Output path for derived pairs with same-payoff evidence.")
+    mlb_ws_paper_check_parser.add_argument("--evaluator-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_fresh_trust_settlement.json", help="Output path for evaluator ledger.")
+    mlb_ws_paper_check_parser.add_argument("--summary-json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.json", help="Output path for compact paper-check summary JSON.")
+    mlb_ws_paper_check_parser.add_argument("--summary-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.md", help="Output path for compact paper-check summary Markdown.")
 
     graph_parser = subparsers.add_parser(
         "market-graph-diagnostics",
@@ -912,6 +943,7 @@ def main(argv: list[str] | None = None) -> int:
             min_top_of_book_size=args.min_top_of_book_size,
             min_net_gap=args.min_net_gap,
             accept_unit_mismatch=args.accept_unit_mismatch,
+            trusted_settlement_normalizations=frozenset(args.trust_settlement_normalization or []),
         )
     if args.command == "same-payoff-board":
         return same_payoff_board(
@@ -982,6 +1014,28 @@ def main(argv: list[str] | None = None) -> int:
             json_output=args.json_output,
             markdown_output=args.markdown_output,
             match_report=args.match_report,
+        )
+    if args.command == "run-mlb-world-series-paper-check":
+        return run_mlb_world_series_paper_check(
+            polymarket_snapshot=args.polymarket_snapshot,
+            kalshi_snapshot=args.kalshi_snapshot,
+            pairs=args.pairs,
+            timeout_seconds=args.timeout_seconds,
+            max_snapshot_age_hours=args.max_snapshot_age_hours,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            max_settlement_delta_seconds=args.max_settlement_delta_seconds,
+            min_top_of_book_size=args.min_top_of_book_size,
+            min_net_gap=args.min_net_gap,
+            accept_unit_mismatch=args.accept_unit_mismatch,
+            trusted_settlement_normalizations=frozenset(args.trust_settlement_normalization or []),
+            polymarket_enriched_output=args.polymarket_enriched_output,
+            kalshi_enriched_output=args.kalshi_enriched_output,
+            board_json_output=args.board_json_output,
+            board_markdown_output=args.board_markdown_output,
+            derived_pairs_output=args.derived_pairs_output,
+            evaluator_output=args.evaluator_output,
+            summary_json_output=args.summary_json_output,
+            summary_markdown_output=args.summary_markdown_output,
         )
     if args.command == "market-graph-diagnostics":
         return market_graph_diagnostics(
@@ -7360,6 +7414,7 @@ def evaluate_paper_candidates(
     min_top_of_book_size: float = 1.0,
     min_net_gap: float = 0.01,
     accept_unit_mismatch: bool = False,
+    trusted_settlement_normalizations: frozenset[str] = frozenset(),
 ) -> int:
     config = PaperCandidateEvaluatorConfig(
         max_quote_age_seconds=max_quote_age_seconds,
@@ -7367,6 +7422,7 @@ def evaluate_paper_candidates(
         min_top_of_book_size=min_top_of_book_size,
         min_net_gap=min_net_gap,
         accept_unit_mismatch=accept_unit_mismatch,
+        trusted_settlement_normalizations=trusted_settlement_normalizations,
     )
     try:
         payload = evaluate_paper_candidate_files(
@@ -7669,6 +7725,309 @@ def build_mlb_world_series_pairs(
             f"overlap_universe_query={info.get('overlap_universe_query') or 'none'}"
         )
     return 0
+
+
+def run_mlb_world_series_paper_check(
+    *,
+    polymarket_snapshot: Path,
+    kalshi_snapshot: Path,
+    pairs: Path,
+    timeout_seconds: float = 10.0,
+    max_snapshot_age_hours: float = 24.0,
+    max_quote_age_seconds: float = 1800.0,
+    max_settlement_delta_seconds: float = 3600.0,
+    min_top_of_book_size: float = 1.0,
+    min_net_gap: float = 0.01,
+    accept_unit_mismatch: bool = False,
+    trusted_settlement_normalizations: frozenset[str] = frozenset(),
+    polymarket_enriched_output: Path = PROJECT_ROOT / "reports" / "mlb_fresh_polymarket_enriched.json",
+    kalshi_enriched_output: Path = PROJECT_ROOT / "reports" / "mlb_fresh_kalshi_enriched.json",
+    board_json_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.json",
+    board_markdown_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.md",
+    derived_pairs_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_pairs_with_evidence_fresh.json",
+    evaluator_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_fresh_trust_settlement.json",
+    summary_json_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.json",
+    summary_markdown_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.md",
+) -> int:
+    generated_at = datetime.now(timezone.utc)
+    try:
+        polymarket_enriched = enrich_orderbook_snapshot_file(
+            snapshot_path=polymarket_snapshot,
+            venue="polymarket",
+            output_path=polymarket_enriched_output,
+            now=generated_at,
+            timeout_seconds=timeout_seconds,
+            max_snapshot_age_hours=max_snapshot_age_hours,
+        )
+        kalshi_enriched = enrich_orderbook_snapshot_file(
+            snapshot_path=kalshi_snapshot,
+            venue="kalshi",
+            output_path=kalshi_enriched_output,
+            now=generated_at,
+            timeout_seconds=timeout_seconds,
+            max_snapshot_age_hours=max_snapshot_age_hours,
+        )
+        board = build_same_payoff_board_files(
+            pairs_path=pairs,
+            polymarket_enriched_path=polymarket_enriched_output,
+            kalshi_enriched_path=kalshi_enriched_output,
+            json_output_path=board_json_output,
+            markdown_output_path=board_markdown_output,
+            now=generated_at,
+            max_quote_age_seconds=max_quote_age_seconds,
+        )
+        derived_pairs = attach_same_payoff_evidence_files(pairs, board_json_output, derived_pairs_output)
+        evaluator = evaluate_paper_candidate_files(
+            pairs_path=derived_pairs_output,
+            polymarket_enriched_path=polymarket_enriched_output,
+            kalshi_enriched_path=kalshi_enriched_output,
+            output_path=evaluator_output,
+            config=PaperCandidateEvaluatorConfig(
+                max_quote_age_seconds=max_quote_age_seconds,
+                max_settlement_delta_seconds=max_settlement_delta_seconds,
+                min_top_of_book_size=min_top_of_book_size,
+                min_net_gap=min_net_gap,
+                accept_unit_mismatch=accept_unit_mismatch,
+                trusted_settlement_normalizations=trusted_settlement_normalizations,
+            ),
+            now=generated_at,
+        )
+    except ValueError as exc:
+        print(f"mlb_world_series_paper_check_status=FAILED message={exc}")
+        return 1
+
+    summary = _mlb_world_series_paper_check_summary(
+        generated_at=generated_at,
+        polymarket_snapshot=polymarket_snapshot,
+        kalshi_snapshot=kalshi_snapshot,
+        pairs=pairs,
+        polymarket_enriched_output=polymarket_enriched_output,
+        kalshi_enriched_output=kalshi_enriched_output,
+        board_json_output=board_json_output,
+        board_markdown_output=board_markdown_output,
+        derived_pairs_output=derived_pairs_output,
+        evaluator_output=evaluator_output,
+        summary_json_output=summary_json_output,
+        summary_markdown_output=summary_markdown_output,
+        polymarket_enriched=polymarket_enriched,
+        kalshi_enriched=kalshi_enriched,
+        board=board,
+        derived_pairs=derived_pairs,
+        evaluator=evaluator,
+        max_quote_age_seconds=max_quote_age_seconds,
+        max_snapshot_age_hours=max_snapshot_age_hours,
+        max_settlement_delta_seconds=max_settlement_delta_seconds,
+        min_top_of_book_size=min_top_of_book_size,
+        min_net_gap=min_net_gap,
+        accept_unit_mismatch=accept_unit_mismatch,
+        trusted_settlement_normalizations=trusted_settlement_normalizations,
+    )
+    summary_json_output.parent.mkdir(parents=True, exist_ok=True)
+    summary_markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    summary_json_output.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    summary_markdown_output.write_text(_mlb_world_series_paper_check_markdown(summary), encoding="utf-8")
+
+    counts = summary["evaluator_counts"]
+    paper_candidate_ids = summary["paper_candidate_ids"]
+    print(
+        "mlb_world_series_paper_check_status=OK "
+        f"polymarket_enriched={summary['polymarket_enrichment']['enriched_count']}/{summary['polymarket_enrichment']['market_count']} "
+        f"kalshi_enriched={summary['kalshi_enrichment']['enriched_count']}/{summary['kalshi_enrichment']['market_count']} "
+        f"strict_same_payoff_passes={summary['strict_same_payoff_passes']} "
+        f"trusted_relationships={summary['trusted_relationships']} "
+        f"paper={counts.get('PAPER_CANDIDATE', 0)} "
+        f"manual_review={counts.get('MANUAL_REVIEW', 0)} "
+        f"watch={counts.get('WATCH', 0)} "
+        f"dominant_blocker={summary['dominant_blocker'] or 'none'} "
+        f"paper_candidate_ids={','.join(paper_candidate_ids) if paper_candidate_ids else 'none'} "
+        f"max_quote_age_seconds={summary['quote_freshness']['max_quote_age_seconds'] if summary['quote_freshness']['max_quote_age_seconds'] is not None else 'unknown'} "
+        f"stale_quote_warning={str(summary['quote_freshness']['stale_quote_warning']).lower()} "
+        f"summary={summary_json_output}"
+    )
+    if counts.get("PAPER_CANDIDATE", 0):
+        print(
+            "STOP_AND_REVIEW paper_candidates_detected="
+            f"{counts.get('PAPER_CANDIDATE', 0)} ids={','.join(paper_candidate_ids)} "
+            "diagnostics_only=true no_trading_or_execution_performed=true"
+        )
+    elif summary["quote_freshness"]["stale_quote_warning"]:
+        print(
+            "STALE_QUOTE_WARNING "
+            f"max_quote_age_seconds={summary['quote_freshness']['max_quote_age_seconds']} "
+            f"limit={max_quote_age_seconds} "
+            "paper_check_remains_blocked=true"
+        )
+    return 0
+
+
+def _mlb_world_series_paper_check_summary(
+    *,
+    generated_at: datetime,
+    polymarket_snapshot: Path,
+    kalshi_snapshot: Path,
+    pairs: Path,
+    polymarket_enriched_output: Path,
+    kalshi_enriched_output: Path,
+    board_json_output: Path,
+    board_markdown_output: Path,
+    derived_pairs_output: Path,
+    evaluator_output: Path,
+    summary_json_output: Path,
+    summary_markdown_output: Path,
+    polymarket_enriched: dict[str, Any],
+    kalshi_enriched: dict[str, Any],
+    board: dict[str, Any],
+    derived_pairs: dict[str, Any],
+    evaluator: dict[str, Any],
+    max_quote_age_seconds: float,
+    max_snapshot_age_hours: float,
+    max_settlement_delta_seconds: float,
+    min_top_of_book_size: float,
+    min_net_gap: float,
+    accept_unit_mismatch: bool,
+    trusted_settlement_normalizations: frozenset[str],
+) -> dict[str, Any]:
+    evaluator_counts = evaluator.get("counts_by_action") if isinstance(evaluator.get("counts_by_action"), dict) else {}
+    top_reasons = _top_rejection_reasons(evaluator)
+    quote_freshness = _paper_check_quote_freshness(evaluator, generated_at, max_quote_age_seconds)
+    paper_candidate_ids = [
+        str(row.get("candidate_id"))
+        for row in evaluator.get("ledger", [])
+        if isinstance(row, dict) and row.get("action") == "PAPER_CANDIDATE" and row.get("candidate_id")
+    ]
+    return {
+        "schema_version": 1,
+        "source": "mlb_world_series_paper_check_runner",
+        "generated_at": generated_at.isoformat(),
+        "inputs": {
+            "polymarket_snapshot": str(polymarket_snapshot),
+            "kalshi_snapshot": str(kalshi_snapshot),
+            "pairs": str(pairs),
+        },
+        "outputs": {
+            "polymarket_enriched": str(polymarket_enriched_output),
+            "kalshi_enriched": str(kalshi_enriched_output),
+            "same_payoff_board_json": str(board_json_output),
+            "same_payoff_board_markdown": str(board_markdown_output),
+            "derived_pairs": str(derived_pairs_output),
+            "evaluator": str(evaluator_output),
+            "summary_json": str(summary_json_output),
+            "summary_markdown": str(summary_markdown_output),
+        },
+        "parameters": {
+            "max_snapshot_age_hours": max_snapshot_age_hours,
+            "max_quote_age_seconds": max_quote_age_seconds,
+            "max_settlement_delta_seconds": max_settlement_delta_seconds,
+            "min_top_of_book_size": min_top_of_book_size,
+            "min_net_gap": min_net_gap,
+            "accept_unit_mismatch": accept_unit_mismatch,
+            "trusted_settlement_normalizations": sorted(trusted_settlement_normalizations),
+        },
+        "polymarket_enrichment": _paper_check_enrichment_summary(polymarket_enriched),
+        "kalshi_enrichment": _paper_check_enrichment_summary(kalshi_enriched),
+        "strict_same_payoff_passes": int(board.get("strict_same_payoff_pass_count") or 0),
+        "trusted_relationships": int(
+            (derived_pairs.get("same_payoff_evidence_attachment") or {}).get("trusted_relationship_attached_count") or 0
+        ),
+        "evaluator_counts": {
+            "PAPER_CANDIDATE": int(evaluator_counts.get("PAPER_CANDIDATE") or 0),
+            "MANUAL_REVIEW": int(evaluator_counts.get("MANUAL_REVIEW") or 0),
+            "WATCH": int(evaluator_counts.get("WATCH") or 0),
+        },
+        "dominant_blocker": top_reasons[0]["reason"] if top_reasons else None,
+        "top_rejection_reasons": top_reasons,
+        "paper_candidate_ids": paper_candidate_ids,
+        "quote_freshness": quote_freshness,
+        "safety": {
+            "explicit_saved_snapshot_inputs_required": True,
+            "original_inputs_mutated": False,
+            "trading_or_execution_performed": False,
+            "balances_or_positions_accessed": False,
+            "secrets_used": False,
+            "thresholds_or_relationship_gates_lowered": False,
+            "default_scan_mode_changed": False,
+        },
+        "disclaimer": (
+            "Read-only MLB World Series paper-check diagnostics. This runner enriches saved snapshots, "
+            "attaches deterministic same-payoff evidence, evaluates existing paper gates, and stops at "
+            "STOP_AND_REVIEW when PAPER_CANDIDATE appears. It does not trade or execute."
+        ),
+    }
+
+
+def _paper_check_enrichment_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    summary = payload.get("orderbook_enrichment") if isinstance(payload.get("orderbook_enrichment"), dict) else {}
+    return {
+        "market_count": int(summary.get("market_count") or 0),
+        "enriched_count": int(summary.get("enriched_count") or 0),
+        "unenriched_count": int(summary.get("unenriched_count") or 0),
+        "fresh_orderbook_fetch_enriched_count": int(summary.get("fresh_orderbook_fetch_enriched_count") or summary.get("enriched_count") or 0),
+        "existing_top_of_book_present_count": int(summary.get("existing_top_of_book_present_count") or 0),
+        "full_orderbook_missing_count": int(summary.get("full_orderbook_missing_count") or summary.get("unenriched_count") or 0),
+        "fetch_failed_count": int(summary.get("fetch_failed_count") or 0),
+        "stale_existing_top_of_book_count": int(summary.get("stale_existing_top_of_book_count") or 0),
+        "snapshot_warnings": summary.get("snapshot_warnings") if isinstance(summary.get("snapshot_warnings"), list) else [],
+    }
+
+
+def _paper_check_quote_freshness(
+    evaluator: dict[str, Any],
+    generated_at: datetime,
+    max_quote_age_seconds: float,
+) -> dict[str, Any]:
+    ages: list[float] = []
+    stale_rows = 0
+    for row in evaluator.get("ledger", []):
+        if not isinstance(row, dict):
+            continue
+        reasons = row.get("ineligibility_reasons") if isinstance(row.get("ineligibility_reasons"), list) else []
+        missed = str(row.get("missed_fill_reason") or "")
+        if "stale" in missed or any("stale_quote" in str(reason) for reason in reasons):
+            stale_rows += 1
+        for venue in ("polymarket", "kalshi"):
+            quote = row.get(venue) if isinstance(row.get(venue), dict) else {}
+            captured = _parse_datetime_or_none(quote.get("quote_captured_at"))
+            if captured is not None:
+                ages.append((generated_at - captured).total_seconds())
+    max_age = max(ages) if ages else None
+    return {
+        "quote_count": len(ages),
+        "max_quote_age_seconds": round(max_age, 6) if max_age is not None else None,
+        "limit_seconds": max_quote_age_seconds,
+        "stale_quote_row_count": stale_rows,
+        "stale_quote_warning": bool(stale_rows or (max_age is not None and max_age >= max_quote_age_seconds)),
+    }
+
+
+def _mlb_world_series_paper_check_markdown(payload: dict[str, Any]) -> str:
+    counts = payload["evaluator_counts"]
+    freshness = payload["quote_freshness"]
+    lines = [
+        "# MLB World Series Paper Check",
+        "",
+        payload["disclaimer"],
+        "",
+        "## Summary",
+        "",
+        f"- Polymarket enriched: `{payload['polymarket_enrichment']['enriched_count']}/{payload['polymarket_enrichment']['market_count']}`",
+        f"- Kalshi enriched: `{payload['kalshi_enrichment']['enriched_count']}/{payload['kalshi_enrichment']['market_count']}`",
+        f"- Strict same-payoff passes: `{payload['strict_same_payoff_passes']}`",
+        f"- Trusted relationships: `{payload['trusted_relationships']}`",
+        f"- Evaluator counts: `PAPER_CANDIDATE={counts['PAPER_CANDIDATE']} MANUAL_REVIEW={counts['MANUAL_REVIEW']} WATCH={counts['WATCH']}`",
+        f"- Dominant blocker: `{payload['dominant_blocker'] or 'none'}`",
+        f"- Max quote age seconds: `{freshness['max_quote_age_seconds']}`",
+        f"- Stale quote warning: `{freshness['stale_quote_warning']}`",
+        "",
+        "## Paper Candidate IDs",
+        "",
+    ]
+    ids = payload.get("paper_candidate_ids") or []
+    lines.append(", ".join(ids) if ids else "none")
+    lines.extend(["", "## Outputs", ""])
+    for key, value in payload["outputs"].items():
+        lines.append(f"- {key}: `{value}`")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def market_graph_diagnostics(
