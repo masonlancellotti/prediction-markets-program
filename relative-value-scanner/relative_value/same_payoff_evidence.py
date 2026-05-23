@@ -123,7 +123,7 @@ def _row_clears_for_trusted_relationship(row: dict[str, Any]) -> bool:
 
 
 def _evidence_for_row(row: dict[str, Any], board_payload: dict[str, Any]) -> dict[str, Any]:
-    return {
+    evidence = {
         "classifier_version": SAME_PAYOFF_BOARD_CLASSIFIER_VERSION,
         "strict_pass_count": row.get("strict_pass_count"),
         "strict_comparator_count": row.get("strict_comparator_count"),
@@ -131,6 +131,12 @@ def _evidence_for_row(row: dict[str, Any], board_payload: dict[str, Any]) -> dic
         "board_row_id": _board_row_id(row),
         "evidence_hash": _evidence_hash(row),
     }
+    settlement = _passed_settlement_time_values(row)
+    if settlement is not None:
+        evidence["settlement_time_normalization"] = settlement.get("normalization")
+        evidence["settlement_time_normalization_delta_seconds"] = settlement.get("delta_seconds")
+        evidence["settlement_time_normalization_tolerance_seconds"] = settlement.get("tolerance_seconds")
+    return evidence
 
 
 def _unique_rows_by_identity(rows: list[Any]) -> tuple[dict[tuple[str, str], dict[str, Any]], set[tuple[str, str]]]:
@@ -222,6 +228,17 @@ def _strict_blockers_and_missing(row: dict[str, Any]) -> tuple[list[str], list[s
         blockers.extend(_string_list(comparator.get("blockers")))
         missing_fields.extend(_string_list(comparator.get("missing_fields")))
     return sorted(set(blockers)), sorted(set(missing_fields))
+
+
+def _passed_settlement_time_values(row: dict[str, Any]) -> dict[str, Any] | None:
+    evidence = row.get("same_payoff_evidence")
+    if not isinstance(evidence, dict):
+        return None
+    settlement = evidence.get("settlement_time")
+    if not isinstance(settlement, dict) or settlement.get("status") != "PASS":
+        return None
+    values = settlement.get("values")
+    return values if isinstance(values, dict) else None
 
 
 def _string_list(value: Any) -> list[str]:

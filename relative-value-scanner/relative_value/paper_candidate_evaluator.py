@@ -318,6 +318,8 @@ def _relationship_allows_settlement_delta_convention(
     if evidence.get("classifier_version") != SAME_PAYOFF_BOARD_CLASSIFIER_VERSION:
         return False
     normalization = evidence.get("settlement_time_normalization")
+    # NBA board-side settlement normalizations are intentionally not evaluator-trusted
+    # until their settlement-time/source checks have separate review.
     if normalization != "mlb_world_series_timezone_convention_drift":
         return False
     if normalization not in cfg.trusted_settlement_normalizations:

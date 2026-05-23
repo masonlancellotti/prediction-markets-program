@@ -51,6 +51,7 @@ from relative_value.same_payoff_board import diagnose_mlb_world_series_board_blo
 from relative_value.same_payoff_evidence import attach_same_payoff_evidence_files
 from relative_value.source_registry import ImplementationStatus, SOURCE_REGISTRY, SourceType
 from relative_value.executable_venue_plan import PLANNED_EXECUTABLE_VENUE_CAPABILITIES
+from relative_value.exact_paper_candidate_universes import build_exact_paper_candidate_universe_report_files
 from venues.kalshi import (
     FixtureKalshiAdapter,
     KalshiMarketFilterOptions,
@@ -456,6 +457,45 @@ def main(argv: list[str] | None = None) -> int:
     mlb_ws_paper_check_parser.add_argument("--evaluator-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_fresh_trust_settlement.json", help="Output path for evaluator ledger.")
     mlb_ws_paper_check_parser.add_argument("--summary-json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.json", help="Output path for compact paper-check summary JSON.")
     mlb_ws_paper_check_parser.add_argument("--summary-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.md", help="Output path for compact paper-check summary Markdown.")
+
+    nba_championship_paper_check_parser = subparsers.add_parser(
+        "run-nba-championship-paper-check",
+        help="Explicit read-only NBA championship same-payoff paper check using saved snapshots and fresh orderbook enrichment.",
+    )
+    nba_championship_paper_check_parser.add_argument("--polymarket-snapshot", type=Path, required=True, help="Saved Polymarket NBA championship schema-v1 snapshot.")
+    nba_championship_paper_check_parser.add_argument("--kalshi-snapshot", type=Path, required=True, help="Saved Kalshi KXNBA schema-v1 snapshot.")
+    nba_championship_paper_check_parser.add_argument("--pairs", type=Path, required=True, help="Saved NBA championship Kalshi-Polymarket pairs file.")
+    nba_championship_paper_check_parser.add_argument("--timeout-seconds", type=float, default=10.0, help="Read-only orderbook request timeout.")
+    nba_championship_paper_check_parser.add_argument("--max-snapshot-age-hours", type=float, default=24.0, help="Maximum age for input snapshots before enrichment fails closed.")
+    nba_championship_paper_check_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0, help="Evaluator and board quote freshness limit.")
+    nba_championship_paper_check_parser.add_argument("--max-settlement-delta-seconds", type=float, default=3600.0, help="Evaluator settlement-time delta limit before trusted normalizations.")
+    nba_championship_paper_check_parser.add_argument("--min-top-of-book-size", type=float, default=1.0, help="Evaluator hit-side depth requirement.")
+    nba_championship_paper_check_parser.add_argument("--min-net-gap", type=float, default=0.01, help="Evaluator fee-adjusted net gap requirement.")
+    nba_championship_paper_check_parser.add_argument("--accept-unit-mismatch", action="store_true", help="Forward explicit unit-mismatch acknowledgement to the evaluator.")
+    nba_championship_paper_check_parser.add_argument("--trust-settlement-normalization", action="append", default=[], help="Trusted board settlement normalization to honor, e.g. nba_finals_timezone_convention_drift.")
+    nba_championship_paper_check_parser.add_argument("--polymarket-enriched-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_kxnba_polymarket_enriched_fresh.json", help="Output path for freshly enriched Polymarket snapshot.")
+    nba_championship_paper_check_parser.add_argument("--kalshi-enriched-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_kxnba_kalshi_enriched_fresh.json", help="Output path for freshly enriched Kalshi snapshot.")
+    nba_championship_paper_check_parser.add_argument("--board-json-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_kxnba_same_payoff_board_fresh.json", help="Output path for same-payoff board JSON.")
+    nba_championship_paper_check_parser.add_argument("--board-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_kxnba_same_payoff_board_fresh.md", help="Output path for same-payoff board Markdown.")
+    nba_championship_paper_check_parser.add_argument("--derived-pairs-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_kxnba_pairs_with_evidence_fresh.json", help="Output path for derived pairs with same-payoff evidence.")
+    nba_championship_paper_check_parser.add_argument("--evaluator-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_kxnba_evaluator_fresh.json", help="Output path for evaluator ledger.")
+    nba_championship_paper_check_parser.add_argument("--summary-json-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_championship_paper_check_summary.json", help="Output path for compact paper-check summary JSON.")
+    nba_championship_paper_check_parser.add_argument("--summary-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "nba_championship_paper_check_summary.md", help="Output path for compact paper-check summary Markdown.")
+
+    exact_universes_parser = subparsers.add_parser(
+        "discover-exact-paper-candidate-universes",
+        help="Saved-file diagnostic readiness report for exact same-payoff paper-candidate universes.",
+    )
+    exact_universes_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "exact_paper_candidate_universes.json",
+    )
+    exact_universes_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "exact_paper_candidate_universes.md",
+    )
 
     graph_parser = subparsers.add_parser(
         "market-graph-diagnostics",
@@ -1036,6 +1076,33 @@ def main(argv: list[str] | None = None) -> int:
             evaluator_output=args.evaluator_output,
             summary_json_output=args.summary_json_output,
             summary_markdown_output=args.summary_markdown_output,
+        )
+    if args.command == "run-nba-championship-paper-check":
+        return run_nba_championship_paper_check(
+            polymarket_snapshot=args.polymarket_snapshot,
+            kalshi_snapshot=args.kalshi_snapshot,
+            pairs=args.pairs,
+            timeout_seconds=args.timeout_seconds,
+            max_snapshot_age_hours=args.max_snapshot_age_hours,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            max_settlement_delta_seconds=args.max_settlement_delta_seconds,
+            min_top_of_book_size=args.min_top_of_book_size,
+            min_net_gap=args.min_net_gap,
+            accept_unit_mismatch=args.accept_unit_mismatch,
+            trusted_settlement_normalizations=frozenset(args.trust_settlement_normalization),
+            polymarket_enriched_output=args.polymarket_enriched_output,
+            kalshi_enriched_output=args.kalshi_enriched_output,
+            board_json_output=args.board_json_output,
+            board_markdown_output=args.board_markdown_output,
+            derived_pairs_output=args.derived_pairs_output,
+            evaluator_output=args.evaluator_output,
+            summary_json_output=args.summary_json_output,
+            summary_markdown_output=args.summary_markdown_output,
+        )
+    if args.command == "discover-exact-paper-candidate-universes":
+        return discover_exact_paper_candidate_universes(
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
         )
     if args.command == "market-graph-diagnostics":
         return market_graph_diagnostics(
@@ -7860,6 +7927,146 @@ def run_mlb_world_series_paper_check(
     return 0
 
 
+def run_nba_championship_paper_check(
+    *,
+    polymarket_snapshot: Path,
+    kalshi_snapshot: Path,
+    pairs: Path,
+    timeout_seconds: float = 10.0,
+    max_snapshot_age_hours: float = 24.0,
+    max_quote_age_seconds: float = 1800.0,
+    max_settlement_delta_seconds: float = 3600.0,
+    min_top_of_book_size: float = 1.0,
+    min_net_gap: float = 0.01,
+    accept_unit_mismatch: bool = False,
+    trusted_settlement_normalizations: frozenset[str] = frozenset(),
+    polymarket_enriched_output: Path = PROJECT_ROOT / "reports" / "nba_kxnba_polymarket_enriched_fresh.json",
+    kalshi_enriched_output: Path = PROJECT_ROOT / "reports" / "nba_kxnba_kalshi_enriched_fresh.json",
+    board_json_output: Path = PROJECT_ROOT / "reports" / "nba_kxnba_same_payoff_board_fresh.json",
+    board_markdown_output: Path = PROJECT_ROOT / "reports" / "nba_kxnba_same_payoff_board_fresh.md",
+    derived_pairs_output: Path = PROJECT_ROOT / "reports" / "nba_kxnba_pairs_with_evidence_fresh.json",
+    evaluator_output: Path = PROJECT_ROOT / "reports" / "nba_kxnba_evaluator_fresh.json",
+    summary_json_output: Path = PROJECT_ROOT / "reports" / "nba_championship_paper_check_summary.json",
+    summary_markdown_output: Path = PROJECT_ROOT / "reports" / "nba_championship_paper_check_summary.md",
+) -> int:
+    generated_at = datetime.now(timezone.utc)
+    try:
+        polymarket_enriched = enrich_orderbook_snapshot_file(
+            snapshot_path=polymarket_snapshot,
+            venue="polymarket",
+            output_path=polymarket_enriched_output,
+            now=generated_at,
+            timeout_seconds=timeout_seconds,
+            max_snapshot_age_hours=max_snapshot_age_hours,
+        )
+        kalshi_enriched = enrich_orderbook_snapshot_file(
+            snapshot_path=kalshi_snapshot,
+            venue="kalshi",
+            output_path=kalshi_enriched_output,
+            now=generated_at,
+            timeout_seconds=timeout_seconds,
+            max_snapshot_age_hours=max_snapshot_age_hours,
+        )
+        board = build_same_payoff_board_files(
+            pairs_path=pairs,
+            polymarket_enriched_path=polymarket_enriched_output,
+            kalshi_enriched_path=kalshi_enriched_output,
+            json_output_path=board_json_output,
+            markdown_output_path=board_markdown_output,
+            now=generated_at,
+            max_quote_age_seconds=max_quote_age_seconds,
+        )
+        derived_pairs = attach_same_payoff_evidence_files(pairs, board_json_output, derived_pairs_output)
+        evaluator = evaluate_paper_candidate_files(
+            pairs_path=derived_pairs_output,
+            polymarket_enriched_path=polymarket_enriched_output,
+            kalshi_enriched_path=kalshi_enriched_output,
+            output_path=evaluator_output,
+            config=PaperCandidateEvaluatorConfig(
+                max_quote_age_seconds=max_quote_age_seconds,
+                max_settlement_delta_seconds=max_settlement_delta_seconds,
+                min_top_of_book_size=min_top_of_book_size,
+                min_net_gap=min_net_gap,
+                accept_unit_mismatch=accept_unit_mismatch,
+                trusted_settlement_normalizations=trusted_settlement_normalizations,
+            ),
+            now=generated_at,
+        )
+    except ValueError as exc:
+        print(f"nba_championship_paper_check_status=FAILED message={exc}")
+        return 1
+
+    summary = _mlb_world_series_paper_check_summary(
+        generated_at=generated_at,
+        polymarket_snapshot=polymarket_snapshot,
+        kalshi_snapshot=kalshi_snapshot,
+        pairs=pairs,
+        polymarket_enriched_output=polymarket_enriched_output,
+        kalshi_enriched_output=kalshi_enriched_output,
+        board_json_output=board_json_output,
+        board_markdown_output=board_markdown_output,
+        derived_pairs_output=derived_pairs_output,
+        evaluator_output=evaluator_output,
+        summary_json_output=summary_json_output,
+        summary_markdown_output=summary_markdown_output,
+        polymarket_enriched=polymarket_enriched,
+        kalshi_enriched=kalshi_enriched,
+        board=board,
+        derived_pairs=derived_pairs,
+        evaluator=evaluator,
+        max_quote_age_seconds=max_quote_age_seconds,
+        max_snapshot_age_hours=max_snapshot_age_hours,
+        max_settlement_delta_seconds=max_settlement_delta_seconds,
+        min_top_of_book_size=min_top_of_book_size,
+        min_net_gap=min_net_gap,
+        accept_unit_mismatch=accept_unit_mismatch,
+        trusted_settlement_normalizations=trusted_settlement_normalizations,
+        source="nba_championship_paper_check_runner",
+        title="NBA Championship Paper Check",
+        disclaimer=(
+            "Read-only NBA championship paper-check diagnostics. This runner enriches saved snapshots, "
+            "attaches deterministic same-payoff evidence, evaluates existing paper gates, and stops at "
+            "STOP_AND_REVIEW when PAPER_CANDIDATE appears. It does not trade or execute."
+        ),
+    )
+    summary_json_output.parent.mkdir(parents=True, exist_ok=True)
+    summary_markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    summary_json_output.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    summary_markdown_output.write_text(_mlb_world_series_paper_check_markdown(summary), encoding="utf-8")
+
+    counts = summary["evaluator_counts"]
+    paper_candidate_ids = summary["paper_candidate_ids"]
+    print(
+        "nba_championship_paper_check_status=OK "
+        f"polymarket_enriched={summary['polymarket_enrichment']['enriched_count']}/{summary['polymarket_enrichment']['market_count']} "
+        f"kalshi_enriched={summary['kalshi_enrichment']['enriched_count']}/{summary['kalshi_enrichment']['market_count']} "
+        f"strict_same_payoff_passes={summary['strict_same_payoff_passes']} "
+        f"trusted_relationships={summary['trusted_relationships']} "
+        f"paper={counts.get('PAPER_CANDIDATE', 0)} "
+        f"manual_review={counts.get('MANUAL_REVIEW', 0)} "
+        f"watch={counts.get('WATCH', 0)} "
+        f"dominant_blocker={summary['dominant_blocker'] or 'none'} "
+        f"paper_candidate_ids={','.join(paper_candidate_ids) if paper_candidate_ids else 'none'} "
+        f"max_quote_age_seconds={summary['quote_freshness']['max_quote_age_seconds'] if summary['quote_freshness']['max_quote_age_seconds'] is not None else 'unknown'} "
+        f"stale_quote_warning={str(summary['quote_freshness']['stale_quote_warning']).lower()} "
+        f"summary={summary_json_output}"
+    )
+    if counts.get("PAPER_CANDIDATE", 0):
+        print(
+            "STOP_AND_REVIEW paper_candidates_detected="
+            f"{counts.get('PAPER_CANDIDATE', 0)} ids={','.join(paper_candidate_ids)} "
+            "diagnostics_only=true no_trading_or_execution_performed=true"
+        )
+    elif summary["quote_freshness"]["stale_quote_warning"]:
+        print(
+            "STALE_QUOTE_WARNING "
+            f"max_quote_age_seconds={summary['quote_freshness']['max_quote_age_seconds']} "
+            f"limit={max_quote_age_seconds} "
+            "paper_check_remains_blocked=true"
+        )
+    return 0
+
+
 def _mlb_world_series_paper_check_summary(
     *,
     generated_at: datetime,
@@ -7886,6 +8093,9 @@ def _mlb_world_series_paper_check_summary(
     min_net_gap: float,
     accept_unit_mismatch: bool,
     trusted_settlement_normalizations: frozenset[str],
+    source: str = "mlb_world_series_paper_check_runner",
+    title: str = "MLB World Series Paper Check",
+    disclaimer: str | None = None,
 ) -> dict[str, Any]:
     evaluator_counts = evaluator.get("counts_by_action") if isinstance(evaluator.get("counts_by_action"), dict) else {}
     top_reasons = _top_rejection_reasons(evaluator)
@@ -7897,7 +8107,8 @@ def _mlb_world_series_paper_check_summary(
     ]
     return {
         "schema_version": 1,
-        "source": "mlb_world_series_paper_check_runner",
+        "source": source,
+        "title": title,
         "generated_at": generated_at.isoformat(),
         "inputs": {
             "polymarket_snapshot": str(polymarket_snapshot),
@@ -7947,7 +8158,7 @@ def _mlb_world_series_paper_check_summary(
             "thresholds_or_relationship_gates_lowered": False,
             "default_scan_mode_changed": False,
         },
-        "disclaimer": (
+        "disclaimer": disclaimer or (
             "Read-only MLB World Series paper-check diagnostics. This runner enriches saved snapshots, "
             "attaches deterministic same-payoff evidence, evaluates existing paper gates, and stops at "
             "STOP_AND_REVIEW when PAPER_CANDIDATE appears. It does not trade or execute."
@@ -8003,7 +8214,7 @@ def _mlb_world_series_paper_check_markdown(payload: dict[str, Any]) -> str:
     counts = payload["evaluator_counts"]
     freshness = payload["quote_freshness"]
     lines = [
-        "# MLB World Series Paper Check",
+        f"# {payload.get('title') or 'Paper Check'}",
         "",
         payload["disclaimer"],
         "",
@@ -8028,6 +8239,35 @@ def _mlb_world_series_paper_check_markdown(payload: dict[str, Any]) -> str:
         lines.append(f"- {key}: `{value}`")
     lines.append("")
     return "\n".join(lines)
+
+
+def discover_exact_paper_candidate_universes(*, json_output: Path, markdown_output: Path) -> int:
+    try:
+        payload = build_exact_paper_candidate_universe_report_files(
+            project_root=PROJECT_ROOT,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"exact_paper_candidate_universes_status=FAILED message={exc}")
+        return 1
+
+    summary = payload["summary"]
+    counts = summary["readiness_counts"]
+    closest = summary.get("closest_universe_id") or "none"
+    print(
+        "exact_paper_candidate_universes_status=OK "
+        f"universes={summary['universe_count']} "
+        f"closest={closest} "
+        f"paper_candidates={summary['paper_candidate_count']} "
+        f"execution_data={counts.get('EXECUTION_DATA_AVAILABLE', 0)} "
+        f"trusted_relationships={counts.get('TRUSTED_RELATIONSHIPS_AVAILABLE', 0)} "
+        f"same_scope_pairs={counts.get('SAME_SCOPE_PAIRS_AVAILABLE', 0)} "
+        f"inventory_only={counts.get('INVENTORY_ONLY', 0)} "
+        f"no_inventory={counts.get('NO_INVENTORY', 0)} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
 
 
 def market_graph_diagnostics(

@@ -143,6 +143,36 @@ def test_board_cleared_pair_gets_trusted_equivalent_only_in_derived_payload() ->
     assert evidence["evidence_hash"]
 
 
+def test_trusted_relationship_carries_passed_settlement_time_normalization() -> None:
+    board = _board_payload()
+    board["rows"][0] = _board_row(
+        "poly-pass",
+        "KXTEAMA",
+        same_payoff=True,
+        extra_evidence={
+            "settlement_time": {
+                "name": "settlement_time",
+                "status": "PASS",
+                "strict": True,
+                "blockers": [],
+                "missing_fields": [],
+                "values": {
+                    "normalization": "mlb_world_series_timezone_convention_drift",
+                    "delta_seconds": 14700.0,
+                    "tolerance_seconds": 3600.0,
+                },
+            }
+        },
+    )
+
+    derived = attach_same_payoff_evidence(pairs_payload=_pair_payload(), board_payload=board)
+
+    evidence = derived["pairs"][0]["contract_relationship"]["same_payoff_board_evidence"]
+    assert evidence["settlement_time_normalization"] == "mlb_world_series_timezone_convention_drift"
+    assert evidence["settlement_time_normalization_delta_seconds"] == 14700.0
+    assert evidence["settlement_time_normalization_tolerance_seconds"] == 3600.0
+
+
 def test_non_cleared_pair_keeps_existing_relationship() -> None:
     derived = attach_same_payoff_evidence(pairs_payload=_pair_payload(), board_payload=_board_payload())
 

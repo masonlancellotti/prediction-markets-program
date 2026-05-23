@@ -738,6 +738,31 @@ def test_trusted_mlb_world_series_settlement_normalization_opt_in_clears_delta_g
     assert row["action"] == ACTION_PAPER_CANDIDATE
 
 
+def test_nba_finals_settlement_normalization_is_not_evaluator_trusted() -> None:
+    relationship = _trusted_same_payoff_relationship()
+    relationship["same_payoff_board_evidence"].update(
+        {
+            "settlement_time_normalization": "nba_finals_timezone_convention_drift",
+            "settlement_time_normalization_delta_seconds": 36000.0,
+            "settlement_time_normalization_tolerance_seconds": 3600.0,
+        }
+    )
+    kalshi = _kalshi_payload(close_time="2026-05-20T23:00:00+00:00")
+
+    row = _first(
+        _evaluate(
+            pairs=_pairs_payload(contract_relationship=relationship),
+            kalshi=kalshi,
+            accept_unit_mismatch=True,
+            trusted_settlement_normalizations=frozenset({"nba_finals_timezone_convention_drift"}),
+        )
+    )
+
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(36000.0)
+    assert row["missed_fill_reason"] == "settlement_delta_exceeds_limit"
+    assert row["action"] == ACTION_WATCH
+
+
 def test_trusted_mlb_world_series_settlement_normalization_requires_opt_in() -> None:
     relationship = _trusted_mlb_ws_timezone_relationship()
     kalshi = _kalshi_payload(close_time="2026-05-20T17:05:00+00:00")

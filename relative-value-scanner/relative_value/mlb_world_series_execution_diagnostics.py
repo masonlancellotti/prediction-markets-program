@@ -105,7 +105,7 @@ def diagnose_mlb_world_series_evaluator_blockers(
             continue
         row = _evaluator_diagnostic_row(entry, pairs_by_identity)
         rows.append(row)
-        action_counts.update([row["action"]])
+        action_counts.update([row["action_label"]])
         missed_counts.update([row["missed_fill_reason"] or "none"])
         blocker_categories.update(row["blocker_categories"])
         trusted_counts.update(["trusted" if row["trusted_same_payoff_board_v1"] else "not_trusted"])
@@ -173,7 +173,7 @@ def render_mlb_world_series_evaluator_blockers_markdown(payload: dict[str, Any])
             + " | ".join(
                 [
                     _md(row["team_or_ticker"]),
-                    _md(row["action"]),
+                    _md(row["action_label"]),
                     _md(row["missed_fill_reason"]),
                     _md(_quote_summary(row["polymarket"])),
                     _md(_quote_summary(row["kalshi"])),
@@ -483,7 +483,8 @@ def _evaluator_diagnostic_row(entry: dict[str, Any], pairs_by_identity: dict[tup
     return {
         "candidate_id": candidate_id,
         "team_or_ticker": kalshi_ticker or _question_team(kalshi.get("question")),
-        "action": entry.get("action"),
+        "action": _safe_action_label(entry.get("action")),
+        "action_label": _safe_action_label(entry.get("action")),
         "missed_fill_reason": missed,
         "blocker_categories": _blocker_categories(missed, ineligibility),
         "ineligibility_reasons": sorted(str(reason) for reason in ineligibility if reason is not None),
@@ -578,7 +579,7 @@ def _close_to_candidate_count(rows: list[dict[str, Any]]) -> int:
         1
         for row in rows
         if row.get("trusted_same_payoff_board_v1") is True
-        and row.get("action") == "WATCH"
+        and row.get("action_label") == "watch"
         and row.get("missed_fill_reason") in {"settlement_delta_exceeds_limit", "estimated_net_gap_below_minimum"}
         and row.get("gross_gap") is not None
     )
@@ -601,6 +602,10 @@ def _quote_summary(row: dict[str, Any]) -> str:
         f"depth {row.get('depth_at_best_bid')}/{row.get('depth_at_best_ask')} "
         f"fresh {row.get('quote_captured_at')}"
     )
+
+
+def _safe_action_label(action: Any) -> str:
+    return str(action or "").strip().lower()
 
 
 def _fee_model_diagnosis(polymarket_payload: dict[str, Any], kalshi_payload: dict[str, Any]) -> dict[str, Any]:

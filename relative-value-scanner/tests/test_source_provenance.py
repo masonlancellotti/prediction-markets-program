@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from relative_value.fees import FlatFeeModel, PolymarketConservativeFeeModel
@@ -43,6 +44,9 @@ from venues.prophetx import (
     PROPHETX_RESEARCH_SCHEMA_KIND,
     build_prophetx_research_snapshot,
 )
+
+
+ENRICHMENT_TEST_NOW = datetime(2026, 5, 22, 19, 5, tzinfo=timezone.utc)
 
 
 def test_fixture_scan_provenance_labels_static_fixture(monkeypatch) -> None:
@@ -1283,6 +1287,7 @@ def test_enrich_live_match_candidates_touches_only_current_review_pairs(tmp_path
         snapshot_dir=tmp_path,
         timeout_seconds=1.0,
         max_snapshot_age_hours=24.0,
+        now=ENRICHMENT_TEST_NOW,
         kalshi_client=kalshi_client,
         polymarket_client=polymarket_client,
     )
@@ -1346,6 +1351,7 @@ def test_enrich_live_match_candidates_unreviewed_polymarket_fee_keeps_fee_blocke
         snapshot_dir=tmp_path,
         timeout_seconds=1.0,
         max_snapshot_age_hours=24.0,
+        now=ENRICHMENT_TEST_NOW,
         kalshi_client=_FakeKalshiOrderbookClient(),
         polymarket_client=_FakePolymarketOrderbookClient(),
         polymarket_fee_model_status="missing_or_unreviewed",
@@ -1367,6 +1373,7 @@ def test_enrich_live_match_candidates_informal_fee_status_does_not_unlock_fees(t
         snapshot_dir=tmp_path,
         timeout_seconds=1.0,
         max_snapshot_age_hours=24.0,
+        now=ENRICHMENT_TEST_NOW,
         kalshi_client=_FakeKalshiOrderbookClient(),
         polymarket_client=_FakePolymarketOrderbookClient(),
         polymarket_fee_model_status="reviewed_but_not_allowlisted",
@@ -1395,6 +1402,7 @@ def test_enrich_live_match_candidates_unknown_polymarket_category_uses_conservat
         snapshot_dir=tmp_path,
         timeout_seconds=1.0,
         max_snapshot_age_hours=24.0,
+        now=ENRICHMENT_TEST_NOW,
         kalshi_client=_FakeKalshiOrderbookClient(),
         polymarket_client=_FakePolymarketOrderbookClient(),
     )
@@ -1415,6 +1423,7 @@ def test_enrich_live_match_candidates_reviewed_fee_models_remove_only_fee_blocke
         snapshot_dir=tmp_path,
         timeout_seconds=1.0,
         max_snapshot_age_hours=24.0,
+        now=ENRICHMENT_TEST_NOW,
         kalshi_client=_FakeKalshiOrderbookClient(),
         polymarket_client=_FakePolymarketOrderbookClient(),
         polymarket_fee_model=FlatFeeModel(0.001),
@@ -1447,6 +1456,7 @@ def test_enrich_live_match_candidates_missing_orderbooks_keep_blockers(tmp_path:
         snapshot_dir=tmp_path,
         timeout_seconds=1.0,
         max_snapshot_age_hours=24.0,
+        now=ENRICHMENT_TEST_NOW,
         kalshi_client=_EmptyKalshiOrderbookClient(),
         polymarket_client=_EmptyPolymarketOrderbookClient(),
     )

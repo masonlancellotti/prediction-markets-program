@@ -461,11 +461,87 @@ def test_mlb_world_series_paper_check_requires_explicit_inputs(capsys) -> None:
     assert "--pairs" in stderr
 
 
+def test_nba_championship_paper_check_requires_explicit_inputs(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        scan.main(["run-nba-championship-paper-check"])
+
+    assert exc.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "--polymarket-snapshot" in stderr
+    assert "--kalshi-snapshot" in stderr
+    assert "--pairs" in stderr
+
+
 def test_default_scan_remains_static_fixture(capsys) -> None:
     result = scan.main([])
 
     assert result == 0
     assert "data_source_mode=STATIC_FIXTURE" in capsys.readouterr().out
+
+
+def test_nba_championship_paper_check_stop_and_review_for_paper_candidate(monkeypatch, tmp_path: Path, capsys) -> None:
+    _install_paper_check_fakes(monkeypatch, action=ACTION_PAPER_CANDIDATE)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs())
+
+    result = scan.main(
+        [
+            "run-nba-championship-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+        ]
+    )
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "nba_championship_paper_check_status=OK" in stdout
+    assert "paper=1" in stdout
+    assert "STOP_AND_REVIEW" in stdout
+    assert "no_trading_or_execution_performed=true" in stdout
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["source"] == "nba_championship_paper_check_runner"
+    assert summary["safety"]["trading_or_execution_performed"] is False
+
+
+def test_nba_championship_paper_check_reports_stale_quote_warning(monkeypatch, tmp_path: Path, capsys) -> None:
+    _install_paper_check_fakes(monkeypatch, action=ACTION_WATCH, missed_fill_reason="stale_or_missing_quote_time")
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs())
+
+    result = scan.main(
+        [
+            "run-nba-championship-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--max-quote-age-seconds",
+            "1800",
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+        ]
+    )
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "dominant_blocker=" in stdout
+    assert "stale" in stdout
+    assert "stale_quote_warning=true" in stdout
+    assert "STALE_QUOTE_WARNING" in stdout
 
 
 def test_mlb_world_series_paper_check_composes_steps_without_mutating_inputs(monkeypatch, tmp_path: Path, capsys) -> None:

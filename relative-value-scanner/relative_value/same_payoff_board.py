@@ -9,6 +9,8 @@ from typing import Any
 
 from relative_value.mlb_scope import mlb_world_series_profile
 from relative_value.mlb_scope import same_mlb_world_series_team
+from relative_value.nba_scope import nba_championship_profile
+from relative_value.nba_scope import same_nba_championship_team
 
 
 SCHEMA_VERSION = 1
@@ -393,10 +395,33 @@ def _settlement_source_comparator(polymarket: dict[str, Any], kalshi: dict[str, 
                         "kalshi": kal,
                     },
                 )
+        if same_nba_championship_team(polymarket, kalshi):
+            present = poly or kal
+            if len(missing) == 1 and _explicit_nba_championship_source_text(present):
+                return _evidence(
+                    "settlement_source",
+                    "PASS",
+                    values={
+                        "normalization": "nba_championship_named_primary_source_one_sided",
+                        "missing_side": "polymarket" if not poly else "kalshi",
+                        "polymarket": poly,
+                        "kalshi": kal,
+                    },
+                )
         return _evidence("settlement_source", "MISSING", missing_fields=missing, values={"polymarket": poly, "kalshi": kal})
     poly_base = _normalize_without_tiebreak(poly)
     kal_base = _normalize_without_tiebreak(kal)
     if poly_base != kal_base:
+        if same_nba_championship_team(polymarket, kalshi) and _explicit_nba_championship_source_text(poly) and _explicit_nba_championship_source_text(kal):
+            return _evidence(
+                "settlement_source",
+                "PASS",
+                values={
+                    "normalization": "nba_championship_equivalent_resolution_wording",
+                    "polymarket": poly,
+                    "kalshi": kal,
+                },
+            )
         return _evidence(
             "settlement_source",
             "FAIL",
@@ -439,6 +464,18 @@ def _settlement_time_comparator(polymarket: dict[str, Any], kalshi: dict[str, An
                     "kalshi": _time_diagnostics(kalshi),
                 },
             )
+        if same_nba_championship_team(polymarket, kalshi) and _nba_finals_same_local_date_convention_match(poly_dt, kal_dt):
+            return _evidence(
+                "settlement_time",
+                "PASS",
+                values={
+                    "normalization": "nba_finals_timezone_convention_drift",
+                    "delta_seconds": delta,
+                    "tolerance_seconds": tolerance_seconds,
+                    "polymarket": _time_diagnostics(polymarket),
+                    "kalshi": _time_diagnostics(kalshi),
+                },
+            )
         return _evidence(
             "settlement_time",
             "FAIL",
@@ -475,6 +512,16 @@ def _entity_comparator(pair: dict[str, Any], polymarket: dict[str, Any], kalshi:
                 "kalshi": mlb_world_series_profile(kal_market),
             },
         )
+    if same_nba_championship_team(poly_market, kal_market):
+        return _evidence(
+            "market_event_entity",
+            "PASS",
+            values={
+                "normalization": "nba_championship_team",
+                "polymarket": nba_championship_profile(poly_market),
+                "kalshi": nba_championship_profile(kal_market),
+            },
+        )
     poly = " ".join(str(value or "") for value in [_market_question(pair.get("polymarket"), polymarket), polymarket.get("event_title")])
     kal = " ".join(str(value or "") for value in [_market_question(pair.get("kalshi"), kalshi), kalshi.get("event_title")])
     poly_tokens = _entity_tokens(poly)
@@ -502,6 +549,16 @@ def _sports_comparator(polymarket: dict[str, Any], kalshi: dict[str, Any]) -> di
                 "kalshi": mlb_world_series_profile(kalshi),
             },
         )
+    if same_nba_championship_team(polymarket, kalshi):
+        return _evidence(
+            "sports_league_team",
+            "PASS",
+            values={
+                "normalization": "nba_championship_team_scope",
+                "polymarket": nba_championship_profile(polymarket),
+                "kalshi": nba_championship_profile(kalshi),
+            },
+        )
     poly = _sports_profile(polymarket)
     kal = _sports_profile(kalshi)
     if not poly["is_sports"] and not kal["is_sports"]:
@@ -527,6 +584,16 @@ def _threshold_comparator(polymarket: dict[str, Any], kalshi: dict[str, Any]) ->
                 "kalshi": [],
             },
         )
+    if same_nba_championship_team(polymarket, kalshi) and _is_non_threshold_championship_outright(polymarket, kalshi):
+        return _evidence(
+            "threshold_strike",
+            "PASS",
+            values={
+                "normalization": "nba_championship_outright_no_threshold",
+                "polymarket": [],
+                "kalshi": [],
+            },
+        )
     poly = _numeric_tokens(_comparison_text(polymarket))
     kal = _numeric_tokens(_comparison_text(kalshi))
     if poly != kal:
@@ -544,6 +611,12 @@ def _market_type_comparator(polymarket: dict[str, Any], kalshi: dict[str, Any]) 
             "market_type",
             "PASS",
             values={"market_type": "binary_event", "polymarket": poly, "kalshi": kal, "normalization": "mlb_world_series_binary"},
+        )
+    if same_nba_championship_team(polymarket, kalshi) and _compatible_binary_market_types(poly, kal):
+        return _evidence(
+            "market_type",
+            "PASS",
+            values={"market_type": "binary_event", "polymarket": poly, "kalshi": kal, "normalization": "nba_championship_binary"},
         )
     if poly != kal:
         return _evidence("market_type", "FAIL", blockers=["market_type_mismatch"], values={"polymarket": poly, "kalshi": kal})
@@ -612,6 +685,13 @@ def _relationship_shape_comparator(polymarket: dict[str, Any], kalshi: dict[str,
             "FAIL",
             blockers=["relationship_shape_subset_or_superset"],
             values={"relationship": "SUBSET_OR_SUPERSET", "reason": "World Series and league/conference title are nested but not equivalent"},
+        )
+    if _nba_championship_vs_conference_title(poly_text, kalshi_text):
+        return _evidence(
+            "relationship_shape",
+            "FAIL",
+            blockers=["relationship_shape_subset_or_superset"],
+            values={"relationship": "SUBSET_OR_SUPERSET", "reason": "NBA championship and conference title are nested but not equivalent"},
         )
     if _btc_threshold_pair(poly_tokens, kalshi_tokens) and poly_numbers and kalshi_numbers and max(poly_numbers) != max(kalshi_numbers):
         return _evidence(
@@ -799,6 +879,8 @@ def _settlement_source_text(market: dict[str, Any]) -> str:
         raw.get("settlementRule"),
         raw.get("settlement_rule"),
         raw.get("resolutionSource"),
+        raw.get("rules_primary"),
+        raw.get("rulesPrimary"),
         raw.get("rules"),
         raw.get("description"),
     ]
@@ -822,6 +904,18 @@ def _time_diagnostics(market: dict[str, Any]) -> dict[str, Any]:
 
 
 def _mlb_world_series_timezone_convention_match(left: datetime, right: datetime) -> bool:
+    earlier, later = sorted((left, right))
+    convention_shift_seconds = 4 * 3600
+    close_cutoff_slack_seconds = 5 * 60
+    adjusted_delta = abs((later - earlier).total_seconds() - convention_shift_seconds)
+    if adjusted_delta > close_cutoff_slack_seconds:
+        return False
+    shifted_to_utc_midnight = later.timestamp() - convention_shift_seconds
+    shifted_dt = datetime.fromtimestamp(shifted_to_utc_midnight, tz=timezone.utc)
+    return abs((shifted_dt - earlier).total_seconds()) <= close_cutoff_slack_seconds
+
+
+def _nba_finals_same_local_date_convention_match(left: datetime, right: datetime) -> bool:
     earlier, later = sorted((left, right))
     convention_shift_seconds = 4 * 3600
     close_cutoff_slack_seconds = 5 * 60
@@ -1029,6 +1123,27 @@ def _explicit_mlb_world_series_source_text(value: str) -> bool:
     return any(phrase in normalized for phrase in explicit_phrases)
 
 
+def _explicit_nba_championship_source_text(value: str) -> bool:
+    normalized = _normalize_text(value)
+    tokens = set(_TOKEN_RE.findall(value.lower()))
+    explicit_phrases = (
+        "resolution source for this market will be information from the nba",
+        "official information from the nba",
+    )
+    if any(phrase in normalized for phrase in explicit_phrases):
+        return True
+    if re.search(r"\b(primary\s+source|resolves?\s+according\s+to|resolution\s+source)\b.*\bnba\b", normalized):
+        return True
+    explicit_scope = {"nba", "finals"} <= tokens or "pro basketball finals" in normalized
+    if not explicit_scope:
+        return False
+    if re.search(r"\bwins?\s+the\s+\d{4}\s+nba\s+finals\b", normalized):
+        return True
+    if re.search(r"\bwins?\s+the\s+\d{4}\s+pro\s+basketball\s+finals\b", normalized):
+        return True
+    return False
+
+
 def _number_values(text: str) -> list[float]:
     return [float(value) for value in _NUMBER_RE.findall(text.lower())]
 
@@ -1042,6 +1157,18 @@ def _world_series_vs_league_title(left: str, right: str) -> bool:
     left_league = any(phrase in left_norm for phrase in league_phrases)
     right_league = any(phrase in right_norm for phrase in league_phrases)
     return (left_world and right_league) or (right_world and left_league)
+
+
+def _nba_championship_vs_conference_title(left: str, right: str) -> bool:
+    left_norm = _normalize_text(left)
+    right_norm = _normalize_text(right)
+    championship_phrases = ("nba finals", "nba champion", "nba championship", "pro basketball finals")
+    conference_phrases = ("conference finals", "conference title", "conference winner")
+    left_championship = any(phrase in left_norm for phrase in championship_phrases)
+    right_championship = any(phrase in right_norm for phrase in championship_phrases)
+    left_conference = any(phrase in left_norm for phrase in conference_phrases)
+    right_conference = any(phrase in right_norm for phrase in conference_phrases)
+    return (left_championship and right_conference) or (right_championship and left_conference)
 
 
 def _btc_threshold_pair(left_tokens: set[str], right_tokens: set[str]) -> bool:

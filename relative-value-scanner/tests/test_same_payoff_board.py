@@ -186,6 +186,81 @@ def _mlb_board(*, poly: dict | None = None, kalshi: dict | None = None, pairs: d
     )
 
 
+def _nba_pair(poly_id: str = "poly-nba", kalshi_ticker: str = "KXNBA-26-OKC") -> dict:
+    payload = _pair(poly_id=poly_id, kalshi_ticker=kalshi_ticker)
+    payload["pairs"][0]["polymarket"] = {
+        "market_id": poly_id,
+        "question": "Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+        "event_title": "2026 NBA Champion",
+    }
+    payload["pairs"][0]["kalshi"] = {
+        "ticker": kalshi_ticker,
+        "question": "Will the Oklahoma City win the 2026 Pro Basketball Finals?",
+        "event_title": None,
+    }
+    return payload
+
+
+def _nba_market(
+    venue: str,
+    *,
+    team_question: str,
+    ticker: str = "KXNBA-26-OKC",
+    event_title: str | None = "2026 NBA Champion",
+    market_type: str | None = None,
+    settlement_rule: str = "This market resolves to Yes if the Oklahoma City Thunder win the 2026 NBA Finals. The resolution source for this market will be information from the NBA.",
+    end_date: str = "2026-07-01T00:00:00+00:00",
+) -> dict:
+    row = _market(
+        venue,
+        question=team_question,
+        event_title=event_title,
+        settlement_rule=settlement_rule,
+        end_date=end_date,
+        source_type="EXECUTABLE_VENUE",
+    )
+    row["raw"] = {"series_ticker": "KXNBA", "event_ticker": "KXNBA-26"}
+    if market_type is not None:
+        row["market_type"] = market_type
+        row["raw"]["market_type"] = market_type
+    if venue == "kalshi":
+        row["ticker"] = ticker
+        row["market_id"] = ticker
+        row["event_title"] = event_title
+        row["raw"]["rules_primary"] = settlement_rule
+        row["end_date"] = "2026-06-30T14:00:00+00:00"
+        row["close_time"] = "2028-06-29T14:00:00+00:00"
+    else:
+        row["market_id"] = "poly-nba"
+    return row
+
+
+def _nba_board(*, poly: dict | None = None, kalshi: dict | None = None, pairs: dict | None = None) -> dict:
+    return build_same_payoff_board(
+        pairs_payload=pairs or _nba_pair(),
+        polymarket_payload=_snapshot(
+            "polymarket",
+            poly
+            or _nba_market(
+                "polymarket",
+                team_question="Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+                market_type="binary_event",
+            ),
+        ),
+        kalshi_payload=_snapshot(
+            "kalshi",
+            kalshi
+            or _nba_market(
+                "kalshi",
+                team_question="Will the Oklahoma City win the 2026 Pro Basketball Finals?",
+                market_type="binary",
+                settlement_rule="If Oklahoma City win the 2026 Pro Basketball Finals, then the market resolves to Yes.",
+            ),
+        ),
+        generated_at=NOW,
+    )
+
+
 def test_exact_same_payoff_fixture_passes_evidence_checks() -> None:
     row = _first(_board())
 
@@ -398,6 +473,192 @@ def test_mlb_non_threshold_outright_does_not_fail_threshold_strike() -> None:
 
     assert row["same_payoff_evidence"]["threshold_strike"]["status"] == "PASS"
     assert "threshold_strike_mismatch" not in row["blockers"]
+
+
+def test_nba_same_team_championship_semantic_comparators_pass() -> None:
+    row = _first(_nba_board())
+
+    assert row["same_payoff"] is False
+    assert "settlement_date_drift" in row["strict_blockers"]
+    assert row["same_payoff_evidence"]["market_event_entity"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["market_event_entity"]["values"]["normalization"] == "nba_championship_team"
+    assert row["same_payoff_evidence"]["sports_league_team"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["market_type"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["market_type"]["values"]["normalization"] == "nba_championship_binary"
+    assert row["same_payoff_evidence"]["threshold_strike"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "FAIL"
+    assert row["same_payoff_evidence"]["settlement_time"]["values"]["delta_seconds"] == 36000.0
+    assert row["same_payoff_evidence"]["settlement_source"]["values"]["normalization"] == "nba_championship_equivalent_resolution_wording"
+
+
+def test_nba_four_hour_end_of_day_convention_can_pass_board_only() -> None:
+    poly = _nba_market(
+        "polymarket",
+        team_question="Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+        market_type="binary_event",
+        end_date="2026-06-30T23:59:00+00:00",
+    )
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Oklahoma City win the 2026 Pro Basketball Finals?",
+        market_type="binary",
+        settlement_rule="If Oklahoma City win the 2026 Pro Basketball Finals, then the market resolves to Yes.",
+    )
+    kalshi["end_date"] = "2026-07-01T04:00:00+00:00"
+
+    row = _first(_nba_board(poly=poly, kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["settlement_time"]["values"]["normalization"] == "nba_finals_timezone_convention_drift"
+
+
+def test_nba_different_eastern_dates_fail_settlement_time() -> None:
+    poly = _nba_market(
+        "polymarket",
+        team_question="Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+        market_type="binary_event",
+        end_date="2026-06-30T20:00:00+00:00",
+    )
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Oklahoma City win the 2026 Pro Basketball Finals?",
+        market_type="binary",
+        settlement_rule="If Oklahoma City win the 2026 Pro Basketball Finals, then the market resolves to Yes.",
+    )
+    kalshi["end_date"] = "2026-07-01T04:00:00+00:00"
+
+    row = _first(_nba_board(poly=poly, kalshi=kalshi))
+
+    assert row["same_payoff"] is False
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "FAIL"
+    assert "settlement_date_drift" in row["blockers"]
+
+
+def test_nba_gap_above_twelve_hours_fails_settlement_time() -> None:
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Oklahoma City win the 2026 Pro Basketball Finals?",
+        market_type="binary",
+        settlement_rule="If Oklahoma City win the 2026 Pro Basketball Finals, then the market resolves to Yes.",
+    )
+    kalshi["end_date"] = "2026-07-01T13:00:01+00:00"
+
+    row = _first(_nba_board(kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "FAIL"
+    assert "settlement_date_drift" in row["blockers"]
+
+
+def test_nba_cross_year_finals_pairs_fail() -> None:
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Oklahoma City win the 2027 Pro Basketball Finals?",
+        market_type="binary",
+        settlement_rule="If Oklahoma City win the 2027 Pro Basketball Finals, then the market resolves to Yes.",
+    )
+    kalshi["end_date"] = "2027-07-01T00:00:00+00:00"
+
+    row = _first(_nba_board(kalshi=kalshi))
+
+    assert row["same_payoff"] is False
+    assert "settlement_date_drift" in row["blockers"]
+
+
+def test_nba_official_nba_alone_does_not_satisfy_one_sided_settlement_source() -> None:
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Oklahoma City win the 2026 Pro Basketball Finals?",
+        market_type="binary",
+        settlement_rule="official NBA",
+    )
+    poly = _nba_market(
+        "polymarket",
+        team_question="Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+        market_type="binary_event",
+        settlement_rule="",
+    )
+    poly.pop("settlement_rule", None)
+
+    row = _first(_nba_board(poly=poly, kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_source"]["status"] == "MISSING"
+    assert "polymarket_settlement_source_or_rule" in row["missing_fields"]
+
+
+def test_nba_explicit_resolution_source_wording_satisfies_one_sided_settlement_source() -> None:
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Oklahoma City win the 2026 Pro Basketball Finals?",
+        market_type="binary",
+        settlement_rule="The resolution source will be official information from the NBA.",
+    )
+    poly = _nba_market(
+        "polymarket",
+        team_question="Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+        market_type="binary_event",
+        settlement_rule="",
+    )
+    poly.pop("settlement_rule", None)
+
+    row = _first(_nba_board(poly=poly, kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_source"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["settlement_source"]["values"]["normalization"] == "nba_championship_named_primary_source_one_sided"
+
+
+def test_nba_wrong_team_championship_pair_fails() -> None:
+    pairs = _nba_pair(poly_id="poly-okc", kalshi_ticker="KXNBA-26-CLE")
+    pairs["pairs"][0]["kalshi"]["question"] = "Will the Cleveland win the 2026 Pro Basketball Finals?"
+    poly = _nba_market(
+        "polymarket",
+        team_question="Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+        market_type="binary_event",
+    )
+    poly["market_id"] = "poly-okc"
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Cleveland win the 2026 Pro Basketball Finals?",
+        ticker="KXNBA-26-CLE",
+        market_type="binary",
+        settlement_rule="If Cleveland win the 2026 Pro Basketball Finals, then the market resolves to Yes.",
+    )
+
+    row = _first(_nba_board(poly=poly, kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "market_event_entity_mismatch" in row["blockers"]
+    assert "sports_league_team_mismatch" in row["blockers"]
+
+
+def test_nba_conference_winner_vs_championship_winner_is_subset_or_superset() -> None:
+    pairs = _nba_pair(kalshi_ticker="KXNBA-26-OKC-WEST")
+    kalshi = _nba_market(
+        "kalshi",
+        team_question="Will the Oklahoma City win the 2026 Western Conference title?",
+        ticker="KXNBA-26-OKC-WEST",
+        market_type="binary",
+        settlement_rule="If Oklahoma City win the 2026 Western Conference title, then the market resolves to Yes.",
+    )
+    kalshi["event_title"] = "2026 NBA Western Conference winner"
+
+    row = _first(_nba_board(kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "relationship_shape_subset_or_superset" in row["blockers"]
+    assert row["same_payoff_evidence"]["relationship_shape"]["values"]["relationship"] == "SUBSET_OR_SUPERSET"
+
+
+def test_nba_market_type_alias_is_narrow_to_championship_context() -> None:
+    row = _first(_nba_board())
+    non_championship_poly = _market("polymarket", question="Will Oklahoma City Thunder win tonight?", event_title="NBA game")
+    non_championship_kalshi = _market("kalshi", question="Will Oklahoma City win tonight?", event_title="NBA game")
+    non_championship_kalshi["market_type"] = "binary"
+    non_championship_kalshi["raw"]["market_type"] = "binary"
+    non_championship_row = _first(_board(poly=non_championship_poly, kalshi=non_championship_kalshi))
+
+    assert row["same_payoff_evidence"]["market_type"]["status"] == "PASS"
+    assert non_championship_row["same_payoff_evidence"]["market_type"]["status"] == "FAIL"
+    assert "market_type_mismatch" in non_championship_row["blockers"]
 
 
 def test_threshold_mismatch_still_fails_when_threshold_exists() -> None:
