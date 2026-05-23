@@ -10,8 +10,20 @@ def test_subset_over_superset_violation() -> None:
         snapshot_id="test",
         as_of="2026-05-19T18:00:00+00:00",
         nodes={
-            "test:narrow": make_node("test:narrow", 0.65),
-            "test:broad": make_node("test:broad", 0.50),
+            "test:narrow": make_node(
+                "test:narrow",
+                0.65,
+                observable="test_observable",
+                settlement_source="test_source",
+                window="test_window",
+            ),
+            "test:broad": make_node(
+                "test:broad",
+                0.50,
+                observable="test_observable",
+                settlement_source="test_source",
+                window="test_window",
+            ),
         },
     )
     edge = RelationshipEdge(
@@ -31,4 +43,3 @@ def test_subset_over_superset_violation() -> None:
     assert violation is not None
     assert violation.kind == ViolationKind.SUBSET_OVER_SUPERSET
     assert violation.action.value == "MANUAL_REVIEW"
-

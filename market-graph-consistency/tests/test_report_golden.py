@@ -35,7 +35,10 @@ def test_markdown_report_matches_strict_golden(fixture_snapshot) -> None:
 def test_markdown_highest_action_empty_report_is_ignore(fixture_snapshot) -> None:
     markdown = build_markdown_report(fixture_snapshot, [])
 
-    assert "Highest action: `WATCH`" in markdown
+    report = build_json_report(fixture_snapshot, [])
+
+    assert "Highest action: `IGNORE`" in markdown
+    assert report["summary"]["highest_action"] == "IGNORE"
 
 
 def test_markdown_report_uses_saved_snapshot_notes_for_scope() -> None:

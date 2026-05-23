@@ -11,8 +11,9 @@ from graph_engine.models import (
     RelationshipEdge,
     RelationshipType,
     ViolationKind,
+    coerce_bool,
 )
-from graph_engine.reporting.json_report import build_json_report
+from graph_engine.reporting.json_report import _assert_safe_violation_schema, build_json_report
 from tests.conftest import make_node
 
 
@@ -56,6 +57,7 @@ def test_reference_only_nodes_cannot_create_hard_violations() -> None:
     assert violation is not None
     assert violation.kind == ViolationKind.AMBIGUOUS_WORDING
     assert "reference_only_node" in violation.blockers
+    assert violation.max_action_cap == "WATCH"
     assert violation.magnitude == 0.0
 
 
@@ -130,6 +132,35 @@ def test_btc_threshold_chain_requires_same_source_and_window() -> None:
 
     assert violation is not None
     assert violation.kind == ViolationKind.SUBSET_OVER_SUPERSET
+    assert violation.max_action_cap == "MANUAL_REVIEW"
+
+
+def test_btc_threshold_chain_with_missing_source_or_window_downgrades() -> None:
+    snapshot = GraphSnapshot(
+        snapshot_id="test",
+        as_of="2026-05-19T18:00:00+00:00",
+        nodes={
+            "test:btc_120": make_node(
+                "test:btc_120",
+                0.70,
+                observable="BTC_USD",
+                settlement_source="coinbase_index",
+                window="2026-06-30",
+            ),
+            "test:btc_100": make_node(
+                "test:btc_100",
+                0.50,
+                observable="BTC_USD",
+            ),
+        },
+    )
+
+    violation = check_subset(snapshot, _edge(RelationshipType.SUBSET, src="test:btc_120", dst="test:btc_100"))
+
+    assert violation is not None
+    assert violation.kind == ViolationKind.AMBIGUOUS_WORDING
+    assert violation.max_action_cap == "WATCH"
+    assert "threshold_basis_mismatch" in violation.blockers
 
 
 def test_btc_threshold_chain_downgrades_on_source_or_window_mismatch() -> None:
@@ -158,6 +189,7 @@ def test_btc_threshold_chain_downgrades_on_source_or_window_mismatch() -> None:
 
     assert violation is not None
     assert violation.kind == ViolationKind.AMBIGUOUS_WORDING
+    assert violation.max_action_cap == "WATCH"
     assert "threshold_basis_mismatch" in violation.blockers
 
 
@@ -200,6 +232,7 @@ def test_stale_node_caps_action_and_adds_review_question() -> None:
     assert violation is not None
     assert "stale_input" in violation.blockers
     assert violation.max_action_cap_reason == "stale_input_manual_review_cap"
+    assert violation.max_action_cap == "MANUAL_REVIEW"
     assert violation.action.value == "MANUAL_REVIEW"
 
 
@@ -222,6 +255,7 @@ def test_llm_sourced_edge_caps_action() -> None:
     assert violation.edge_source == "llm"
     assert "llm_edge_unreviewed" in violation.blockers
     assert violation.action.value == "WATCH"
+    assert violation.max_action_cap == "WATCH"
 
 
 def test_violation_json_has_no_pnl_dollar_trade_or_promoted_fields() -> None:
@@ -241,3 +275,33 @@ def test_violation_json_has_no_pnl_dollar_trade_or_promoted_fields() -> None:
         assert prohibited not in serialized
     assert "trade" not in serialized
     assert report["violations"][0]["magnitude_unit"] == "probability"
+
+
+def test_recursive_violation_schema_guard_rejects_nested_forbidden_fields() -> None:
+    rows = [
+        {
+            "violation_id": "safe",
+            "nested": [{"metadata": {"pnl": 12}}],
+        }
+    ]
+
+    try:
+        _assert_safe_violation_schema(rows)
+    except ValueError as exc:
+        assert "pnl" in str(exc)
+    else:
+        raise AssertionError("nested prohibited field should fail")
+
+
+def test_coerce_bool_fail_closed_for_false_and_unknown_strings() -> None:
+    assert coerce_bool("true") is True
+    assert coerce_bool("1") is True
+    assert coerce_bool("yes") is True
+    assert coerce_bool("on") is True
+    assert coerce_bool("y") is True
+    assert coerce_bool("false") is False
+    assert coerce_bool("0") is False
+    assert coerce_bool("no") is False
+    assert coerce_bool("off") is False
+    assert coerce_bool("n") is False
+    assert coerce_bool("maybe") is False

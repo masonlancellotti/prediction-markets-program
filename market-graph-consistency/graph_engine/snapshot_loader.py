@@ -68,8 +68,17 @@ def _bool_value(value: Any) -> bool:
     if value is None or value == "":
         return False
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y"}
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "y"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "n"}:
+            return False
+        return False
     return bool(value)
+
+
+def payload_flag(value: str | None, flag: str) -> bool:
+    return str(value or "").strip().upper() == flag
 
 
 def _first_present(payload: dict[str, Any], keys: Iterable[str]) -> Any:
@@ -179,11 +188,6 @@ def _convert_row(
         observable=_first_present(row, ["observable", "underlying", "asset"]),
         window=_first_present(row, ["window", "settlement_window", "date_window"]),
     )
-
-
-def payload_flag(value: str | None, flag: str) -> bool:
-    return str(value or "").strip().upper() == flag
-
 
 def _load_one_snapshot(path: Path) -> tuple[list[MarketNode], SavedSnapshotMetadata]:
     payload = _load_json(path)

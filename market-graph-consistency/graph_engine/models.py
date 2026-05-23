@@ -109,7 +109,12 @@ def coerce_bool(value: bool | str | int | None) -> bool:
     if value is None:
         return False
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y"}
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "y"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "n"}:
+            return False
+        return False
     return bool(value)
 
 

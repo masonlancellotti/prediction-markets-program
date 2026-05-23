@@ -24,7 +24,7 @@
 - Edge source: `llm`
 - Review status: `unreviewed`
 - Reviewed by: `none`
-- Max action cap: `MANUAL_REVIEW` via `llm_unreviewed_watch_cap`
+- Max action cap: `WATCH` via `llm_unreviewed_watch_cap`
 - Blockers: llm_edge_unreviewed
 - Involved markets:
 - `kalshi:microsoft_first_agi_2027` | yes=0.310 | as_of=2026-05-19T18:05:00+00:00

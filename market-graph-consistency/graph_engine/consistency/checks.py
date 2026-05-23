@@ -50,8 +50,16 @@ def _pair_blockers(snapshot: GraphSnapshot, edge: RelationshipEdge, src: MarketN
     return blockers
 
 
-def _cap_action(action, blockers: list[str]):
-    if "llm_edge_unreviewed" in blockers and action == Action.MANUAL_REVIEW:
+def _cap_limit(blockers: list[str], kind: ViolationKind | None = None) -> Action:
+    if "reference_only_node" in blockers or "llm_edge_unreviewed" in blockers:
+        return Action.WATCH
+    if kind == ViolationKind.AMBIGUOUS_WORDING:
+        return Action.WATCH
+    return Action.MANUAL_REVIEW
+
+
+def _cap_action(action: Action, blockers: list[str], kind: ViolationKind | None = None) -> Action:
+    if _cap_limit(blockers, kind) == Action.WATCH and action == Action.MANUAL_REVIEW:
         return Action.WATCH
     return action
 
@@ -83,7 +91,7 @@ def _diagnostic_wording_violation(
 ) -> ConsistencyViolation:
     kind = ViolationKind.AMBIGUOUS_WORDING
     confidence = min(edge.confidence, 0.6)
-    action = _cap_action(action_for_violation(kind, confidence, 0.0), blockers)
+    action = _cap_action(action_for_violation(kind, confidence, 0.0), blockers, kind)
     return ConsistencyViolation(
         violation_id=f"{kind.value}:{edge.edge_id}",
         snapshot_id=snapshot.snapshot_id,
@@ -101,6 +109,7 @@ def _diagnostic_wording_violation(
         edge_source=edge.source.value,
         reviewed_by=edge.reviewed_by,
         review_status=_review_status(edge),
+        max_action_cap=_cap_limit(blockers, kind).value,
         max_action_cap_reason=_cap_reason(blockers),
     )
 
@@ -117,10 +126,21 @@ def _has_settlement_proof(edge: RelationshipEdge, src: MarketNode, dst: MarketNo
 
 
 def _same_threshold_basis(edge: RelationshipEdge, src: MarketNode, dst: MarketNode) -> bool:
-    observables = {value for value in (edge.observable, src.observable, dst.observable) if value}
-    windows = {value for value in (edge.window, src.window, dst.window) if value}
-    settlement_sources = {value for value in (src.settlement_source, dst.settlement_source) if value}
-    return len(observables) <= 1 and len(windows) <= 1 and len(settlement_sources) <= 1
+    if not src.observable or not dst.observable:
+        return False
+    if not src.settlement_source or not dst.settlement_source:
+        return False
+    if not src.window or not dst.window:
+        return False
+    if edge.observable and edge.observable != src.observable:
+        return False
+    if edge.window and edge.window != src.window:
+        return False
+    return (
+        src.observable == dst.observable
+        and src.settlement_source == dst.settlement_source
+        and src.window == dst.window
+    )
 
 
 def _make_pair_violation(
@@ -150,7 +170,7 @@ def _make_pair_violation(
             blockers,
         )
     confidence = _edge_confidence(edge)
-    action = _cap_action(action_for_violation(kind, confidence, magnitude), blockers)
+    action = _cap_action(action_for_violation(kind, confidence, magnitude), blockers, kind)
     return ConsistencyViolation(
         violation_id=f"{kind.value}:{edge.edge_id}",
         snapshot_id=snapshot.snapshot_id,
@@ -168,6 +188,7 @@ def _make_pair_violation(
         edge_source=edge.source.value,
         reviewed_by=edge.reviewed_by,
         review_status=_review_status(edge),
+        max_action_cap=_cap_limit(blockers, kind).value,
         max_action_cap_reason=_cap_reason(blockers),
     )
 
@@ -286,7 +307,7 @@ def check_ambiguous_wording(snapshot: GraphSnapshot, edge: RelationshipEdge) -> 
     blockers = _pair_blockers(snapshot, edge, src, dst)
     confidence = edge.confidence
     kind = ViolationKind.AMBIGUOUS_WORDING
-    action = _cap_action(action_for_violation(kind, confidence, 0.0), blockers)
+    action = _cap_action(action_for_violation(kind, confidence, 0.0), blockers, kind)
     return ConsistencyViolation(
         violation_id=f"{kind.value}:{edge.edge_id}",
         snapshot_id=snapshot.snapshot_id,
@@ -308,6 +329,7 @@ def check_ambiguous_wording(snapshot: GraphSnapshot, edge: RelationshipEdge) -> 
         edge_source=edge.source.value,
         reviewed_by=edge.reviewed_by,
         review_status=_review_status(edge),
+        max_action_cap=_cap_limit(blockers, kind).value,
         max_action_cap_reason=_cap_reason(blockers),
     )
 
@@ -350,5 +372,6 @@ def check_exclusion_set(snapshot: GraphSnapshot, exclusion: ExclusionSet) -> Con
         blockers=blockers,
         edge_source="manual",
         review_status="manual_unreviewed",
+        max_action_cap=_cap_limit(blockers, kind).value,
         max_action_cap_reason=_cap_reason(blockers),
     )

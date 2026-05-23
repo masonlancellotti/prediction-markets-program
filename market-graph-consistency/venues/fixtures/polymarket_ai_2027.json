@@ -11,6 +11,9 @@
       "resolution_date": "2027-12-31",
       "entities": ["OpenAI"],
       "themes": ["ai", "private-company-valuation", "2027"],
+      "observable": "openai_valuation_usd",
+      "settlement_source": "credible_business_press_or_filing",
+      "window": "before_2028",
       "yes_price": 0.62,
       "no_price": 0.40,
       "bid": 0.60,
@@ -27,6 +30,9 @@
       "resolution_date": "2027-12-31",
       "entities": ["OpenAI"],
       "themes": ["ai", "private-company-valuation", "2027"],
+      "observable": "openai_valuation_usd",
+      "settlement_source": "credible_business_press_or_filing",
+      "window": "before_2028",
       "yes_price": 0.52,
       "no_price": 0.50,
       "bid": 0.50,
@@ -52,4 +58,3 @@
     }
   ]
 }
-

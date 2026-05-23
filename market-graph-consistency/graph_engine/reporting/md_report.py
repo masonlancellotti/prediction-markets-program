@@ -21,7 +21,7 @@ def _highest_action(violations: list[ConsistencyViolation]) -> Action:
         return Action.MANUAL_REVIEW
     if any(violation.action == Action.WATCH for violation in violations):
         return Action.WATCH
-    return Action.WATCH
+    return Action.IGNORE
 
 
 def _scope_text(snapshot: GraphSnapshot) -> str:

@@ -9,15 +9,25 @@ from typing import Any
 from graph_engine.models import ConsistencyViolation, GraphSnapshot, utc_now
 
 PROHIBITED_VIOLATION_FIELDS = {
-    "profit",
-    "pnl",
-    "dollars",
-    "fill",
-    "size",
+    "buy",
     "edge_bps",
     "executable",
+    "executable_arb",
+    "fill",
+    "fill_size",
+    "order",
     "paper",
+    "pnl",
+    "position",
+    "profit",
     "possible_arb",
+    "sell",
+    "signature",
+    "signing",
+    "trade",
+    "wallet",
+    "dollars",
+    "size",
 }
 
 
@@ -38,11 +48,27 @@ def _reviewers(snapshot: GraphSnapshot) -> list[str]:
 
 
 def _assert_safe_violation_schema(rows: list[dict[str, Any]]) -> None:
-    for row in rows:
-        keys = {str(key).lower() for key in row}
-        forbidden = sorted(keys & PROHIBITED_VIOLATION_FIELDS)
-        if forbidden:
-            raise ValueError(f"prohibited violation fields present: {forbidden}")
+    def visit(value: Any, path: str) -> list[str]:
+        if isinstance(value, dict):
+            found: list[str] = []
+            for key, nested in value.items():
+                normalized = str(key).lower()
+                if normalized in PROHIBITED_VIOLATION_FIELDS:
+                    found.append(f"{path}.{key}" if path else str(key))
+                found.extend(visit(nested, f"{path}.{key}" if path else str(key)))
+            return found
+        if isinstance(value, list):
+            found = []
+            for index, item in enumerate(value):
+                found.extend(visit(item, f"{path}[{index}]"))
+            return found
+        return []
+
+    forbidden = []
+    for index, row in enumerate(rows):
+        forbidden.extend(visit(row, f"violations[{index}]"))
+    if forbidden:
+        raise ValueError(f"prohibited violation fields present: {sorted(forbidden)}")
 
 
 def build_json_report(
