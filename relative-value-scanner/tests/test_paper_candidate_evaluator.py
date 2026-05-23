@@ -10,6 +10,7 @@ from relative_value.contract_relationship import (
     RELATIONSHIP_DIFFERENT_SETTLEMENT_SOURCE,
     RELATIONSHIP_DIFFERENT_THRESHOLD,
     RELATIONSHIP_DIFFERENT_UNIT,
+    RELATIONSHIP_EQUIVALENT,
     RELATIONSHIP_NEAR_EQUIVALENT,
     classify_contract_relationship,
 )
@@ -26,7 +27,7 @@ from relative_value.paper_candidate_evaluator import (
 NOW = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
 
 
-def _pairs_payload(reasons: list[str] | None = None) -> dict:
+def _pairs_payload(reasons: list[str] | None = None, contract_relationship: dict | None = None) -> dict:
     return {
         "schema_version": 1,
         "source": "live_snapshot_matcher",
@@ -48,6 +49,9 @@ def _pairs_payload(reasons: list[str] | None = None) -> dict:
                 "similarity_score": 0.95,
                 "matched_fields": {},
                 "ineligibility_reasons": reasons or [],
+                "contract_relationship": contract_relationship
+                if contract_relationship is not None
+                else classify_contract_relationship(reasons or []).to_report_dict(),
             }
         ],
     }
@@ -180,21 +184,43 @@ def test_specific_relationship_reasons_outrank_unit_warning(reason: str, expecte
     assert UNIT_WARNING in relationship["blocking_reasons"]
 
 
-def test_accept_unit_mismatch_allows_paper_candidate_but_never_paper_or_arb() -> None:
+def test_accept_unit_mismatch_still_requires_same_payoff_relationship() -> None:
     payload = _evaluate(accept_unit_mismatch=True)
+    row = _first(payload)
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["opportunity_class"] == "near_equivalent_manual_review"
+    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
+    assert row["missed_fill_reason"] == "relationship_same_payoff_not_proven"
+    assert row["contract_relationship"]["relationship"] == RELATIONSHIP_NEAR_EQUIVALENT
+    assert row["contract_relationship"]["same_payoff"] is False
+    assert "relationship_same_payoff_not_proven" in row["contract_relationship"]["blocking_reasons"]
+    assert payload["counts_by_action"] == {
+        ACTION_WATCH: 0,
+        ACTION_MANUAL_REVIEW: 1,
+        ACTION_PAPER_CANDIDATE: 0,
+    }
+    assert {row["action"] for row in payload["ledger"]} <= {ACTION_WATCH, ACTION_MANUAL_REVIEW, ACTION_PAPER_CANDIDATE}
+
+
+def test_equivalent_same_payoff_relationship_can_reach_paper_candidate_with_unit_ack() -> None:
+    relationship = {
+        "relationship": RELATIONSHIP_EQUIVALENT,
+        "same_payoff": True,
+        "confidence": 1.0,
+        "blocking_reasons": [],
+        "manual_review_required": False,
+        "source": "test_deterministic_fixture",
+    }
+    payload = _evaluate(pairs=_pairs_payload(contract_relationship=relationship), accept_unit_mismatch=True)
     row = _first(payload)
 
     assert row["action"] == ACTION_PAPER_CANDIDATE
     assert row["opportunity_class"] == "strict_cross_venue_equivalent"
-    assert row["gap"]["settlement_delta_seconds"] == pytest.approx(0.0)
-    assert row["contract_relationship"]["relationship"] == RELATIONSHIP_DIFFERENT_UNIT
-    assert UNIT_WARNING in row["contract_relationship"]["blocking_reasons"]
-    assert payload["counts_by_action"] == {
-        ACTION_WATCH: 0,
-        ACTION_MANUAL_REVIEW: 0,
-        ACTION_PAPER_CANDIDATE: 1,
-    }
-    assert {row["action"] for row in payload["ledger"]} <= {ACTION_WATCH, ACTION_MANUAL_REVIEW, ACTION_PAPER_CANDIDATE}
+    assert row["contract_relationship"]["relationship"] == RELATIONSHIP_EQUIVALENT
+    assert row["contract_relationship"]["same_payoff"] is True
+    assert row["contract_relationship"]["blocking_reasons"] == []
+    assert payload["counts_by_action"][ACTION_PAPER_CANDIDATE] == 1
 
 
 def test_ledger_shape_has_required_nested_keys_and_null_markouts() -> None:
@@ -507,8 +533,9 @@ def test_evaluate_paper_candidates_cli_success(tmp_path: Path, capsys) -> None:
     assert result == 0
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["ledger_count"] == 1
-    assert payload["counts_by_action"][ACTION_PAPER_CANDIDATE] == 1
-    assert "paper_candidate_evaluator_status=OK candidates=1 paper=1 manual_review=0 watch=0" in capsys.readouterr().out
+    assert payload["counts_by_action"][ACTION_PAPER_CANDIDATE] == 0
+    assert payload["counts_by_action"][ACTION_MANUAL_REVIEW] == 1
+    assert "paper_candidate_evaluator_status=OK candidates=1 paper=0 manual_review=1 watch=0" in capsys.readouterr().out
 
 
 def test_evaluate_paper_candidates_cli_failure(tmp_path: Path, capsys) -> None:

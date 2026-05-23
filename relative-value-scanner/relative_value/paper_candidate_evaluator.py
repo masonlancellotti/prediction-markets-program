@@ -255,6 +255,18 @@ def _evaluate_pair(
             "unit_mismatch_not_accepted",
             direction,
         )
+    if not _pair_relationship_allows_paper_candidate(pair):
+        return _ledger_row(
+            pair,
+            polymarket,
+            kalshi,
+            detected_at,
+            ACTION_MANUAL_REVIEW,
+            "near_equivalent_manual_review",
+            ["relationship_same_payoff_not_proven"],
+            "relationship_same_payoff_not_proven",
+            direction,
+        )
     return _ledger_row(pair, polymarket, kalshi, detected_at, ACTION_PAPER_CANDIDATE, "strict_cross_venue_equivalent", [], None, direction)
 
 
@@ -384,6 +396,8 @@ def _ledger_row(
 
 
 def _contract_relationship_row(pair: dict[str, Any], reasons: list[str], missed_fill_reason: str | None) -> dict[str, Any]:
+    if missed_fill_reason is None and _pair_relationship_allows_paper_candidate(pair):
+        return dict(pair["contract_relationship"])
     relationship_reasons = report_blocking_reasons(pair.get("contract_relationship"))
     relationship_reasons.extend(reasons)
     unit_mismatch_reason = UNIT_WARNING if _unit_warning_is_relationship_relevant(missed_fill_reason, relationship_reasons) else None
@@ -391,6 +405,20 @@ def _contract_relationship_row(pair: dict[str, Any], reasons: list[str], missed_
         relationship_reasons,
         unit_mismatch_reason=unit_mismatch_reason,
     ).to_report_dict()
+
+
+def _pair_relationship_allows_paper_candidate(pair: dict[str, Any]) -> bool:
+    relationship = pair.get("contract_relationship")
+    if not isinstance(relationship, dict):
+        return False
+    if relationship.get("relationship") != "EQUIVALENT":
+        return False
+    if relationship.get("same_payoff") is not True:
+        return False
+    blockers = relationship.get("blocking_reasons")
+    if blockers not in (None, []):
+        return False
+    return True
 
 
 def _unit_warning_is_relationship_relevant(missed_fill_reason: str | None, relationship_reasons: list[str]) -> bool:

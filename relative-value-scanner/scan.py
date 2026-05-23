@@ -39,6 +39,7 @@ from relative_value.provenance import build_fixture_scan_provenance, source_read
 from relative_value.reference_diagnostics import explain_reference_context_files
 from relative_value.report import write_json_report, write_markdown_report
 from relative_value.scanner import RelativeValueScanner
+from relative_value.same_payoff_board import build_same_payoff_board_files
 from relative_value.source_registry import ImplementationStatus, SOURCE_REGISTRY, SourceType
 from relative_value.executable_venue_plan import PLANNED_EXECUTABLE_VENUE_CAPABILITIES
 from venues.kalshi import (
@@ -229,6 +230,24 @@ def main(argv: list[str] | None = None) -> int:
             "Required for otherwise-clean rows to reach PAPER_CANDIDATE because "
             "Polymarket share units and Kalshi contract units are not normalized."
         ),
+    )
+
+    same_payoff_parser = subparsers.add_parser(
+        "same-payoff-board",
+        help="Build a saved-file deterministic same-payoff diagnostic board for Kalshi/Polymarket pairs.",
+    )
+    same_payoff_parser.add_argument("--pairs", type=Path, required=True)
+    same_payoff_parser.add_argument("--polymarket-enriched", type=Path, required=True)
+    same_payoff_parser.add_argument("--kalshi-enriched", type=Path, required=True)
+    same_payoff_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "same_payoff_candidate_board.json",
+    )
+    same_payoff_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "same_payoff_candidate_board.md",
     )
 
     markout_parser = subparsers.add_parser(
@@ -677,6 +696,14 @@ def main(argv: list[str] | None = None) -> int:
             min_top_of_book_size=args.min_top_of_book_size,
             min_net_gap=args.min_net_gap,
             accept_unit_mismatch=args.accept_unit_mismatch,
+        )
+    if args.command == "same-payoff-board":
+        return same_payoff_board(
+            pairs=args.pairs,
+            polymarket_enriched=args.polymarket_enriched,
+            kalshi_enriched=args.kalshi_enriched,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
         )
     if args.command == "replay-paper-candidate-markouts":
         return replay_paper_candidate_markouts(
@@ -7066,6 +7093,37 @@ def evaluate_paper_candidates(
         f"manual_review={counts['MANUAL_REVIEW']} "
         f"watch={counts['WATCH']} "
         f"output={output}"
+    )
+    return 0
+
+
+def same_payoff_board(
+    *,
+    pairs: Path,
+    polymarket_enriched: Path,
+    kalshi_enriched: Path,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        payload = build_same_payoff_board_files(
+            pairs_path=pairs,
+            polymarket_enriched_path=polymarket_enriched,
+            kalshi_enriched_path=kalshi_enriched,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"same_payoff_board_status=FAILED message={exc}")
+        return 1
+
+    review_count = payload["counts_by_recommended_next_action"].get("RELATIONSHIP_REVIEW", 0)
+    print(
+        "same_payoff_board_status=OK "
+        f"rows={payload['row_count']} "
+        f"strict_same_payoff_passes={payload['strict_same_payoff_pass_count']} "
+        f"relationship_review={review_count} "
+        f"json={json_output} markdown={markdown_output}"
     )
     return 0
 

@@ -141,6 +141,7 @@ def _relationship_blocking_reasons(reason_set: set[str]) -> list[str]:
         "unit_mismatch_not_accepted",
         "polymarket_shares_vs_kalshi_contracts_not_normalized",
         "different_unit",
+        "relationship_same_payoff_not_proven",
     ):
         if reason in reason_set:
             blocking_reasons.append(reason)

@@ -38,6 +38,10 @@
 - 2026-05-22 Live Overlap Profiles: replaced dead guessed non-sports Kalshi tickers with evidence-backed profile entries from live source inventory while preserving human-review provenance and no readiness promotion.
 - 2026-05-22 Near-Miss Diagnostics: diagnostic entity detection now uses word-boundary matching so short tokens like `ETH` do not match unrelated words like `Netherlands`.
 - 2026-05-22 IBKR / ForecastEx Boundary: added design-only read-only research boundary docs and inert metadata for account/API permission review, instrument discovery, quote/depth, settlement metadata, fee inputs, redaction, and fail-closed rules; no live transport was added.
+- 2026-05-22 ProphetX Boundary: added design-only read-only research boundary docs and inert metadata for API permission review, market discovery, orderbook/depth, settlement metadata, fee inputs, redaction, and fail-closed rules; no live transport was added.
+- 2026-05-22 ProphetX Fixture Schema: added fixture-backed `prophetx_research_snapshot_v1` parser and `inspect-prophetx-fixtures` command for local market, depth, settlement, and fee schema inspection; ProphetX remains non-candidate-enabled with no live transport.
+- 2026-05-23 Same-Payoff Board: added saved-file-only `same-payoff-board` diagnostics for Kalshi/Polymarket pairs; it explains strict structural pass/fail evidence and does not mutate matcher/evaluator output or emit readiness.
+- 2026-05-23 Paper Candidate Evaluator: kept the conservative gate that `--accept-unit-mismatch` alone is insufficient; rows still require an existing proven same-payoff relationship object before `PAPER_CANDIDATE`.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

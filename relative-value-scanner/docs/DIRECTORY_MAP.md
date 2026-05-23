@@ -2,7 +2,7 @@
 
 ## Root Files
 
-- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `fetch-live-overlap-universe`, `match-live-snapshots`, `explain-reference-context`, `llm-review-relationships`, `source-readiness`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
+- `scan.py`: CLI for the default fixture scan plus explicit `fetch-polymarket`, `fetch-kalshi`, `fetch-the-odds-api`, `fetch-live-overlap-universe`, `match-live-snapshots`, `same-payoff-board`, `explain-reference-context`, `llm-review-relationships`, `source-readiness`, `enrich-orderbooks`, `evaluate-paper-candidates`, `replay-paper-candidate-markouts`, and `run-targeted-pipeline` read-only commands.
 - `README.md`: quick-start and action ladder.
 - `requirements.txt`: test dependency list.
 - `.env.example`: documents that this scaffold is offline/read-only.
@@ -21,12 +21,14 @@
 - `ibkr_forecastex_read_only_boundary.py`: inert design metadata for future IBKR / ForecastEx read-only account-permission, instrument, quote/depth, settlement, fee, redaction, and fail-closed review.
 - `llm_relationship_classifier.py`: stubbed no-network LLM relationship proposal validator and audit sidecar helpers; review metadata only.
 - `llm_relationship_review_report.py`: saved-report transformer that attaches stubbed LLM review sidecars to matcher/evaluator rows without changing deterministic fields or actions.
+- `prophetx_read_only_boundary.py`: inert design metadata for future ProphetX read-only API-permission, market discovery, orderbook/depth, settlement, fee, redaction, and fail-closed review.
 - `reference_diagnostics.py`: diagnostic-only executable-to-reference snapshot comparison for The Odds API observability; no action promotion or edge math.
 - `source_registry.py`: non-networked source taxonomy and output-policy registry for executable, reference-only, signal-only, and do-not-use-yet sources.
 - `sx_bet_live_read_only_boundary.py`: inert design metadata for future SX Bet public read-only endpoint categories, stage gates, redaction policy, and fail-closed rules.
 - `matching.py`: match confidence and settlement mismatch risk.
 - `scoring.py`: action ladder and POSSIBLE_ARB hard gates.
 - `scanner.py`: deterministic pairwise scanner and default suppression of redundant opposite-side sportsbook reference rows.
+- `same_payoff_board.py`: saved-file-only Kalshi/Polymarket same-payoff diagnostic board; emits structural evidence, blockers, and review recommendations without changing actions.
 - `live_snapshot_matcher.py`: read-only schema-v1 snapshot matcher with conservative text, settlement-time, and event-keyword review signals; emits WATCH/MANUAL_REVIEW pairs only and can attach separate reference snapshot observability summaries.
 - `orderbook_enrichment.py`: saved schema-v1 snapshot enrichment coordinator; attaches read-only depth metrics without scoring.
 - `paper_candidate_evaluator.py`: saved-JSON-only paper candidate ledger evaluator; emits WATCH/MANUAL_REVIEW/PAPER_CANDIDATE only.
@@ -40,6 +42,7 @@
 - `polymarket.py`: Polymarket fixture adapter plus public read-only Gamma discovery client, targeted `tag_slug`/`tag_id` controls, market filters, overlapping skip counters, and schema-versioned snapshot normalizer with `outcome_yes_token_price` plus Gamma `best_bid`/`best_ask` fields.
 - `orderbooks.py`: public read-only Kalshi and Polymarket orderbook clients plus depth metric parsers.
 - `the_odds_api.py`: sportsbook fixture adapter plus read-only The Odds API reference snapshot client and no-vig normalization.
+- `prophetx.py`: fixture-backed ProphetX research snapshot parser for local market, orderbook/depth, settlement, and fee schema inspection only; not executable schema-v1 and not scanner-integrated.
 - `sx_bet.py`: static SX Bet feasibility parser that emits `sx_bet_research_snapshot_v1`; not executable schema-v1 and not scanner-integrated.
 - `fixtures/`: offline sample data.
 
