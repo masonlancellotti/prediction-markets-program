@@ -30,6 +30,9 @@ from relative_value.live_snapshot_matcher import (
 from relative_value.llm_relationship_review_report import review_relationship_report_file
 from relative_value.markout_replay import MarkoutReplayConfig, replay_paper_candidate_markout_files
 from relative_value.market_graph_diagnostics import build_market_graph_diagnostics_files
+from relative_value.market_graph_hints import explain_market_graph_diagnostics_files
+from relative_value.mlb_same_scope_audit import audit_same_scope_mlb_candidate_files
+from relative_value.mlb_same_scope_audit import diagnose_mlb_same_scope_targeting_files
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot_file
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot
 from relative_value.paper_candidate_evaluator import (
@@ -260,6 +263,77 @@ def main(argv: list[str] | None = None) -> int:
     attach_same_payoff_parser.add_argument("--board", type=Path, required=True)
     attach_same_payoff_parser.add_argument("--output", type=Path, required=True)
 
+    mlb_audit_parser = subparsers.add_parser(
+        "audit-same-scope-mlb-candidates",
+        help="Run a saved-file MLB/KXMLB same-scope board/evidence/evaluator audit.",
+    )
+    mlb_audit_parser.add_argument(
+        "--pairs",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_kxmlb_48h_unitok_after_guardrails_pairs.json",
+    )
+    mlb_audit_parser.add_argument(
+        "--polymarket-enriched",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_kxmlb_48h_unitok_after_guardrails_polymarket_enriched.json",
+    )
+    mlb_audit_parser.add_argument(
+        "--kalshi-enriched",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_kxmlb_48h_unitok_after_guardrails_kalshi_enriched.json",
+    )
+    mlb_audit_parser.add_argument("--json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_same_scope_audit.json")
+    mlb_audit_parser.add_argument("--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_same_scope_audit.md")
+    mlb_audit_parser.add_argument(
+        "--board-json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_same_scope_audit_board.json",
+    )
+    mlb_audit_parser.add_argument(
+        "--board-markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_same_scope_audit_board.md",
+    )
+    mlb_audit_parser.add_argument(
+        "--derived-pairs-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_same_scope_audit_derived_pairs.json",
+    )
+    mlb_audit_parser.add_argument(
+        "--evaluator-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_same_scope_audit_evaluator.json",
+    )
+    mlb_audit_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    mlb_audit_parser.add_argument("--max-settlement-delta-seconds", type=float, default=3600.0)
+    mlb_audit_parser.add_argument("--min-top-of-book-size", type=float, default=1.0)
+    mlb_audit_parser.add_argument("--min-net-gap", type=float, default=0.01)
+    mlb_audit_parser.add_argument(
+        "--accept-unit-mismatch",
+        action="store_true",
+        help="Forward explicit unit-mismatch acceptance to the saved-file evaluator pass.",
+    )
+
+    mlb_targeting_parser = subparsers.add_parser(
+        "diagnose-mlb-same-scope-targeting",
+        help="Classify saved MLB Kalshi/Polymarket inventory by same-scope competition bucket.",
+    )
+    mlb_targeting_parser.add_argument(
+        "--polymarket-snapshot",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_kxmlb_48h_unitok_after_guardrails_polymarket_snapshot.json",
+    )
+    mlb_targeting_parser.add_argument(
+        "--kalshi-snapshot",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_kxmlb_48h_unitok_after_guardrails_kalshi_snapshot.json",
+    )
+    mlb_targeting_parser.add_argument("--pairs", type=Path, default=PROJECT_ROOT / "reports" / "mlb_kxmlb_48h_unitok_after_guardrails_pairs.json")
+    mlb_targeting_parser.add_argument("--audit", type=Path, default=PROJECT_ROOT / "reports" / "mlb_same_scope_audit.json")
+    mlb_targeting_parser.add_argument("--scope", choices=["all", "world_series", "alcs", "nlcs"], default="all")
+    mlb_targeting_parser.add_argument("--json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_same_scope_targeting.json")
+    mlb_targeting_parser.add_argument("--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_same_scope_targeting.md")
+
     graph_parser = subparsers.add_parser(
         "market-graph-diagnostics",
         help="Build fixture-backed market graph relationship diagnostics for review only.",
@@ -278,6 +352,26 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "market_graph_consistency_diagnostics.md",
+    )
+
+    graph_hints_parser = subparsers.add_parser(
+        "explain-market-graph-diagnostics",
+        help="Read saved market graph diagnostics as info-only relative-value hints.",
+    )
+    graph_hints_parser.add_argument(
+        "--graph-report",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "market_graph_consistency_diagnostics.json",
+    )
+    graph_hints_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "market_graph_relative_value_hints.json",
+    )
+    graph_hints_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "market_graph_relative_value_hints.md",
     )
 
     markout_parser = subparsers.add_parser(
@@ -737,9 +831,42 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "attach-same-payoff-evidence":
         return attach_same_payoff_evidence(pairs=args.pairs, board=args.board, output=args.output)
+    if args.command == "audit-same-scope-mlb-candidates":
+        return audit_same_scope_mlb_candidates(
+            pairs=args.pairs,
+            polymarket_enriched=args.polymarket_enriched,
+            kalshi_enriched=args.kalshi_enriched,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            board_json_output=args.board_json_output,
+            board_markdown_output=args.board_markdown_output,
+            derived_pairs_output=args.derived_pairs_output,
+            evaluator_output=args.evaluator_output,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            max_settlement_delta_seconds=args.max_settlement_delta_seconds,
+            min_top_of_book_size=args.min_top_of_book_size,
+            min_net_gap=args.min_net_gap,
+            accept_unit_mismatch=args.accept_unit_mismatch,
+        )
+    if args.command == "diagnose-mlb-same-scope-targeting":
+        return diagnose_mlb_same_scope_targeting(
+            polymarket_snapshot=args.polymarket_snapshot,
+            kalshi_snapshot=args.kalshi_snapshot,
+            pairs=args.pairs,
+            audit=args.audit,
+            scope=args.scope,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
     if args.command == "market-graph-diagnostics":
         return market_graph_diagnostics(
             fixture=args.fixture,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+    if args.command == "explain-market-graph-diagnostics":
+        return explain_market_graph_diagnostics(
+            graph_report=args.graph_report,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
@@ -7186,6 +7313,92 @@ def attach_same_payoff_evidence(*, pairs: Path, board: Path, output: Path) -> in
     return 0
 
 
+def audit_same_scope_mlb_candidates(
+    *,
+    pairs: Path,
+    polymarket_enriched: Path,
+    kalshi_enriched: Path,
+    json_output: Path,
+    markdown_output: Path,
+    board_json_output: Path,
+    board_markdown_output: Path,
+    derived_pairs_output: Path,
+    evaluator_output: Path,
+    max_quote_age_seconds: float = 1800.0,
+    max_settlement_delta_seconds: float = 3600.0,
+    min_top_of_book_size: float = 1.0,
+    min_net_gap: float = 0.01,
+    accept_unit_mismatch: bool = False,
+) -> int:
+    try:
+        payload = audit_same_scope_mlb_candidate_files(
+            pairs_path=pairs,
+            polymarket_enriched_path=polymarket_enriched,
+            kalshi_enriched_path=kalshi_enriched,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+            board_json_output_path=board_json_output,
+            board_markdown_output_path=board_markdown_output,
+            derived_pairs_output_path=derived_pairs_output,
+            evaluator_output_path=evaluator_output,
+            max_quote_age_seconds=max_quote_age_seconds,
+            max_settlement_delta_seconds=max_settlement_delta_seconds,
+            min_top_of_book_size=min_top_of_book_size,
+            min_net_gap=min_net_gap,
+            accept_unit_mismatch=accept_unit_mismatch,
+        )
+    except ValueError as exc:
+        print(f"mlb_same_scope_audit_status=FAILED message={exc}")
+        return 1
+
+    summary = payload["summary"]
+    print(
+        "mlb_same_scope_audit_status=OK "
+        f"rows={summary['row_count']} "
+        f"same_scope={summary['same_scope_candidate_count']} "
+        f"trusted_evidence={summary['trusted_same_payoff_evidence_count']} "
+        f"candidate_actions={summary['candidate_action_count']} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
+
+
+def diagnose_mlb_same_scope_targeting(
+    *,
+    polymarket_snapshot: Path,
+    kalshi_snapshot: Path,
+    pairs: Path,
+    audit: Path,
+    scope: str,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        payload = diagnose_mlb_same_scope_targeting_files(
+            polymarket_snapshot_path=polymarket_snapshot,
+            kalshi_snapshot_path=kalshi_snapshot,
+            pairs_path=pairs if pairs.exists() else None,
+            audit_path=audit if audit.exists() else None,
+            scope=scope,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"mlb_same_scope_targeting_status=FAILED message={exc}")
+        return 1
+
+    summary = payload["summary"]
+    print(
+        "mlb_same_scope_targeting_status=OK "
+        f"scope={payload['scope_filter']} "
+        f"polymarket_rows={summary['polymarket_rows']} "
+        f"kalshi_rows={summary['kalshi_rows']} "
+        f"overlap_scopes={','.join(summary['overlap_scopes']) or 'none'} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
+
+
 def market_graph_diagnostics(
     *,
     fixture: Path | None,
@@ -7206,6 +7419,26 @@ def market_graph_diagnostics(
         "market_graph_diagnostics_status=OK "
         f"edges={payload['edge_count']} "
         f"mode={payload['data_source_mode']} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
+
+
+def explain_market_graph_diagnostics(*, graph_report: Path, json_output: Path, markdown_output: Path) -> int:
+    try:
+        payload = explain_market_graph_diagnostics_files(
+            graph_report_path=graph_report,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"market_graph_hints_status=FAILED message={exc}")
+        return 1
+
+    print(
+        "market_graph_hints_status=OK "
+        f"hints={payload['hint_count']} "
+        f"info_only={str(payload['safety']['info_only']).lower()} "
         f"json={json_output} markdown={markdown_output}"
     )
     return 0
