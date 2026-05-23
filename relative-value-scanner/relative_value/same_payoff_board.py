@@ -366,6 +366,19 @@ def _settlement_source_comparator(polymarket: dict[str, Any], kalshi: dict[str, 
     if not kal:
         missing.append("kalshi_settlement_source_or_rule")
     if missing:
+        if same_mlb_world_series_team(polymarket, kalshi):
+            present = poly or kal
+            if len(missing) == 1 and _explicit_mlb_world_series_source_text(present):
+                return _evidence(
+                    "settlement_source",
+                    "PASS",
+                    values={
+                        "normalization": "mlb_world_series_named_primary_source_one_sided",
+                        "missing_side": "polymarket" if not poly else "kalshi",
+                        "polymarket": poly,
+                        "kalshi": kal,
+                    },
+                )
         return _evidence("settlement_source", "MISSING", missing_fields=missing, values={"polymarket": poly, "kalshi": kal})
     poly_base = _normalize_without_tiebreak(poly)
     kal_base = _normalize_without_tiebreak(kal)
@@ -400,6 +413,18 @@ def _settlement_time_comparator(polymarket: dict[str, Any], kalshi: dict[str, An
         return _evidence("settlement_time", "MISSING", missing_fields=missing, values={"polymarket": poly_value, "kalshi": kal_value})
     delta = abs((poly_dt - kal_dt).total_seconds())
     if delta > tolerance_seconds:
+        if same_mlb_world_series_team(polymarket, kalshi) and _mlb_world_series_timezone_convention_match(poly_dt, kal_dt):
+            return _evidence(
+                "settlement_time",
+                "PASS",
+                values={
+                    "normalization": "mlb_world_series_timezone_convention_drift",
+                    "delta_seconds": delta,
+                    "tolerance_seconds": tolerance_seconds,
+                    "polymarket": _time_diagnostics(polymarket),
+                    "kalshi": _time_diagnostics(kalshi),
+                },
+            )
         return _evidence(
             "settlement_time",
             "FAIL",
@@ -782,6 +807,18 @@ def _time_diagnostics(market: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _mlb_world_series_timezone_convention_match(left: datetime, right: datetime) -> bool:
+    earlier, later = sorted((left, right))
+    convention_shift_seconds = 4 * 3600
+    close_cutoff_slack_seconds = 5 * 60
+    adjusted_delta = abs((later - earlier).total_seconds() - convention_shift_seconds)
+    if adjusted_delta > close_cutoff_slack_seconds:
+        return False
+    shifted_to_utc_midnight = later.timestamp() - convention_shift_seconds
+    shifted_dt = datetime.fromtimestamp(shifted_to_utc_midnight, tz=timezone.utc)
+    return abs((shifted_dt - earlier).total_seconds()) <= close_cutoff_slack_seconds
+
+
 def _comparison_text(market: dict[str, Any]) -> str:
     raw = market.get("raw") if isinstance(market.get("raw"), dict) else {}
     return " ".join(
@@ -959,6 +996,21 @@ def _normalize_text(value: str) -> str:
 def _normalize_without_tiebreak(value: str) -> str:
     tiebreak = {"tie", "ties", "tiebreak", "tiebreaker", "void", "push", "cancel", "canceled", "cancelled"}
     return " ".join(token for token in _TOKEN_RE.findall(value.lower()) if token not in tiebreak)
+
+
+def _explicit_mlb_world_series_source_text(value: str) -> bool:
+    normalized = _normalize_text(value)
+    tokens = set(_TOKEN_RE.findall(value.lower()))
+    if not {"mlb", "world", "series"} <= tokens:
+        return False
+    explicit_phrases = (
+        "team that wins",
+        "wins the 2026 mlb world series",
+        "official information from mlb",
+        "official mlb",
+        "mlb world series winner",
+    )
+    return any(phrase in normalized for phrase in explicit_phrases)
 
 
 def _number_values(text: str) -> list[float]:

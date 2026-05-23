@@ -420,7 +420,58 @@ def test_mlb_settlement_date_drift_remains_blocker_without_safe_evidence() -> No
     assert row["same_payoff_evidence"]["settlement_time"]["values"]["kalshi"]["end_date"] == "2026-11-01T08:30:01+00:00"
 
 
+def test_mlb_world_series_four_hour_timezone_drift_passes_settlement_time() -> None:
+    poly = _mlb_market(
+        "polymarket",
+        team_question="Will the New York Yankees win the 2026 World Series?",
+        market_type="binary_event",
+        end_date="2026-10-31T23:55:00+00:00",
+    )
+    kalshi = _mlb_market(
+        "kalshi",
+        team_question="Will New York Y win the 2026 Pro Baseball Championship?",
+        market_type="binary",
+        end_date="2026-11-01T04:00:00+00:00",
+    )
+
+    row = _first(_mlb_board(poly=poly, kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["settlement_time"]["values"]["normalization"] == "mlb_world_series_timezone_convention_drift"
+    assert "settlement_date_drift" not in row["blockers"]
+
+
+def test_non_mlb_four_hour_drift_still_fails() -> None:
+    kalshi = _market("kalshi", end_date="2026-05-24T06:00:00+00:00")
+
+    row = _first(_board(kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "FAIL"
+    assert "settlement_date_drift" in row["blockers"]
+
+
 def test_mlb_missing_settlement_source_remains_missing_if_genuine() -> None:
+    poly = _mlb_market(
+        "polymarket",
+        team_question="Will the New York Yankees win the 2026 World Series?",
+        market_type="binary_event",
+        settlement_rule="official baseball futures market",
+    )
+    kalshi = _mlb_market(
+        "kalshi",
+        team_question="Will New York Y win the 2026 Pro Baseball Championship?",
+        market_type="binary",
+        settlement_rule="",
+    )
+    kalshi.pop("settlement_rule", None)
+
+    row = _first(_mlb_board(poly=poly, kalshi=kalshi))
+
+    assert row["same_payoff_evidence"]["settlement_source"]["status"] == "MISSING"
+    assert "kalshi_settlement_source_or_rule" in row["missing_fields"]
+
+
+def test_mlb_one_sided_explicit_world_series_source_passes() -> None:
     kalshi = _mlb_market(
         "kalshi",
         team_question="Will New York Y win the 2026 Pro Baseball Championship?",
@@ -431,8 +482,9 @@ def test_mlb_missing_settlement_source_remains_missing_if_genuine() -> None:
 
     row = _first(_mlb_board(kalshi=kalshi))
 
-    assert row["same_payoff_evidence"]["settlement_source"]["status"] == "MISSING"
-    assert "kalshi_settlement_source_or_rule" in row["missing_fields"]
+    assert row["same_payoff_evidence"]["settlement_source"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["settlement_source"]["values"]["normalization"] == "mlb_world_series_named_primary_source_one_sided"
+    assert "kalshi_settlement_source_or_rule" not in row["missing_fields"]
 
 
 def test_mlb_stale_quote_remains_blocker_not_semantic_mismatch() -> None:
