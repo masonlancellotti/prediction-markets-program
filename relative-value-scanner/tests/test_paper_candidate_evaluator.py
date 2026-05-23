@@ -371,6 +371,25 @@ def test_stale_quote_never_promotes() -> None:
     assert "polymarket_stale_quote" in row["ineligibility_reasons"]
 
 
+def test_trusted_same_payoff_with_stale_quote_still_fails_paper_candidate() -> None:
+    poly_row = _polymarket_payload()["normalized_markets"][0]
+    poly_row["orderbook_enrichment"]["orderbook_captured_at"] = "2026-05-20T11:58:59+00:00"
+    poly = _polymarket_payload()
+    poly["normalized_markets"][0] = poly_row
+    relationship = _trusted_same_payoff_relationship()
+
+    payload = _evaluate(
+        pairs=_pairs_payload(contract_relationship=relationship),
+        poly=poly,
+        accept_unit_mismatch=True,
+    )
+    row = _first(payload)
+
+    assert row["action"] == ACTION_WATCH
+    assert row["missed_fill_reason"] == "stale_or_missing_quote_time"
+    assert payload["counts_by_action"][ACTION_PAPER_CANDIDATE] == 0
+
+
 def test_depth_on_actual_hit_side_is_required() -> None:
     kalshi_row = _kalshi_payload()["normalized_markets"][0]
     kalshi_row["orderbook_enrichment"]["depth_at_best_ask"] = 0.5

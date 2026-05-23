@@ -75,11 +75,29 @@ def _board_row(
     same_payoff: bool,
     blockers: list[str] | None = None,
     missing_fields: list[str] | None = None,
+    strict_blockers: list[str] | None = None,
+    strict_missing_fields: list[str] | None = None,
+    info_blockers: list[str] | None = None,
+    info_missing_fields: list[str] | None = None,
+    include_strict_fields: bool = True,
+    extra_evidence: dict | None = None,
 ) -> dict:
     blockers = blockers or []
     missing_fields = missing_fields or []
     strict_count = 11
-    return {
+    evidence = {
+        "reference_only_blocker": {
+            "name": "reference_only_blocker",
+            "status": "PASS",
+            "strict": True,
+            "blockers": [],
+            "missing_fields": [],
+            "values": {},
+        }
+    }
+    if extra_evidence:
+        evidence.update(extra_evidence)
+    row = {
         "polymarket": {"market_id": poly_id, "question": "Will Team win?"},
         "kalshi": {"ticker": kalshi_ticker, "question": "Will Team win?"},
         "same_payoff": same_payoff,
@@ -87,17 +105,14 @@ def _board_row(
         "strict_comparator_count": strict_count,
         "blockers": blockers,
         "missing_fields": missing_fields,
-        "same_payoff_evidence": {
-            "reference_only_blocker": {
-                "name": "reference_only_blocker",
-                "status": "PASS",
-                "strict": True,
-                "blockers": [],
-                "missing_fields": [],
-                "values": {},
-            }
-        },
+        "same_payoff_evidence": evidence,
     }
+    if include_strict_fields:
+        row["strict_blockers"] = strict_blockers or []
+        row["strict_missing_fields"] = strict_missing_fields or []
+        row["info_blockers"] = info_blockers or []
+        row["info_missing_fields"] = info_missing_fields or []
+    return row
 
 
 def test_attach_same_payoff_evidence_returns_derived_payload_without_mutating_original() -> None:
@@ -135,6 +150,72 @@ def test_non_cleared_pair_keeps_existing_relationship() -> None:
     assert relationship["relationship"] == "NEAR_EQUIVALENT"
     assert relationship["blocking_reasons"] == ["settlement_source_mismatch"]
     assert relationship["same_payoff_board_evidence"]["passed"] is False
+
+
+def test_info_blockers_do_not_block_trusted_relationship_attachment() -> None:
+    board = _board_payload()
+    board["rows"][0] = _board_row(
+        "poly-pass",
+        "KXTEAMA",
+        same_payoff=True,
+        blockers=["polymarket_stale_quote"],
+        missing_fields=["kalshi_fee_model_or_rate"],
+        strict_blockers=[],
+        strict_missing_fields=[],
+        info_blockers=["polymarket_stale_quote"],
+        info_missing_fields=["kalshi_fee_model_or_rate"],
+    )
+
+    derived = attach_same_payoff_evidence(pairs_payload=_pair_payload(), board_payload=board)
+
+    relationship = derived["pairs"][0]["contract_relationship"]
+    assert relationship["relationship"] == "EQUIVALENT"
+    assert relationship["same_payoff"] is True
+    assert relationship["blocking_reasons"] == []
+    assert derived["same_payoff_evidence_attachment"]["trusted_relationship_attached_count"] == 1
+
+
+def test_strict_missing_field_blocks_trusted_relationship() -> None:
+    board = _board_payload()
+    board["rows"][0] = _board_row(
+        "poly-pass",
+        "KXTEAMA",
+        same_payoff=True,
+        missing_fields=["settlement_source"],
+        strict_missing_fields=["settlement_source"],
+    )
+
+    derived = attach_same_payoff_evidence(pairs_payload=_pair_payload(), board_payload=board)
+
+    relationship = derived["pairs"][0]["contract_relationship"]
+    assert relationship["relationship"] == "NEAR_EQUIVALENT"
+    assert relationship["same_payoff_board_evidence"]["passed"] is False
+
+
+def test_legacy_board_row_derives_strict_blockers_from_comparator_flags() -> None:
+    board = _board_payload()
+    board["rows"][0] = _board_row(
+        "poly-pass",
+        "KXTEAMA",
+        same_payoff=True,
+        blockers=["polymarket_stale_quote"],
+        include_strict_fields=False,
+        extra_evidence={
+            "polymarket_quote_depth": {
+                "name": "polymarket_quote_depth",
+                "status": "INFO_BLOCKED",
+                "strict": False,
+                "blockers": ["polymarket_stale_quote"],
+                "missing_fields": [],
+                "values": {},
+            }
+        },
+    )
+
+    derived = attach_same_payoff_evidence(pairs_payload=_pair_payload(), board_payload=board)
+
+    assert derived["pairs"][0]["contract_relationship"]["relationship"] == "EQUIVALENT"
+    assert derived["same_payoff_evidence_attachment"]["trusted_relationship_attached_count"] == 1
 
 
 def test_ambiguous_board_identity_does_not_promote() -> None:
@@ -176,3 +257,4 @@ def test_attach_same_payoff_evidence_cli_writes_derived_file_not_original(tmp_pa
     assert "same_payoff_evidence_attach_status=OK" in stdout
     assert "PAPER" not in stdout
     assert "POSSIBLE_ARB" not in stdout
+    assert "trade" not in stdout.lower()

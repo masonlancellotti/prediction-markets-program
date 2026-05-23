@@ -280,15 +280,17 @@ def _board_row(
     max_quote_age_seconds: float,
 ) -> dict[str, Any]:
     evidence: dict[str, dict[str, Any]] = {}
-    blockers: list[str] = []
-    missing_fields: list[str] = []
+    strict_blockers: list[str] = []
+    strict_missing_fields: list[str] = []
+    info_blockers: list[str] = []
+    info_missing_fields: list[str] = []
     if polymarket is None:
-        blockers.append("missing_polymarket_enriched_market")
-        missing_fields.append("polymarket_enriched_market")
+        strict_blockers.append("missing_polymarket_enriched_market")
+        strict_missing_fields.append("polymarket_enriched_market")
         polymarket = {}
     if kalshi is None:
-        blockers.append("missing_kalshi_enriched_market")
-        missing_fields.append("kalshi_enriched_market")
+        strict_blockers.append("missing_kalshi_enriched_market")
+        strict_missing_fields.append("kalshi_enriched_market")
         kalshi = {}
 
     comparators = [
@@ -309,16 +311,24 @@ def _board_row(
         _quote_comparator("kalshi", kalshi, generated_at, max_quote_age_seconds),
         _fee_comparator(polymarket, kalshi),
     ]
-    for comparator in comparators + info_comparators:
+    for comparator in comparators:
         evidence[comparator["name"]] = comparator
-        blockers.extend(comparator.get("blockers", []))
-        missing_fields.extend(comparator.get("missing_fields", []))
+        strict_blockers.extend(comparator.get("blockers", []))
+        strict_missing_fields.extend(comparator.get("missing_fields", []))
+    for comparator in info_comparators:
+        evidence[comparator["name"]] = comparator
+        info_blockers.extend(comparator.get("blockers", []))
+        info_missing_fields.extend(comparator.get("missing_fields", []))
 
     strict_comparators = comparators
     strict_pass_count = sum(1 for comparator in strict_comparators if comparator["status"] == "PASS")
     strict_same_payoff = strict_pass_count == len(strict_comparators)
-    blockers = sorted(set(blockers))
-    missing_fields = sorted(set(missing_fields))
+    strict_blockers = sorted(set(strict_blockers))
+    strict_missing_fields = sorted(set(strict_missing_fields))
+    info_blockers = sorted(set(info_blockers))
+    info_missing_fields = sorted(set(info_missing_fields))
+    blockers = sorted(set(strict_blockers + info_blockers))
+    missing_fields = sorted(set(strict_missing_fields + info_missing_fields))
     row = {
         "source_ids": {
             "polymarket": _source_id(polymarket, "polymarket"),
@@ -340,6 +350,10 @@ def _board_row(
         "same_payoff": bool(strict_same_payoff),
         "strict_pass_count": strict_pass_count,
         "strict_comparator_count": len(strict_comparators),
+        "strict_blockers": strict_blockers,
+        "strict_missing_fields": strict_missing_fields,
+        "info_blockers": info_blockers,
+        "info_missing_fields": info_missing_fields,
         "blockers": blockers,
         "missing_fields": missing_fields,
         "recommended_next_action": _recommended_next_action(strict_same_payoff, blockers, missing_fields),

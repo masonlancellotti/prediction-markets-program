@@ -191,6 +191,11 @@ def test_exact_same_payoff_fixture_passes_evidence_checks() -> None:
 
     assert row["same_payoff"] is True
     assert row["recommended_next_action"] == "RELATIONSHIP_REVIEW"
+    assert row["strict_blockers"] == []
+    assert row["strict_missing_fields"] == []
+    assert row["info_blockers"] == []
+    assert "kalshi_fee_model_or_rate" in row["info_missing_fields"]
+    assert "polymarket_fee_model_or_rate" in row["info_missing_fields"]
     assert row["blockers"] == []
     assert row["same_payoff_evidence"]["settlement_source"]["status"] == "PASS"
     assert row["same_payoff_evidence"]["outcome_direction_polarity"]["status"] == "PASS"
@@ -498,6 +503,9 @@ def test_mlb_stale_quote_remains_blocker_not_semantic_mismatch() -> None:
     row = _first(_mlb_board(poly=poly))
 
     assert "polymarket_stale_quote" in row["blockers"]
+    assert "polymarket_stale_quote" in row["info_blockers"]
+    assert row["strict_blockers"] == []
+    assert row["strict_missing_fields"] == []
     assert "market_event_entity_mismatch" not in row["blockers"]
     assert "sports_league_team_mismatch" not in row["blockers"]
 

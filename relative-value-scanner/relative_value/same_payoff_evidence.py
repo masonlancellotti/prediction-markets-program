@@ -108,9 +108,10 @@ def _row_clears_for_trusted_relationship(row: dict[str, Any]) -> bool:
         return False
     if int(row.get("strict_comparator_count") or 0) <= 0:
         return False
-    if row.get("blockers") not in (None, []):
+    strict_blockers, strict_missing_fields = _strict_blockers_and_missing(row)
+    if strict_blockers:
         return False
-    if row.get("missing_fields") not in (None, []):
+    if strict_missing_fields:
         return False
     evidence = row.get("same_payoff_evidence")
     if not isinstance(evidence, dict):
@@ -194,10 +195,39 @@ def _evidence_hash(row: dict[str, Any]) -> str:
         "strict_comparator_count": row.get("strict_comparator_count"),
         "blockers": row.get("blockers") or [],
         "missing_fields": row.get("missing_fields") or [],
+        "strict_blockers": row.get("strict_blockers") or [],
+        "strict_missing_fields": row.get("strict_missing_fields") or [],
+        "info_blockers": row.get("info_blockers") or [],
+        "info_missing_fields": row.get("info_missing_fields") or [],
         "same_payoff_evidence": row.get("same_payoff_evidence") or {},
     }
     encoded = json.dumps(evidence_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _strict_blockers_and_missing(row: dict[str, Any]) -> tuple[list[str], list[str]]:
+    if "strict_blockers" in row or "strict_missing_fields" in row:
+        return _string_list(row.get("strict_blockers")), _string_list(row.get("strict_missing_fields"))
+
+    blockers: list[str] = []
+    missing_fields: list[str] = []
+    evidence = row.get("same_payoff_evidence")
+    if not isinstance(evidence, dict):
+        return blockers, missing_fields
+    for comparator in evidence.values():
+        if not isinstance(comparator, dict):
+            continue
+        if comparator.get("strict") is False:
+            continue
+        blockers.extend(_string_list(comparator.get("blockers")))
+        missing_fields.extend(_string_list(comparator.get("missing_fields")))
+    return sorted(set(blockers)), sorted(set(missing_fields))
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return sorted({item for item in value if isinstance(item, str) and item})
 
 
 def _validate_schema_one(label: str, payload: dict[str, Any]) -> None:
