@@ -29,6 +29,7 @@ from relative_value.live_snapshot_matcher import (
 )
 from relative_value.llm_relationship_review_report import review_relationship_report_file
 from relative_value.markout_replay import MarkoutReplayConfig, replay_paper_candidate_markout_files
+from relative_value.market_graph_diagnostics import build_market_graph_diagnostics_files
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot_file
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot
 from relative_value.paper_candidate_evaluator import (
@@ -40,6 +41,7 @@ from relative_value.reference_diagnostics import explain_reference_context_files
 from relative_value.report import write_json_report, write_markdown_report
 from relative_value.scanner import RelativeValueScanner
 from relative_value.same_payoff_board import build_same_payoff_board_files
+from relative_value.same_payoff_evidence import attach_same_payoff_evidence_files
 from relative_value.source_registry import ImplementationStatus, SOURCE_REGISTRY, SourceType
 from relative_value.executable_venue_plan import PLANNED_EXECUTABLE_VENUE_CAPABILITIES
 from venues.kalshi import (
@@ -248,6 +250,34 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "same_payoff_candidate_board.md",
+    )
+
+    attach_same_payoff_parser = subparsers.add_parser(
+        "attach-same-payoff-evidence",
+        help="Write a derived matcher pairs JSON with typed same-payoff board evidence.",
+    )
+    attach_same_payoff_parser.add_argument("--pairs", type=Path, required=True)
+    attach_same_payoff_parser.add_argument("--board", type=Path, required=True)
+    attach_same_payoff_parser.add_argument("--output", type=Path, required=True)
+
+    graph_parser = subparsers.add_parser(
+        "market-graph-diagnostics",
+        help="Build fixture-backed market graph relationship diagnostics for review only.",
+    )
+    graph_parser.add_argument(
+        "--fixture",
+        type=Path,
+        help="Optional local JSON fixture list or object with a markets list.",
+    )
+    graph_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "market_graph_consistency_diagnostics.json",
+    )
+    graph_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "market_graph_consistency_diagnostics.md",
     )
 
     markout_parser = subparsers.add_parser(
@@ -702,6 +732,14 @@ def main(argv: list[str] | None = None) -> int:
             pairs=args.pairs,
             polymarket_enriched=args.polymarket_enriched,
             kalshi_enriched=args.kalshi_enriched,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+    if args.command == "attach-same-payoff-evidence":
+        return attach_same_payoff_evidence(pairs=args.pairs, board=args.board, output=args.output)
+    if args.command == "market-graph-diagnostics":
+        return market_graph_diagnostics(
+            fixture=args.fixture,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
@@ -7123,6 +7161,51 @@ def same_payoff_board(
         f"rows={payload['row_count']} "
         f"strict_same_payoff_passes={payload['strict_same_payoff_pass_count']} "
         f"relationship_review={review_count} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0
+
+
+def attach_same_payoff_evidence(*, pairs: Path, board: Path, output: Path) -> int:
+    try:
+        payload = attach_same_payoff_evidence_files(pairs, board, output)
+    except ValueError as exc:
+        print(f"same_payoff_evidence_attach_status=FAILED message={exc}")
+        return 1
+
+    summary = payload["same_payoff_evidence_attachment"]
+    print(
+        "same_payoff_evidence_attach_status=OK "
+        f"pairs={summary['pair_count']} "
+        f"trusted_relationships={summary['trusted_relationship_attached_count']} "
+        f"diagnostic_relationships={summary['diagnostic_evidence_attached_count']} "
+        f"ambiguous_identities={summary['ambiguous_identity_count']} "
+        f"unmatched_pairs={summary['unmatched_pair_count']} "
+        f"output={output}"
+    )
+    return 0
+
+
+def market_graph_diagnostics(
+    *,
+    fixture: Path | None,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        payload = build_market_graph_diagnostics_files(
+            fixture_path=fixture,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"market_graph_diagnostics_status=FAILED message={exc}")
+        return 1
+
+    print(
+        "market_graph_diagnostics_status=OK "
+        f"edges={payload['edge_count']} "
+        f"mode={payload['data_source_mode']} "
         f"json={json_output} markdown={markdown_output}"
     )
     return 0

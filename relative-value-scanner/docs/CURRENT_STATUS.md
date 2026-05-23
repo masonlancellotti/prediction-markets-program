@@ -42,6 +42,9 @@
 - 2026-05-22 ProphetX Fixture Schema: added fixture-backed `prophetx_research_snapshot_v1` parser and `inspect-prophetx-fixtures` command for local market, depth, settlement, and fee schema inspection; ProphetX remains non-candidate-enabled with no live transport.
 - 2026-05-23 Same-Payoff Board: added saved-file-only `same-payoff-board` diagnostics for Kalshi/Polymarket pairs; it explains strict structural pass/fail evidence and does not mutate matcher/evaluator output or emit readiness.
 - 2026-05-23 Paper Candidate Evaluator: kept the conservative gate that `--accept-unit-mismatch` alone is insufficient; rows still require an existing proven same-payoff relationship object before `PAPER_CANDIDATE`.
+- 2026-05-23 Market Graph Consistency: added fixture-backed `market-graph-diagnostics` for deterministic relationship edges only; outputs remain `WATCH`/`MANUAL_REVIEW`, `STATIC_FIXTURE`, and disconnected from evaluator promotion paths.
+- 2026-05-23 Same-Payoff Evidence Write-Back: added `attach-same-payoff-evidence` to write a derived matcher-pairs file with typed `same_payoff_board_v1` evidence only when strict board rows fully clear; original matcher files are not mutated.
+- 2026-05-23 Paper Candidate Evaluator: tightened same-payoff promotion to allow only allowlisted `same_payoff_board_v1` relationships with `same-payoff-board-v1` classifier evidence and equal strict pass/comparator counts.
 
 ## 2026-05-19 Freshness and Liquidity Hardening
 

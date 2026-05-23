@@ -10,6 +10,7 @@ from typing import Any
 from relative_value._numeric import float_or_none
 from relative_value.contract_relationship import classify_contract_relationship, report_blocking_reasons
 from relative_value.fees import FeeModel, KalshiTieredFeeModel, NoFeeModel
+from relative_value.same_payoff_evidence import SAME_PAYOFF_BOARD_CLASSIFIER_VERSION, SAME_PAYOFF_BOARD_SOURCE
 
 
 SUPPORTED_SCHEMA_VERSION = 1
@@ -21,6 +22,7 @@ DISCLAIMER = (
     "Read-only paper candidate ledger. This is not trading advice, not an order, "
     "not a profit claim, and never emits PAPER or POSSIBLE_ARB."
 )
+ALLOWED_SAME_PAYOFF_RELATIONSHIP_SOURCES = {SAME_PAYOFF_BOARD_SOURCE}
 
 
 @dataclass(frozen=True)
@@ -416,7 +418,20 @@ def _pair_relationship_allows_paper_candidate(pair: dict[str, Any]) -> bool:
     if relationship.get("same_payoff") is not True:
         return False
     blockers = relationship.get("blocking_reasons")
-    if blockers not in (None, []):
+    if blockers != []:
+        return False
+    if relationship.get("source") not in ALLOWED_SAME_PAYOFF_RELATIONSHIP_SOURCES:
+        return False
+    evidence = relationship.get("same_payoff_board_evidence")
+    if not isinstance(evidence, dict):
+        return False
+    if evidence.get("classifier_version") != SAME_PAYOFF_BOARD_CLASSIFIER_VERSION:
+        return False
+    strict_pass_count = evidence.get("strict_pass_count")
+    strict_comparator_count = evidence.get("strict_comparator_count")
+    if strict_pass_count != strict_comparator_count:
+        return False
+    if int(strict_comparator_count or 0) <= 0:
         return False
     return True
 

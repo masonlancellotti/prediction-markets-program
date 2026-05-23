@@ -16,7 +16,7 @@ It produces `reports/paper_candidates_ledger.json` for manual paper-candidate re
 python scan.py evaluate-paper-candidates --pairs reports\live_snapshot_pairs.json --polymarket-enriched reports\polymarket_orderbook_enriched_snapshot.json --kalshi-enriched reports\kalshi_orderbook_enriched_snapshot.json --output reports\paper_candidates_ledger.json
 ```
 
-Use `--accept-unit-mismatch` only when the operator explicitly accepts the unresolved Polymarket-shares versus Kalshi-contracts unit mismatch. Without that flag, otherwise clean positive gaps are capped at `MANUAL_REVIEW`. The flag is not sufficient by itself: otherwise clean rows must also carry an existing proven same-payoff relationship object (`relationship=EQUIVALENT`, `same_payoff=true`, and no relationship blockers) before they can reach `PAPER_CANDIDATE`.
+Use `--accept-unit-mismatch` only when the operator explicitly accepts the unresolved Polymarket-shares versus Kalshi-contracts unit mismatch. Without that flag, otherwise clean positive gaps are capped at `MANUAL_REVIEW`. The flag is not sufficient by itself: otherwise clean rows must also carry an existing proven same-payoff relationship object from the trusted board write-back workflow before they can reach `PAPER_CANDIDATE`.
 
 ## Freshness vs. Saved-File Workflow
 
@@ -53,10 +53,22 @@ Promotion is deterministic and conservative:
 - per-venue, per-leg fee estimates are subtracted
 - unit mismatch warning is always emitted
 - `--accept-unit-mismatch` still requires an existing proven same-payoff relationship object before `PAPER_CANDIDATE`
+- trusted same-payoff relationship source must be allowlisted as `same_payoff_board_v1`
+- trusted evidence must include `same_payoff_board_evidence.classifier_version=same-payoff-board-v1`
+- trusted evidence must have `strict_pass_count == strict_comparator_count`
 
 ## Contract Relationship
 
-Ledger rows include a deterministic `contract_relationship` object re-classified from matcher relationship-level blocking reasons and, where relevant, the unresolved Polymarket-shares versus Kalshi-contracts unit warning. The evaluator does not copy matcher confidence/source through. For any otherwise clean row where `--accept-unit-mismatch` is supplied, the input pair must already include `relationship == EQUIVALENT`, `same_payoff == true`, and no `blocking_reasons`; otherwise the row remains `MANUAL_REVIEW` with `relationship_same_payoff_not_proven`.
+Ledger rows include a deterministic `contract_relationship` object re-classified from matcher relationship-level blocking reasons and, where relevant, the unresolved Polymarket-shares versus Kalshi-contracts unit warning. The evaluator does not trust free-form reason strings or arbitrary sources for promotion. For any otherwise clean row where `--accept-unit-mismatch` is supplied, the input pair must already include:
+
+- `relationship == EQUIVALENT`
+- `same_payoff == true`
+- `blocking_reasons == []`
+- `source == same_payoff_board_v1`
+- `same_payoff_board_evidence.classifier_version == same-payoff-board-v1`
+- `same_payoff_board_evidence.strict_pass_count == strict_comparator_count`
+
+Otherwise the row remains `MANUAL_REVIEW` with `relationship_same_payoff_not_proven`.
 
 This relationship layer is not trade permission. Semantic similarity is not settlement equivalence, sportsbook/reference odds are not executable prices, and a future LLM reviewer may help classify contracts but cannot approve candidates by itself.
 

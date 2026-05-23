@@ -22,6 +22,7 @@ from relative_value.paper_candidate_evaluator import (
     PaperCandidateEvaluatorConfig,
     evaluate_paper_candidates,
 )
+from relative_value.same_payoff_evidence import SAME_PAYOFF_BOARD_CLASSIFIER_VERSION, SAME_PAYOFF_BOARD_SOURCE
 
 
 NOW = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
@@ -146,6 +147,27 @@ def _first(payload: dict) -> dict:
     return payload["ledger"][0]
 
 
+def _trusted_same_payoff_relationship(**overrides) -> dict:
+    relationship = {
+        "relationship": RELATIONSHIP_EQUIVALENT,
+        "same_payoff": True,
+        "confidence": 0.95,
+        "blocking_reasons": [],
+        "manual_review_required": False,
+        "source": SAME_PAYOFF_BOARD_SOURCE,
+        "same_payoff_board_evidence": {
+            "classifier_version": SAME_PAYOFF_BOARD_CLASSIFIER_VERSION,
+            "strict_pass_count": 11,
+            "strict_comparator_count": 11,
+            "board_generated_at": "2026-05-20T11:59:00+00:00",
+            "board_row_id": "poly-1__KXKNICKS",
+            "evidence_hash": "abc123",
+        },
+    }
+    relationship.update(overrides)
+    return relationship
+
+
 def test_clean_positive_gap_caps_at_manual_review_without_unit_ack() -> None:
     row = _first(_evaluate())
 
@@ -204,14 +226,7 @@ def test_accept_unit_mismatch_still_requires_same_payoff_relationship() -> None:
 
 
 def test_equivalent_same_payoff_relationship_can_reach_paper_candidate_with_unit_ack() -> None:
-    relationship = {
-        "relationship": RELATIONSHIP_EQUIVALENT,
-        "same_payoff": True,
-        "confidence": 1.0,
-        "blocking_reasons": [],
-        "manual_review_required": False,
-        "source": "test_deterministic_fixture",
-    }
+    relationship = _trusted_same_payoff_relationship()
     payload = _evaluate(pairs=_pairs_payload(contract_relationship=relationship), accept_unit_mismatch=True)
     row = _first(payload)
 
@@ -221,6 +236,44 @@ def test_equivalent_same_payoff_relationship_can_reach_paper_candidate_with_unit
     assert row["contract_relationship"]["same_payoff"] is True
     assert row["contract_relationship"]["blocking_reasons"] == []
     assert payload["counts_by_action"][ACTION_PAPER_CANDIDATE] == 1
+
+
+def test_equivalent_same_payoff_unknown_source_is_manual_review() -> None:
+    relationship = _trusted_same_payoff_relationship(source="test_deterministic_fixture")
+
+    row = _first(_evaluate(pairs=_pairs_payload(contract_relationship=relationship), accept_unit_mismatch=True))
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["missed_fill_reason"] == "relationship_same_payoff_not_proven"
+
+
+def test_equivalent_same_payoff_missing_classifier_version_is_manual_review() -> None:
+    relationship = _trusted_same_payoff_relationship()
+    relationship["same_payoff_board_evidence"].pop("classifier_version")
+
+    row = _first(_evaluate(pairs=_pairs_payload(contract_relationship=relationship), accept_unit_mismatch=True))
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["missed_fill_reason"] == "relationship_same_payoff_not_proven"
+
+
+def test_equivalent_same_payoff_with_blockers_is_manual_review() -> None:
+    relationship = _trusted_same_payoff_relationship(blocking_reasons=["settlement_source_mismatch"])
+
+    row = _first(_evaluate(pairs=_pairs_payload(contract_relationship=relationship), accept_unit_mismatch=True))
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["missed_fill_reason"] == "relationship_same_payoff_not_proven"
+
+
+def test_equivalent_same_payoff_strict_count_mismatch_is_manual_review() -> None:
+    relationship = _trusted_same_payoff_relationship()
+    relationship["same_payoff_board_evidence"]["strict_pass_count"] = 10
+
+    row = _first(_evaluate(pairs=_pairs_payload(contract_relationship=relationship), accept_unit_mismatch=True))
+
+    assert row["action"] == ACTION_MANUAL_REVIEW
+    assert row["missed_fill_reason"] == "relationship_same_payoff_not_proven"
 
 
 def test_ledger_shape_has_required_nested_keys_and_null_markouts() -> None:

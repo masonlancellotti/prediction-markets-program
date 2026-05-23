@@ -40,6 +40,18 @@ Strict comparators determine whether the board row can set `same_payoff=true` in
 
 Board `same_payoff=true` is diagnostic evidence only. It is not trade permission and does not mutate any matcher or evaluator output.
 
+## Derived Evidence Write-Back
+
+The board can be attached to matcher pairs only through a derived-file workflow:
+
+```powershell
+python scan.py attach-same-payoff-evidence --pairs reports\live_snapshot_pairs.json --board reports\same_payoff_candidate_board.json --output reports\live_snapshot_pairs_with_same_payoff_evidence.json
+```
+
+This command reads saved JSON files only and writes a new matcher-pairs JSON. It does not mutate the original pairs file. Rows are joined by stable pair identity, currently Polymarket `market_id` and Kalshi `ticker` / `market_ticker` / `market_id`. Ambiguous or missing identities fail closed and do not promote.
+
+Only board rows with `same_payoff=true`, all strict comparators passing, no blockers, no missing strict fields, and an executable Kalshi x Polymarket leg check can replace the derived pair's `contract_relationship` with trusted `source=same_payoff_board_v1` evidence.
+
 ## Info-Only Comparators
 
 Info-only comparators add operational blockers and missing-field diagnostics but do not prove relationship equivalence:
@@ -95,7 +107,7 @@ These are not execution instructions.
 - `same_payoff=true`
 - no relationship blockers
 
-The board can help collect deterministic evidence for future human review, but it does not write that relationship object and does not approve paper candidates.
+The board can help collect deterministic evidence for future human review. The derived write-back command can write a trusted relationship object only when the strict board evidence fully clears; the evaluator still applies freshness, depth, fee, settlement, unit-acknowledgement, and source-allowlist gates before any `PAPER_CANDIDATE` action.
 
 ## Non-Goals
 
@@ -107,6 +119,7 @@ The board does not:
 - authenticate, access accounts, balances, positions, wallets, keys, or sessions
 - place, cancel, sign, or route orders
 - mutate matcher output
+- mutate original matcher output
 - mutate evaluator output
 - use reference-only sources as executable legs
 - emit `PAPER_CANDIDATE`, `PAPER`, `POSSIBLE_ARB`, or live readiness
