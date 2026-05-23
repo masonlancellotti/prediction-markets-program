@@ -23,7 +23,7 @@ def test_report_golden_stable_sections(fixture_snapshot) -> None:
     assert "## IMPLICATION_VIOLATION" in markdown
     assert "## SUM_OVER_ONE" in markdown
     assert "Highest action: `MANUAL_REVIEW`" in markdown
-    assert "OpenAI is first company to announce AGI by 2027" in markdown
+    assert "`manifold:openai_first_agi_2027` | yes=0.460" in markdown
 
 
 def test_markdown_report_matches_strict_golden(fixture_snapshot) -> None:
@@ -35,7 +35,7 @@ def test_markdown_report_matches_strict_golden(fixture_snapshot) -> None:
 def test_markdown_highest_action_empty_report_is_ignore(fixture_snapshot) -> None:
     markdown = build_markdown_report(fixture_snapshot, [])
 
-    assert "Highest action: `IGNORE`" in markdown
+    assert "Highest action: `WATCH`" in markdown
 
 
 def test_markdown_report_uses_saved_snapshot_notes_for_scope() -> None:

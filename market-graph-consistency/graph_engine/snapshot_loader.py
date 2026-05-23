@@ -62,6 +62,16 @@ def _string_list(value: Any) -> list[str]:
     return []
 
 
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None or value == "":
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
 def _first_present(payload: dict[str, Any], keys: Iterable[str]) -> Any:
     for key in keys:
         value = payload.get(key)
@@ -159,7 +169,20 @@ def _convert_row(
         as_of=_row_as_of(row, snapshot_as_of, path, index),
         raw={"source_snapshot_file": path.name, "normalized_row": row},
         source_snapshot_id=source_snapshot_id,
+        reference_only=(
+            _bool_value(_first_present(row, ["reference_only", "is_reference_only"]))
+            or payload_flag(_first_present(row, ["source_type", "permission"]), "REFERENCE_ONLY")
+            or payload_flag(top_source, "REFERENCE_ONLY")
+        ),
+        settlement_source=_first_present(row, ["settlement_source", "resolution_source"]),
+        settlement_source_proven=_bool_value(_first_present(row, ["settlement_source_proven", "resolution_source_proven"])),
+        observable=_first_present(row, ["observable", "underlying", "asset"]),
+        window=_first_present(row, ["window", "settlement_window", "date_window"]),
     )
+
+
+def payload_flag(value: str | None, flag: str) -> bool:
+    return str(value or "").strip().upper() == flag
 
 
 def _load_one_snapshot(path: Path) -> tuple[list[MarketNode], SavedSnapshotMetadata]:

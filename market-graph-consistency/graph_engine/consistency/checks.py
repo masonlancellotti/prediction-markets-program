@@ -9,6 +9,7 @@ from graph_engine.consistency.tolerances import (
     spread_buffer,
 )
 from graph_engine.models import (
+    Action,
     ConsistencyViolation,
     ExclusionCompleteness,
     ExclusionSet,
@@ -20,6 +21,8 @@ from graph_engine.models import (
 )
 from graph_engine.relationships.confidence import combine_confidences
 
+MAX_NODE_AGE_SECONDS = 24 * 60 * 60
+
 
 def _node(snapshot: GraphSnapshot, market_id: str) -> MarketNode:
     try:
@@ -30,6 +33,94 @@ def _node(snapshot: GraphSnapshot, market_id: str) -> MarketNode:
 
 def _edge_confidence(edge: RelationshipEdge) -> float:
     return combine_confidences(edge.confidence, DEFAULT_MARKET_SIGNAL_CONFIDENCE)
+
+
+def _is_stale(snapshot: GraphSnapshot, node: MarketNode, max_node_age_seconds: int = MAX_NODE_AGE_SECONDS) -> bool:
+    return (snapshot.as_of - node.as_of).total_seconds() > max_node_age_seconds
+
+
+def _pair_blockers(snapshot: GraphSnapshot, edge: RelationshipEdge, src: MarketNode, dst: MarketNode) -> list[str]:
+    blockers: list[str] = []
+    if src.reference_only or dst.reference_only:
+        blockers.append("reference_only_node")
+    if _is_stale(snapshot, src) or _is_stale(snapshot, dst):
+        blockers.append("stale_input")
+    if edge.source.value == "llm" and edge.reviewed_by is None:
+        blockers.append("llm_edge_unreviewed")
+    return blockers
+
+
+def _cap_action(action, blockers: list[str]):
+    if "llm_edge_unreviewed" in blockers and action == Action.MANUAL_REVIEW:
+        return Action.WATCH
+    return action
+
+
+def _cap_reason(blockers: list[str]) -> str:
+    if "reference_only_node" in blockers:
+        return "reference_only_diagnostic_only"
+    if "stale_input" in blockers:
+        return "stale_input_manual_review_cap"
+    if "llm_edge_unreviewed" in blockers:
+        return "llm_unreviewed_watch_cap"
+    return "diagnostic_only"
+
+
+def _review_status(edge: RelationshipEdge) -> str:
+    if edge.reviewed_by:
+        return "reviewed"
+    if edge.source.value == "manual":
+        return "manual_unreviewed"
+    return "unreviewed"
+
+
+def _diagnostic_wording_violation(
+    snapshot: GraphSnapshot,
+    edge: RelationshipEdge,
+    explanation: str,
+    review_questions: list[str],
+    blockers: list[str],
+) -> ConsistencyViolation:
+    kind = ViolationKind.AMBIGUOUS_WORDING
+    confidence = min(edge.confidence, 0.6)
+    action = _cap_action(action_for_violation(kind, confidence, 0.0), blockers)
+    return ConsistencyViolation(
+        violation_id=f"{kind.value}:{edge.edge_id}",
+        snapshot_id=snapshot.snapshot_id,
+        kind=kind,
+        involved_market_ids=[edge.src_market_id, edge.dst_market_id],
+        involved_edge_ids=[edge.edge_id],
+        magnitude=0.0,
+        raw_gap=0.0,
+        spread_adjusted_gap=0.0,
+        confidence=confidence,
+        action=action,
+        explanation=explanation,
+        review_questions=review_questions,
+        blockers=blockers,
+        edge_source=edge.source.value,
+        reviewed_by=edge.reviewed_by,
+        review_status=_review_status(edge),
+        max_action_cap_reason=_cap_reason(blockers),
+    )
+
+
+def _has_settlement_proof(edge: RelationshipEdge, src: MarketNode, dst: MarketNode) -> bool:
+    if edge.settlement_source_proven:
+        return True
+    return bool(
+        src.settlement_source_proven
+        and dst.settlement_source_proven
+        and src.settlement_source
+        and src.settlement_source == dst.settlement_source
+    )
+
+
+def _same_threshold_basis(edge: RelationshipEdge, src: MarketNode, dst: MarketNode) -> bool:
+    observables = {value for value in (edge.observable, src.observable, dst.observable) if value}
+    windows = {value for value in (edge.window, src.window, dst.window) if value}
+    settlement_sources = {value for value in (src.settlement_source, dst.settlement_source) if value}
+    return len(observables) <= 1 and len(windows) <= 1 and len(settlement_sources) <= 1
 
 
 def _make_pair_violation(
@@ -44,7 +135,22 @@ def _make_pair_violation(
     magnitude = max(0.0, adjusted_gap)
     if magnitude <= 1e-12:
         return None
+    src = _node(snapshot, edge.src_market_id)
+    dst = _node(snapshot, edge.dst_market_id)
+    blockers = _pair_blockers(snapshot, edge, src, dst)
+    if "reference_only_node" in blockers:
+        return _diagnostic_wording_violation(
+            snapshot,
+            edge,
+            "One or more nodes is reference-only, so no hard probability-bound finding is emitted.",
+            [
+                "Should this reference-only source remain observability-only?",
+                "Is there a non-reference node pair with reviewed settlement wording?",
+            ],
+            blockers,
+        )
     confidence = _edge_confidence(edge)
+    action = _cap_action(action_for_violation(kind, confidence, magnitude), blockers)
     return ConsistencyViolation(
         violation_id=f"{kind.value}:{edge.edge_id}",
         snapshot_id=snapshot.snapshot_id,
@@ -55,9 +161,14 @@ def _make_pair_violation(
         raw_gap=raw_gap,
         spread_adjusted_gap=adjusted_gap,
         confidence=confidence,
-        action=action_for_violation(kind, confidence, magnitude),
+        action=action,
         explanation=explanation,
         review_questions=review_questions,
+        blockers=blockers,
+        edge_source=edge.source.value,
+        reviewed_by=edge.reviewed_by,
+        review_status=_review_status(edge),
+        max_action_cap_reason=_cap_reason(blockers),
     )
 
 
@@ -97,6 +208,19 @@ def check_subset(snapshot: GraphSnapshot, edge: RelationshipEdge) -> Consistency
         narrower = _node(snapshot, edge.dst_market_id)
         broader = _node(snapshot, edge.src_market_id)
 
+    blockers = _pair_blockers(snapshot, edge, narrower, broader)
+    if not _same_threshold_basis(edge, narrower, broader):
+        return _diagnostic_wording_violation(
+            snapshot,
+            edge,
+            "Subset/superset edge lacks same observable, settlement source, or window proof.",
+            [
+                "Do both threshold markets use the same observable?",
+                "Do both resolve from the same source and date window?",
+            ],
+            blockers + ["threshold_basis_mismatch"],
+        )
+
     raw_gap = narrower.probability - broader.probability
     adjusted_gap = raw_gap - DEFAULT_EDGE_TOLERANCE - spread_buffer(narrower.spread, broader.spread)
     return _make_pair_violation(
@@ -122,6 +246,18 @@ def check_same_event_reworded(snapshot: GraphSnapshot, edge: RelationshipEdge) -
         return None
     src = _node(snapshot, edge.src_market_id)
     dst = _node(snapshot, edge.dst_market_id)
+    blockers = _pair_blockers(snapshot, edge, src, dst)
+    if not _has_settlement_proof(edge, src, dst):
+        return _diagnostic_wording_violation(
+            snapshot,
+            edge,
+            "Same-event reworded edge lacks settlement-source proof and is downgraded to wording review.",
+            [
+                "What source proves both markets resolve identically?",
+                "Do the contracts use the same settlement source and date window?",
+            ],
+            blockers + ["settlement_source_not_proven"],
+        )
     raw_gap = abs(src.probability - dst.probability)
     adjusted_gap = raw_gap - DEFAULT_REWORD_TOLERANCE - spread_buffer(src.spread, dst.spread)
     return _make_pair_violation(
@@ -145,8 +281,12 @@ def check_same_event_reworded(snapshot: GraphSnapshot, edge: RelationshipEdge) -
 def check_ambiguous_wording(snapshot: GraphSnapshot, edge: RelationshipEdge) -> ConsistencyViolation | None:
     if edge.relation != RelationshipType.AMBIGUOUS:
         return None
+    src = _node(snapshot, edge.src_market_id)
+    dst = _node(snapshot, edge.dst_market_id)
+    blockers = _pair_blockers(snapshot, edge, src, dst)
     confidence = edge.confidence
     kind = ViolationKind.AMBIGUOUS_WORDING
+    action = _cap_action(action_for_violation(kind, confidence, 0.0), blockers)
     return ConsistencyViolation(
         violation_id=f"{kind.value}:{edge.edge_id}",
         snapshot_id=snapshot.snapshot_id,
@@ -157,18 +297,25 @@ def check_ambiguous_wording(snapshot: GraphSnapshot, edge: RelationshipEdge) -> 
         raw_gap=0.0,
         spread_adjusted_gap=0.0,
         confidence=confidence,
-        action=action_for_violation(kind, confidence, 0.0),
+        action=action,
         explanation="The relationship is intentionally marked ambiguous and needs human wording review before any hard constraint is used.",
         review_questions=[
             "What exact relationship, if any, should be promoted from this ambiguous edge?",
             "Which resolution words create the ambiguity?",
             "Should this remain documentation-only until more snapshots are available?",
         ],
+        blockers=blockers,
+        edge_source=edge.source.value,
+        reviewed_by=edge.reviewed_by,
+        review_status=_review_status(edge),
+        max_action_cap_reason=_cap_reason(blockers),
     )
 
 
 def check_exclusion_set(snapshot: GraphSnapshot, exclusion: ExclusionSet) -> ConsistencyViolation | None:
     nodes = [_node(snapshot, market_id) for market_id in exclusion.member_market_ids]
+    if any(node.reference_only for node in nodes):
+        return None
     raw_sum = sum(node.probability for node in nodes)
     tolerance = exclusion.tolerance if exclusion.tolerance is not None else DEFAULT_EXCLUSION_TOLERANCE
     raw_gap = raw_sum - 1.0
@@ -179,6 +326,7 @@ def check_exclusion_set(snapshot: GraphSnapshot, exclusion: ExclusionSet) -> Con
     base_confidence = 0.95 if exclusion.completeness == ExclusionCompleteness.PARTITION else 0.75
     confidence = combine_confidences(base_confidence, DEFAULT_MARKET_SIGNAL_CONFIDENCE)
     kind = ViolationKind.SUM_OVER_ONE
+    blockers = ["stale_input"] if any(_is_stale(snapshot, node) for node in nodes) else []
     return ConsistencyViolation(
         violation_id=f"{kind.value}:{exclusion.set_id}",
         snapshot_id=snapshot.snapshot_id,
@@ -199,4 +347,8 @@ def check_exclusion_set(snapshot: GraphSnapshot, exclusion: ExclusionSet) -> Con
             "Is the set complete or only a subset of possible winners?",
             "Do venue rules allow ties, cancellations, or different resolution windows?",
         ],
+        blockers=blockers,
+        edge_source="manual",
+        review_status="manual_unreviewed",
+        max_action_cap_reason=_cap_reason(blockers),
     )

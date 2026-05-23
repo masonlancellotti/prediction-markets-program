@@ -18,6 +18,7 @@ Future agents should read these first:
 - Do not add account credentials, execution, live adapters, private APIs, or real API calls in tests.
 - Highest action remains `MANUAL_REVIEW`.
 - LLM behavior must remain optional, structured, auditable, and never a source of direct prices or direct recommendations.
+- Reference-only nodes, stale nodes, unreviewed LLM edges, missing SAME_EVENT_REWORDED settlement proof, and mismatched threshold-chain basis must stay diagnostic-only and may not become hard approval signals.
 
 ## Invariants
 
@@ -26,6 +27,7 @@ Future agents should read these first:
 - Every relationship must validate referenced market ids.
 - Mutual exclusion is a hyperedge (`ExclusionSet`), not pairwise.
 - Reports must keep action labels inside the `IGNORE` / `WATCH` / `MANUAL_REVIEW` ladder.
+- Violation reports must not add PnL/profit/dollar/fill/size/edge-bps/execution/promoted-action fields; magnitude remains probability-space only.
 
 ## Commands Run
 
@@ -51,6 +53,7 @@ Select-String -Path reports\graph_consistency_summary.* -Pattern 'TRADE|PAPER|PO
 - JSON and Markdown reports.
 - Report guardrail tests.
 - LLM-source confidence cap and AMBIGUOUS_WORDING action cap enforced.
+- Reference-only, stale-node, settlement-proof, threshold-basis, and unreviewed-LLM caps are tested.
 - Read-only schema-v1 saved snapshot loader prototype.
 - Snapshot reports use `GraphSnapshot.notes`; JSON reports serialize notes.
 - No-usable-snapshots fallback path is tested.

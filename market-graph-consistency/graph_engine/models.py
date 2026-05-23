@@ -22,6 +22,7 @@ class RelationshipSource(str, Enum):
     MANUAL = "manual"
     LLM = "llm"
     HEURISTIC = "heuristic"
+    FIXTURE = "fixture"
     MIXED = "mixed"
 
 
@@ -102,6 +103,16 @@ def ensure_nonnegative(value: float | int | None, field_name: str) -> float | No
     return numeric
 
 
+def coerce_bool(value: bool | str | int | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
 @dataclass
 class MarketNode:
     market_id: str
@@ -121,6 +132,11 @@ class MarketNode:
     as_of: datetime
     raw: dict[str, Any] = field(default_factory=dict)
     source_snapshot_id: str | None = None
+    reference_only: bool = False
+    settlement_source: str | None = None
+    settlement_source_proven: bool = False
+    observable: str | None = None
+    window: str | None = None
 
     def __post_init__(self) -> None:
         if not self.market_id or ":" not in self.market_id:
@@ -135,6 +151,11 @@ class MarketNode:
         self.entities = list(self.entities)
         self.themes = list(self.themes)
         self.raw = dict(self.raw)
+        self.reference_only = coerce_bool(self.reference_only)
+        self.settlement_source = str(self.settlement_source) if self.settlement_source is not None else None
+        self.settlement_source_proven = coerce_bool(self.settlement_source_proven)
+        self.observable = str(self.observable) if self.observable is not None else None
+        self.window = str(self.window) if self.window is not None else None
 
     @property
     def probability(self) -> float:
@@ -169,6 +190,11 @@ class MarketNode:
             "as_of": self.as_of.isoformat(),
             "raw": dict(self.raw),
             "source_snapshot_id": self.source_snapshot_id,
+            "reference_only": self.reference_only,
+            "settlement_source": self.settlement_source,
+            "settlement_source_proven": self.settlement_source_proven,
+            "observable": self.observable,
+            "window": self.window,
         }
 
     @classmethod
@@ -188,6 +214,9 @@ class RelationshipEdge:
     evidence: list[str]
     created_at: datetime
     reviewed_by: str | None = None
+    settlement_source_proven: bool = False
+    observable: str | None = None
+    window: str | None = None
 
     def __post_init__(self) -> None:
         if not self.edge_id:
@@ -199,6 +228,9 @@ class RelationshipEdge:
             self.confidence = min(self.confidence, 0.6)
         self.created_at = parse_datetime(self.created_at, "created_at")
         self.evidence = list(self.evidence)
+        self.settlement_source_proven = coerce_bool(self.settlement_source_proven)
+        self.observable = str(self.observable) if self.observable is not None else None
+        self.window = str(self.window) if self.window is not None else None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -212,6 +244,9 @@ class RelationshipEdge:
             "evidence": list(self.evidence),
             "created_at": self.created_at.isoformat(),
             "reviewed_by": self.reviewed_by,
+            "settlement_source_proven": self.settlement_source_proven,
+            "observable": self.observable,
+            "window": self.window,
         }
 
     @classmethod
@@ -311,6 +346,12 @@ class ConsistencyViolation:
     action: Action
     explanation: str
     review_questions: list[str]
+    blockers: list[str] = field(default_factory=list)
+    edge_source: str | None = None
+    reviewed_by: str | None = None
+    review_status: str = "unreviewed"
+    max_action_cap: str = "MANUAL_REVIEW"
+    max_action_cap_reason: str = "diagnostic_only"
 
     def __post_init__(self) -> None:
         if not self.violation_id:
@@ -324,6 +365,12 @@ class ConsistencyViolation:
         self.spread_adjusted_gap = float(self.spread_adjusted_gap)
         self.confidence = ensure_probability(self.confidence, "confidence") or 0.0
         self.review_questions = list(self.review_questions)
+        self.blockers = list(self.blockers)
+        self.edge_source = str(self.edge_source) if self.edge_source is not None else None
+        self.reviewed_by = str(self.reviewed_by) if self.reviewed_by is not None else None
+        self.review_status = str(self.review_status)
+        self.max_action_cap = str(self.max_action_cap)
+        self.max_action_cap_reason = str(self.max_action_cap_reason)
 
     @property
     def rank_score(self) -> float:
@@ -337,12 +384,19 @@ class ConsistencyViolation:
             "involved_market_ids": list(self.involved_market_ids),
             "involved_edge_ids": list(self.involved_edge_ids),
             "magnitude": round(self.magnitude, 6),
+            "magnitude_unit": "probability",
             "raw_gap": round(self.raw_gap, 6),
             "spread_adjusted_gap": round(self.spread_adjusted_gap, 6),
             "confidence": round(self.confidence, 6),
             "action": _enum_value(self.action),
             "explanation": self.explanation,
             "review_questions": list(self.review_questions),
+            "blockers": list(self.blockers),
+            "edge_source": self.edge_source,
+            "reviewed_by": self.reviewed_by,
+            "review_status": self.review_status,
+            "max_action_cap": self.max_action_cap,
+            "max_action_cap_reason": self.max_action_cap_reason,
         }
 
     @classmethod

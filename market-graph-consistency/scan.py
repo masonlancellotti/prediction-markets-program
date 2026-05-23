@@ -17,7 +17,7 @@ RELATIONSHIPS_DIR = PROJECT_ROOT / "relationships"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Offline semantic market graph consistency scanner.")
     parser.add_argument(
         "--snapshots-dir",
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Explicit saved schema-v1 normalized snapshot JSON file. May be provided more than once.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _load_fixture_mode():
@@ -60,8 +60,8 @@ def _load_snapshot_mode(args: argparse.Namespace):
     return snapshot, source_metadata, "saved_snapshots"
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     if args.snapshots_dir or args.snapshot_file:
         snapshot, source_metadata, mode = _load_snapshot_mode(args)
     else:
@@ -72,15 +72,21 @@ def main() -> int:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     json_path = REPORTS_DIR / "graph_consistency_summary.json"
     md_path = REPORTS_DIR / "graph_consistency_summary.md"
+    diagnostics_json_path = REPORTS_DIR / "market_graph_consistency_diagnostics.json"
+    diagnostics_md_path = REPORTS_DIR / "market_graph_consistency_diagnostics.md"
 
     write_json_report(snapshot, violations, json_path, source_metadata)
     write_markdown_report(snapshot, violations, md_path)
+    write_json_report(snapshot, violations, diagnostics_json_path, source_metadata)
+    write_markdown_report(snapshot, violations, diagnostics_md_path)
 
     print(f"Mode: {mode}")
     print(f"Loaded {len(snapshot.nodes)} markets, {len(snapshot.edges)} edges, {len(snapshot.exclusion_sets)} exclusion sets.")
     print(f"Found {len(violations)} review findings.")
     print(f"Wrote {json_path}")
     print(f"Wrote {md_path}")
+    print(f"Wrote {diagnostics_json_path}")
+    print(f"Wrote {diagnostics_md_path}")
     return 0
 
 

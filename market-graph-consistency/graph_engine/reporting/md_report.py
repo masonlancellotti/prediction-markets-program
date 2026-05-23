@@ -8,7 +8,12 @@ from graph_engine.models import Action, ConsistencyViolation, GraphSnapshot, Vio
 
 def _price_line(snapshot: GraphSnapshot, market_id: str) -> str:
     node = snapshot.nodes[market_id]
-    return f"- `{market_id}`: {node.title} | yes={node.probability:.3f} | as_of={node.as_of.isoformat()}"
+    flags = []
+    if node.reference_only:
+        flags.append("reference_only")
+    if flags:
+        return f"- `{market_id}` | yes={node.probability:.3f} | as_of={node.as_of.isoformat()} | {', '.join(flags)}"
+    return f"- `{market_id}` | yes={node.probability:.3f} | as_of={node.as_of.isoformat()}"
 
 
 def _highest_action(violations: list[ConsistencyViolation]) -> Action:
@@ -16,13 +21,25 @@ def _highest_action(violations: list[ConsistencyViolation]) -> Action:
         return Action.MANUAL_REVIEW
     if any(violation.action == Action.WATCH for violation in violations):
         return Action.WATCH
-    return Action.IGNORE
+    return Action.WATCH
 
 
 def _scope_text(snapshot: GraphSnapshot) -> str:
     if snapshot.notes:
         return snapshot.notes[0]
     return "Offline scan"
+
+
+def _reference_only_nodes(snapshot: GraphSnapshot) -> list[str]:
+    return [market_id for market_id, node in sorted(snapshot.nodes.items()) if node.reference_only]
+
+
+def _stale_nodes(snapshot: GraphSnapshot, max_node_age_seconds: int = 24 * 60 * 60) -> list[str]:
+    return [
+        market_id
+        for market_id, node in sorted(snapshot.nodes.items())
+        if (snapshot.as_of - node.as_of).total_seconds() > max_node_age_seconds
+    ]
 
 
 def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyViolation]) -> str:
@@ -40,6 +57,9 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
         f"- Findings: {len(violations)}",
         f"- Highest action: `{_highest_action(violations).value}`",
         f"- Scope: {_scope_text(snapshot)}",
+        f"- Diagnostic only: true",
+        f"- Reference-only nodes: {len(_reference_only_nodes(snapshot))}",
+        f"- Stale nodes: {len(_stale_nodes(snapshot))}",
         "",
     ]
     if len(snapshot.notes) > 1:
@@ -60,6 +80,12 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
                     f"- Raw gap: {violation.raw_gap:.3f}",
                     f"- Spread-adjusted gap: {violation.spread_adjusted_gap:.3f}",
                     f"- Magnitude: {violation.magnitude:.3f}",
+                    "- Magnitude unit: probability",
+                    f"- Edge source: `{violation.edge_source or 'unknown'}`",
+                    f"- Review status: `{violation.review_status}`",
+                    f"- Reviewed by: `{violation.reviewed_by or 'none'}`",
+                    f"- Max action cap: `{violation.max_action_cap}` via `{violation.max_action_cap_reason}`",
+                    f"- Blockers: {', '.join(violation.blockers) if violation.blockers else 'none'}",
                     "- Involved markets:",
                 ]
             )

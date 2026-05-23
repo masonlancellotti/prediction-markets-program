@@ -21,6 +21,7 @@ Last updated: 2026-05-20.
 - JSON reports serialize `GraphSnapshot.notes`.
 - Snapshot-mode no-usable-snapshots fallback is covered by tests.
 - Generated reports in `reports/`.
+- Hardened graph diagnostics with reference-only node handling, SAME_EVENT_REWORDED settlement-source proof gates, threshold-chain same-basis checks, stale-node blockers, LLM-source action caps, probability-only magnitude metadata, and report summaries for edge source/review/stale/reference-only status.
 
 ## Commands Run
 
@@ -44,7 +45,7 @@ git diff --stat
 
 - `python scan.py` loads 7 fixture markets, 5 edges, and 1 exclusion set.
 - `python scan.py --snapshots-dir "../relative-value-scanner/reports"` loaded 59 saved schema-v1 snapshot markets in read-only inspection mode during this run.
-- The scan writes `reports/graph_consistency_summary.json` and `reports/graph_consistency_summary.md`.
+- The scan writes `reports/graph_consistency_summary.json`, `reports/graph_consistency_summary.md`, `reports/market_graph_consistency_diagnostics.json`, and `reports/market_graph_consistency_diagnostics.md`.
 - The fixture report contains known findings for implication, subset, rewording, exclusion-set sum, and ambiguous wording.
 - Saved snapshot prototype mode intentionally loads no relationships and produced 0 findings in this run.
 - Saved snapshot Markdown scope uses saved snapshot notes instead of fixture wording.
@@ -53,6 +54,7 @@ git diff --stat
 - Markdown report highest action is computed from actual violations.
 - LLM-source confidence cap and `AMBIGUOUS_WORDING` action cap are enforced.
 - Report guardrail tests assert prohibited uppercase action tokens are absent from generated reports.
+- Violation JSON is guarded against PnL/profit/dollar/fill/size/edge-bps/execution/promoted-action fields and reports magnitude in probability units only.
 - Direct report guardrail command returned no matches.
 
 ## Stubbed Or Mocked
