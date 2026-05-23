@@ -112,13 +112,20 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
             universe_id="nhl_stanley_cup_kxnhl",
             label="NHL Stanley Cup / KXNHL",
             category="sports_championship_outright",
-            polymarket_snapshot=live / "nhl_polymarket_snapshot.json",
-            kalshi_snapshot=live / "nhl_kalshi_snapshot.json",
+            polymarket_snapshot=reports / "nhl_kxnhl_polymarket_snapshot.json",
+            kalshi_snapshot=reports / "nhl_kxnhl_kalshi_snapshot.json",
+            pairs=reports / "nhl_stanley_cup_pairs.json",
+            board=reports / "nhl_stanley_cup_same_payoff_board.json",
+            derived_pairs=reports / "nhl_stanley_cup_pairs_with_evidence.json",
+            evaluator=reports / "nhl_stanley_cup_evaluator.json",
+            polymarket_enriched=reports / "nhl_kxnhl_polymarket_enriched.json",
+            kalshi_enriched=reports / "nhl_kxnhl_kalshi_enriched.json",
             overlap_report=live / "nhl_live_overlap_universe_report.json",
             recommended_fetch_command=(
                 "python scan.py fetch-live-overlap-universe --category sports --query NHL "
                 "--output-dir reports/live_readonly --report-dir reports/live_readonly --label nhl"
             ),
+            recommended_pair_command="python scan.py build-nhl-stanley-cup-pairs",
         ),
         UniverseSpec(
             universe_id="btc_thresholds",

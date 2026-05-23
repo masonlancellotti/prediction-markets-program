@@ -36,6 +36,7 @@ from relative_value.mlb_same_scope_audit import build_mlb_world_series_pairs_fil
 from relative_value.mlb_same_scope_audit import diagnose_mlb_same_scope_targeting_files
 from relative_value.mlb_world_series_execution_diagnostics import diagnose_mlb_world_series_execution_blockers_files
 from relative_value.mlb_world_series_execution_diagnostics import diagnose_mlb_world_series_evaluator_blockers_files
+from relative_value.nhl_same_scope import build_nhl_stanley_cup_pairs_files
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot_file
 from relative_value.orderbook_enrichment import enrich_orderbook_snapshot
 from relative_value.paper_candidate_evaluator import (
@@ -431,6 +432,33 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=PROJECT_ROOT / "reports" / "live_readonly_match_report.json",
         help="Optional saved prior matcher report used only to explain old ranking behavior.",
+    )
+
+    nhl_sc_pairs_parser = subparsers.add_parser(
+        "build-nhl-stanley-cup-pairs",
+        help="Build saved-file-only NHL Stanley Cup Kalshi/Polymarket candidate pairs by team entity.",
+    )
+    nhl_sc_pairs_parser.add_argument(
+        "--polymarket-snapshot",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "nhl_kxnhl_polymarket_snapshot.json",
+        help="Saved NHL-targeted Polymarket snapshot.",
+    )
+    nhl_sc_pairs_parser.add_argument(
+        "--kalshi-snapshot",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "nhl_kxnhl_kalshi_snapshot.json",
+        help="Saved Kalshi KXNHL snapshot.",
+    )
+    nhl_sc_pairs_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "nhl_stanley_cup_pairs.json",
+    )
+    nhl_sc_pairs_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "nhl_stanley_cup_pairs.md",
     )
 
     mlb_ws_paper_check_parser = subparsers.add_parser(
@@ -1054,6 +1082,13 @@ def main(argv: list[str] | None = None) -> int:
             json_output=args.json_output,
             markdown_output=args.markdown_output,
             match_report=args.match_report,
+        )
+    if args.command == "build-nhl-stanley-cup-pairs":
+        return build_nhl_stanley_cup_pairs(
+            polymarket_snapshot=args.polymarket_snapshot,
+            kalshi_snapshot=args.kalshi_snapshot,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
         )
     if args.command == "run-mlb-world-series-paper-check":
         return run_mlb_world_series_paper_check(
@@ -7791,6 +7826,36 @@ def build_mlb_world_series_pairs(
             f"normalized_count={info.get('normalized_count', 'unknown')} "
             f"overlap_universe_query={info.get('overlap_universe_query') or 'none'}"
         )
+    return 0
+
+
+def build_nhl_stanley_cup_pairs(
+    *,
+    polymarket_snapshot: Path,
+    kalshi_snapshot: Path,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        payload = build_nhl_stanley_cup_pairs_files(
+            polymarket_snapshot_path=polymarket_snapshot,
+            kalshi_snapshot_path=kalshi_snapshot,
+            json_output_path=json_output,
+            markdown_output_path=markdown_output,
+        )
+    except ValueError as exc:
+        print(f"nhl_stanley_cup_pairs_status=FAILED message={exc}")
+        return 1
+
+    summary = payload["summary"]
+    counts = summary["source_counts_by_scope"]
+    print(
+        "nhl_stanley_cup_pairs_status=OK "
+        f"stanley_cup_pairs={summary['generated_stanley_cup_pair_count']} "
+        f"polymarket_stanley_cup={counts['polymarket'].get('STANLEY_CUP', 0)} "
+        f"kalshi_stanley_cup={counts['kalshi'].get('STANLEY_CUP', 0)} "
+        f"json={json_output} markdown={markdown_output}"
+    )
     return 0
 
 

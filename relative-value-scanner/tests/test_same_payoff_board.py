@@ -261,6 +261,80 @@ def _nba_board(*, poly: dict | None = None, kalshi: dict | None = None, pairs: d
     )
 
 
+def _nhl_pair(poly_id: str = "poly-nhl", kalshi_ticker: str = "KXNHL-26-VGK") -> dict:
+    payload = _pair(poly_id=poly_id, kalshi_ticker=kalshi_ticker)
+    payload["pairs"][0]["polymarket"] = {
+        "market_id": poly_id,
+        "question": "Will the Vegas Golden Knights win the 2026 NHL Stanley Cup?",
+        "event_title": "2026 NHL Stanley Cup Champion",
+    }
+    payload["pairs"][0]["kalshi"] = {
+        "ticker": kalshi_ticker,
+        "question": "Will Vegas Golden Knights win the 2025-26 Stanley Cup Finals?",
+        "event_title": None,
+    }
+    return payload
+
+
+def _nhl_market(
+    venue: str,
+    *,
+    team_question: str,
+    ticker: str = "KXNHL-26-VGK",
+    event_title: str | None = "2026 NHL Stanley Cup Champion",
+    market_type: str | None = None,
+    settlement_rule: str = "The resolution source for this market will be information from the NHL.",
+    end_date: str = "2026-06-30T00:00:00+00:00",
+) -> dict:
+    row = _market(
+        venue,
+        question=team_question,
+        event_title=event_title,
+        settlement_rule=settlement_rule,
+        end_date=end_date,
+        source_type="EXECUTABLE_VENUE",
+    )
+    row["raw"] = {"series_ticker": "KXNHL", "event_ticker": "KXNHL-26", "rules_primary": settlement_rule}
+    if market_type is not None:
+        row["market_type"] = market_type
+        row["raw"]["market_type"] = market_type
+    if venue == "kalshi":
+        row["ticker"] = ticker
+        row["market_id"] = ticker
+        row["event_title"] = event_title
+    else:
+        row["market_id"] = "poly-nhl"
+    return row
+
+
+def _nhl_board(*, poly: dict | None = None, kalshi: dict | None = None, pairs: dict | None = None) -> dict:
+    return build_same_payoff_board(
+        pairs_payload=pairs or _nhl_pair(),
+        polymarket_payload=_snapshot(
+            "polymarket",
+            poly
+            or _nhl_market(
+                "polymarket",
+                team_question="Will the Vegas Golden Knights win the 2026 NHL Stanley Cup?",
+                market_type="binary_event",
+                settlement_rule="This market resolves Yes if the Vegas Golden Knights win the 2026 NHL Stanley Cup. The resolution source for this market will be information from the NHL.",
+            ),
+        ),
+        kalshi_payload=_snapshot(
+            "kalshi",
+            kalshi
+            or _nhl_market(
+                "kalshi",
+                team_question="Will Vegas Golden Knights win the 2025-26 Stanley Cup Finals?",
+                market_type="binary",
+                settlement_rule="If the Vegas Golden Knights win the 2025-26 Stanley Cup Finals, then the market resolves to Yes.",
+                end_date="2026-07-01T14:00:00+00:00",
+            ),
+        ),
+        generated_at=NOW,
+    )
+
+
 def test_exact_same_payoff_fixture_passes_evidence_checks() -> None:
     row = _first(_board())
 
@@ -659,6 +733,204 @@ def test_nba_market_type_alias_is_narrow_to_championship_context() -> None:
     assert row["same_payoff_evidence"]["market_type"]["status"] == "PASS"
     assert non_championship_row["same_payoff_evidence"]["market_type"]["status"] == "FAIL"
     assert "market_type_mismatch" in non_championship_row["blockers"]
+
+
+def test_nhl_vegas_golden_knights_stanley_cup_semantic_comparators_pass_but_settlement_blocks() -> None:
+    row = _first(_nhl_board())
+
+    assert row["same_payoff"] is False
+    assert row["same_payoff_evidence"]["market_event_entity"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["market_event_entity"]["values"]["normalization"] == "nhl_stanley_cup_team"
+    assert row["same_payoff_evidence"]["sports_league_team"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["market_type"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["market_type"]["values"]["normalization"] == "nhl_stanley_cup_binary"
+    assert row["same_payoff_evidence"]["threshold_strike"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["settlement_source"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "FAIL"
+    assert "settlement_date_drift" in row["strict_blockers"]
+
+
+def test_nhl_carolina_hurricanes_alias_match() -> None:
+    pairs = _nhl_pair(poly_id="poly-car", kalshi_ticker="KXNHL-26-CAR")
+    pairs["pairs"][0]["polymarket"]["question"] = "Will the Carolina Hurricanes win the 2026 NHL Stanley Cup?"
+    pairs["pairs"][0]["kalshi"]["question"] = "Will Carolina Hurricanes win the 2025-26 Stanley Cup Finals?"
+    poly = _nhl_market("polymarket", team_question="Will the Carolina Hurricanes win the 2026 NHL Stanley Cup?")
+    poly["market_id"] = "poly-car"
+    kalshi = _nhl_market("kalshi", team_question="Will Carolina Hurricanes win the 2025-26 Stanley Cup Finals?", ticker="KXNHL-26-CAR")
+
+    row = _first(_nhl_board(poly=poly, kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff_evidence"]["market_event_entity"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["sports_league_team"]["status"] == "PASS"
+
+
+def test_nhl_colorado_avalanche_alias_match() -> None:
+    pairs = _nhl_pair(poly_id="poly-col", kalshi_ticker="KXNHL-26-COL")
+    pairs["pairs"][0]["polymarket"]["question"] = "Will the Colorado Avalanche win the 2026 NHL Stanley Cup?"
+    pairs["pairs"][0]["kalshi"]["question"] = "Will Colorado Avalanche win the 2025-26 Stanley Cup Finals?"
+    poly = _nhl_market("polymarket", team_question="Will the Colorado Avalanche win the 2026 NHL Stanley Cup?")
+    poly["market_id"] = "poly-col"
+    kalshi = _nhl_market("kalshi", team_question="Will Colorado Avalanche win the 2025-26 Stanley Cup Finals?", ticker="KXNHL-26-COL")
+
+    row = _first(_nhl_board(poly=poly, kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff_evidence"]["market_event_entity"]["status"] == "PASS"
+    assert row["same_payoff_evidence"]["sports_league_team"]["status"] == "PASS"
+
+
+def test_nhl_wrong_team_pair_fails() -> None:
+    pairs = _nhl_pair(poly_id="poly-vgk", kalshi_ticker="KXNHL-26-COL")
+    pairs["pairs"][0]["kalshi"]["question"] = "Will Colorado Avalanche win the 2025-26 Stanley Cup Finals?"
+    poly = _nhl_market("polymarket", team_question="Will the Vegas Golden Knights win the 2026 NHL Stanley Cup?")
+    poly["market_id"] = "poly-vgk"
+    kalshi = _nhl_market("kalshi", team_question="Will Colorado Avalanche win the 2025-26 Stanley Cup Finals?", ticker="KXNHL-26-COL")
+
+    row = _first(_nhl_board(poly=poly, kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "market_event_entity_mismatch" in row["blockers"]
+    assert "sports_league_team_mismatch" in row["blockers"]
+
+
+def test_nhl_conference_winner_vs_stanley_cup_is_subset_or_superset() -> None:
+    kalshi = _nhl_market(
+        "kalshi",
+        team_question="Will Vegas Golden Knights win the 2025-26 Western Conference title?",
+        ticker="KXNHL-26-VGK-WEST",
+        market_type="binary",
+        settlement_rule="If Vegas Golden Knights win the 2025-26 Western Conference title, then the market resolves to Yes.",
+    )
+    kalshi["event_title"] = "NHL Western Conference Champion"
+    pairs = _nhl_pair(kalshi_ticker="KXNHL-26-VGK-WEST")
+
+    row = _first(_nhl_board(kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "relationship_shape_subset_or_superset" in row["blockers"]
+    assert row["same_payoff_evidence"]["relationship_shape"]["values"]["relationship"] == "SUBSET_OR_SUPERSET"
+
+
+def test_nhl_division_winner_rejected_by_scope() -> None:
+    kalshi = _nhl_market(
+        "kalshi",
+        team_question="Will Vegas Golden Knights win the Pacific Division?",
+        ticker="KXNHL-26-VGK-PACIFIC",
+        market_type="binary",
+        settlement_rule="If Vegas Golden Knights win the Pacific Division, then the market resolves to Yes.",
+    )
+    kalshi["event_title"] = "NHL Pacific Division Winner"
+    pairs = _nhl_pair(kalshi_ticker="KXNHL-26-VGK-PACIFIC")
+
+    row = _first(_nhl_board(kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "relationship_shape_subset_or_superset" in row["blockers"]
+
+
+def test_nhl_game_matchup_rejected() -> None:
+    kalshi = _nhl_market(
+        "kalshi",
+        team_question="Avalanche vs. Golden Knights",
+        ticker="KXNHL-GAME",
+        market_type="binary",
+        settlement_rule="If the Golden Knights win this game, then the market resolves to Yes.",
+    )
+    kalshi["event_title"] = "Avalanche vs. Golden Knights"
+    pairs = _nhl_pair(kalshi_ticker="KXNHL-GAME")
+
+    row = _first(_nhl_board(kalshi=kalshi, pairs=pairs))
+
+    assert row["same_payoff"] is False
+    assert "market_event_entity_mismatch" in row["blockers"]
+    assert "sports_league_team_mismatch" in row["blockers"]
+
+
+def test_nhl_season_notation_2025_26_and_2026_match_safely() -> None:
+    row = _first(_nhl_board())
+    poly_profile = row["same_payoff_evidence"]["market_event_entity"]["values"]["polymarket"]
+    kalshi_profile = row["same_payoff_evidence"]["market_event_entity"]["values"]["kalshi"]
+
+    assert poly_profile["championship_year"] == 2026
+    assert kalshi_profile["championship_year"] == 2026
+
+
+def test_nhl_binary_type_alias_is_narrow_to_stanley_cup_context() -> None:
+    row = _first(_nhl_board())
+    non_championship_poly = _market("polymarket", question="Will Vegas Golden Knights win tonight?", event_title="NHL game")
+    non_championship_kalshi = _market("kalshi", question="Will Golden Knights win tonight?", event_title="NHL game")
+    non_championship_kalshi["market_type"] = "binary"
+    non_championship_kalshi["raw"]["market_type"] = "binary"
+    non_championship_row = _first(_board(poly=non_championship_poly, kalshi=non_championship_kalshi))
+
+    assert row["same_payoff_evidence"]["market_type"]["status"] == "PASS"
+    assert non_championship_row["same_payoff_evidence"]["market_type"]["status"] == "FAIL"
+    assert "market_type_mismatch" in non_championship_row["blockers"]
+
+
+def test_nhl_missing_settlement_time_blocks_instead_of_passing_loosely() -> None:
+    kalshi = _nhl_market("kalshi", team_question="Will Vegas Golden Knights win the 2025-26 Stanley Cup Finals?")
+    kalshi.pop("end_date", None)
+    kalshi.pop("close_time", None)
+
+    row = _first(_nhl_board(kalshi=kalshi))
+
+    assert row["same_payoff"] is False
+    assert row["same_payoff_evidence"]["settlement_time"]["status"] == "MISSING"
+    assert "kalshi_end_date_or_close_time" in row["strict_missing_fields"]
+
+
+def test_nhl_stanley_cup_pair_command_filters_non_championship_scopes(tmp_path: Path, capsys) -> None:
+    poly_rows = [
+        _nhl_market("polymarket", team_question="Will the Carolina Hurricanes win the 2026 NHL Stanley Cup?"),
+        _nhl_market("polymarket", team_question="Will the Colorado Avalanche win the 2026 NHL Stanley Cup?"),
+        _nhl_market("polymarket", team_question="Will the Carolina Hurricanes win the Eastern Conference?"),
+        _nhl_market("polymarket", team_question="Will the Carolina Hurricanes win the Metropolitan Division?"),
+        _nhl_market("polymarket", team_question="Avalanche vs. Golden Knights", event_title="Avalanche vs. Golden Knights"),
+    ]
+    for index, row in enumerate(poly_rows):
+        row["market_id"] = f"poly-nhl-{index}"
+    kalshi_rows = [
+        _nhl_market("kalshi", team_question="Will Carolina Hurricanes win the 2025-26 Stanley Cup Finals?", ticker="KXNHL-26-CAR"),
+        _nhl_market("kalshi", team_question="Will Colorado Avalanche win the 2025-26 Stanley Cup Finals?", ticker="KXNHL-26-COL"),
+        _nhl_market("kalshi", team_question="Will Vegas Golden Knights win the 2025-26 Stanley Cup Finals?", ticker="KXNHL-26-VGK"),
+    ]
+    poly = _snapshot("polymarket", poly_rows[0])
+    poly["normalized_count"] = len(poly_rows)
+    poly["normalized_markets"] = poly_rows
+    kalshi = _snapshot("kalshi", kalshi_rows[0])
+    kalshi["normalized_count"] = len(kalshi_rows)
+    kalshi["normalized_markets"] = kalshi_rows
+    poly_path = tmp_path / "poly.json"
+    kalshi_path = tmp_path / "kalshi.json"
+    output = tmp_path / "nhl_pairs.json"
+    markdown = tmp_path / "nhl_pairs.md"
+    poly_path.write_text(json.dumps(poly), encoding="utf-8")
+    kalshi_path.write_text(json.dumps(kalshi), encoding="utf-8")
+
+    result = scan.main(
+        [
+            "build-nhl-stanley-cup-pairs",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--json-output",
+            str(output),
+            "--markdown-output",
+            str(markdown),
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["pair_count"] == 2
+    assert {pair["matched_team"]["team_id"] for pair in payload["pairs"]} == {"CAR", "COL"}
+    assert payload["safety"]["same_payoff_asserted"] is False
+    stdout = capsys.readouterr().out
+    assert "nhl_stanley_cup_pairs_status=OK stanley_cup_pairs=2" in stdout
+    assert "PAPER" not in stdout
+    assert "POSSIBLE_ARB" not in stdout
+    assert "trade" not in stdout.lower()
 
 
 def test_threshold_mismatch_still_fails_when_threshold_exists() -> None:
