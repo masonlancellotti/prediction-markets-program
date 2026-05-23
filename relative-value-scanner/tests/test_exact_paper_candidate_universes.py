@@ -7,6 +7,7 @@ from relative_value.exact_paper_candidate_universes import (
     UniverseSpec,
     build_exact_paper_candidate_universe_report,
     build_exact_paper_candidate_universe_report_files,
+    default_exact_paper_candidate_universe_specs,
 )
 
 
@@ -149,7 +150,9 @@ def test_mlb_execution_data_with_stale_orderbooks_recommends_paper_check_refresh
     assert "stale_orderbooks" in row["blockers"]
     assert row["recommended_next_commands"] == [
         "python scan.py run-mlb-world-series-paper-check "
-        f"--polymarket-snapshot {spec.polymarket_snapshot} --kalshi-snapshot {spec.kalshi_snapshot} --pairs {spec.pairs} "
+        "--polymarket-snapshot reports/live_readonly/mlb/polymarket_live_readonly_snapshot.json "
+        "--kalshi-snapshot reports/live_readonly/mlb/kalshi_live_readonly_snapshot.json "
+        "--rebuild-pairs-from-snapshots "
         "--accept-unit-mismatch --trust-settlement-normalization mlb_world_series_timezone_convention_drift"
     ]
 
@@ -274,3 +277,15 @@ def test_command_writes_reports_and_default_scan_remains_static_fixture(tmp_path
     scan_result = scan.main([])
     assert scan_result == 0
     assert "data_source_mode=STATIC_FIXTURE" in capsys.readouterr().out
+
+
+def test_default_recommended_commands_use_universe_specific_live_readonly_dirs(tmp_path: Path) -> None:
+    specs = default_exact_paper_candidate_universe_specs(tmp_path)
+    commands = " ".join(command for spec in specs for command in (spec.recommended_fetch_command, spec.recommended_pair_command) if command)
+
+    assert "reports/live_readonly/mlb" in commands
+    assert "reports/live_readonly/nba" in commands
+    assert "reports/live_readonly/nhl" in commands
+    assert "reports/live_readonly/btc" in commands
+    assert "reports/live_readonly/fed" in commands
+    assert "--output-dir reports/live_readonly --report-dir reports/live_readonly" not in commands

@@ -57,6 +57,12 @@ class UniverseSpec:
 def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[UniverseSpec]:
     reports = project_root / "reports"
     live = reports / "live_readonly"
+    live_mlb = live / "mlb"
+    live_nba = live / "nba"
+    live_nfl = live / "nfl"
+    live_nhl = live / "nhl"
+    live_btc = live / "btc"
+    live_fed = live / "fed"
     return [
         UniverseSpec(
             universe_id="mlb_world_series_kxmlb",
@@ -72,11 +78,11 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
             kalshi_enriched=reports / "mlb_fresh_kalshi_enriched.json",
             recommended_fetch_command=(
                 "python scan.py fetch-live-overlap-universe --category sports --query MLB "
-                "--max-markets 1000 --kalshi-max-pages 20 --output-dir reports/live_readonly --report-dir reports/live_readonly --label mlb"
+                "--max-markets 1000 --kalshi-max-pages 20 --output-dir reports/live_readonly/mlb --report-dir reports/live_readonly/mlb --label mlb"
             ),
             recommended_pair_command=(
-                "python scan.py build-mlb-world-series-pairs --polymarket-snapshot reports/mlb_kxmlb_48h_unitok_after_guardrails_polymarket_snapshot.json "
-                "--kalshi-snapshot reports/mlb_kxmlb_48h_unitok_after_guardrails_kalshi_snapshot.json "
+                "python scan.py build-mlb-world-series-pairs --polymarket-snapshot reports/live_readonly/mlb/polymarket_live_readonly_snapshot.json "
+                "--kalshi-snapshot reports/live_readonly/mlb/kalshi_live_readonly_snapshot.json "
                 "--json-output reports/mlb_world_series_pairs.json --markdown-output reports/mlb_world_series_pairs.md"
             ),
         ),
@@ -93,19 +99,20 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
             polymarket_enriched=reports / "nba_kxnba_polymarket_enriched.json",
             kalshi_enriched=reports / "nba_kxnba_kalshi_enriched.json",
             recommended_fetch_command=(
-                "python scan.py run-targeted-pipeline --polymarket-tag-slug nba --kalshi-series-ticker KXNBA --label nba_kxnba"
+                "python scan.py fetch-live-overlap-universe --category sports --query NBA "
+                "--output-dir reports/live_readonly/nba --report-dir reports/live_readonly/nba --label nba"
             ),
         ),
         UniverseSpec(
             universe_id="nfl_super_bowl_kxnfl",
             label="NFL Super Bowl / KXNFL",
             category="sports_championship_outright",
-            polymarket_snapshot=live / "nfl_polymarket_snapshot.json",
-            kalshi_snapshot=live / "nfl_kalshi_snapshot.json",
-            overlap_report=live / "nfl_live_overlap_universe_report.json",
+            polymarket_snapshot=live_nfl / "polymarket_live_readonly_snapshot.json",
+            kalshi_snapshot=live_nfl / "kalshi_live_readonly_snapshot.json",
+            overlap_report=live_nfl / "nfl_live_overlap_universe_report.json",
             recommended_fetch_command=(
                 "python scan.py fetch-live-overlap-universe --category sports --query NFL "
-                "--output-dir reports/live_readonly --report-dir reports/live_readonly --label nfl"
+                "--output-dir reports/live_readonly/nfl --report-dir reports/live_readonly/nfl --label nfl"
             ),
         ),
         UniverseSpec(
@@ -120,10 +127,10 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
             evaluator=reports / "nhl_stanley_cup_evaluator.json",
             polymarket_enriched=reports / "nhl_kxnhl_polymarket_enriched.json",
             kalshi_enriched=reports / "nhl_kxnhl_kalshi_enriched.json",
-            overlap_report=live / "nhl_live_overlap_universe_report.json",
+            overlap_report=live_nhl / "nhl_live_overlap_universe_report.json",
             recommended_fetch_command=(
                 "python scan.py fetch-live-overlap-universe --category sports --query NHL "
-                "--output-dir reports/live_readonly --report-dir reports/live_readonly --label nhl"
+                "--output-dir reports/live_readonly/nhl --report-dir reports/live_readonly/nhl --label nhl"
             ),
             recommended_pair_command="python scan.py build-nhl-stanley-cup-pairs",
         ),
@@ -131,24 +138,24 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
             universe_id="btc_thresholds",
             label="BTC threshold markets",
             category="threshold_binary",
-            polymarket_snapshot=live / "crypto_polymarket_snapshot.json",
-            kalshi_snapshot=live / "crypto_kalshi_snapshot.json",
-            overlap_report=live / "btc_thresholds_live_overlap_universe_report.json",
+            polymarket_snapshot=live_btc / "polymarket_live_readonly_snapshot.json",
+            kalshi_snapshot=live_btc / "kalshi_live_readonly_snapshot.json",
+            overlap_report=live_btc / "btc_live_overlap_universe_report.json",
             recommended_fetch_command=(
                 "python scan.py fetch-live-overlap-universe --category crypto --query BTC "
-                "--output-dir reports/live_readonly --report-dir reports/live_readonly --label btc_thresholds"
+                "--output-dir reports/live_readonly/btc --report-dir reports/live_readonly/btc --label btc"
             ),
         ),
         UniverseSpec(
             universe_id="fed_fomc_decisions",
             label="Fed / FOMC exact decision markets",
             category="macro_policy_decision",
-            polymarket_snapshot=live / "fed_polymarket_snapshot.json",
-            kalshi_snapshot=live / "fed_kalshi_snapshot.json",
-            overlap_report=live / "fed_fomc_live_overlap_universe_report.json",
+            polymarket_snapshot=live_fed / "polymarket_live_readonly_snapshot.json",
+            kalshi_snapshot=live_fed / "kalshi_live_readonly_snapshot.json",
+            overlap_report=live_fed / "fed_live_overlap_universe_report.json",
             recommended_fetch_command=(
                 "python scan.py fetch-live-overlap-universe --category macro --query Fed "
-                "--output-dir reports/live_readonly --report-dir reports/live_readonly --label fed_fomc"
+                "--output-dir reports/live_readonly/fed --report-dir reports/live_readonly/fed --label fed"
             ),
         ),
     ]
@@ -566,7 +573,9 @@ def _commands_for_row(spec: UniverseSpec, readiness: str, trusted_count: int, bl
     if spec.universe_id == "mlb_world_series_kxmlb" and readiness == "EXECUTION_DATA_AVAILABLE" and "stale_orderbooks" in blockers:
         commands.append(
             "python scan.py run-mlb-world-series-paper-check "
-            f"--polymarket-snapshot {spec.polymarket_snapshot} --kalshi-snapshot {spec.kalshi_snapshot} --pairs {spec.pairs} "
+            "--polymarket-snapshot reports/live_readonly/mlb/polymarket_live_readonly_snapshot.json "
+            "--kalshi-snapshot reports/live_readonly/mlb/kalshi_live_readonly_snapshot.json "
+            "--rebuild-pairs-from-snapshots "
             "--accept-unit-mismatch --trust-settlement-normalization mlb_world_series_timezone_convention_drift"
         )
     if readiness == "TRUSTED_RELATIONSHIPS_AVAILABLE" and trusted_count > 0 and spec.derived_pairs and spec.polymarket_enriched and spec.kalshi_enriched:

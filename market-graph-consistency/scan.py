@@ -6,6 +6,7 @@ from pathlib import Path
 from graph_engine.consistency.runner import run_consistency_checks
 from graph_engine.loader import load_fixture_markets
 from graph_engine.relationships.registry import load_relationship_registry
+from graph_engine.reporting.hint_diff import write_hint_diff_report
 from graph_engine.reporting.hints import write_relative_value_hints_report
 from graph_engine.reporting.json_report import write_json_report
 from graph_engine.reporting.md_report import write_markdown_report
@@ -20,6 +21,22 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Offline semantic market graph consistency scanner.")
+    subparsers = parser.add_subparsers(dest="command")
+    diff_parser = subparsers.add_parser("diff-relative-value-hints", help="Compare two saved relative-value hint reports.")
+    diff_parser.add_argument("--old", required=True, type=Path, help="Older saved relative-value hint JSON report.")
+    diff_parser.add_argument("--new", required=True, type=Path, help="Newer saved relative-value hint JSON report.")
+    diff_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=REPORTS_DIR / "market_graph_hint_diff.json",
+        help="Path for the diagnostic JSON diff report.",
+    )
+    diff_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=REPORTS_DIR / "market_graph_hint_diff.md",
+        help="Path for the diagnostic Markdown diff report.",
+    )
     parser.add_argument(
         "--snapshots-dir",
         type=Path,
@@ -63,6 +80,16 @@ def _load_snapshot_mode(args: argparse.Namespace):
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command == "diff-relative-value-hints":
+        report = write_hint_diff_report(args.old, args.new, args.json_output, args.markdown_output)
+        print("Mode: saved hint diff")
+        print(f"New hints: {report['summary']['new_count']}")
+        print(f"Removed hints: {report['summary']['removed_count']}")
+        print(f"Changed hints: {report['summary']['changed_count']}")
+        print(f"Wrote {args.json_output}")
+        print(f"Wrote {args.markdown_output}")
+        return 0
+
     if args.snapshots_dir or args.snapshot_file:
         snapshot, source_metadata, mode = _load_snapshot_mode(args)
     else:

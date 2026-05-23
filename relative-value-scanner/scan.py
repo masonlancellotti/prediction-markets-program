@@ -468,7 +468,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     mlb_ws_paper_check_parser.add_argument("--polymarket-snapshot", type=Path, required=True, help="Saved Polymarket MLB World Series schema-v1 snapshot.")
     mlb_ws_paper_check_parser.add_argument("--kalshi-snapshot", type=Path, required=True, help="Saved Kalshi MLB World Series schema-v1 snapshot.")
-    mlb_ws_paper_check_parser.add_argument("--pairs", type=Path, required=True, help="Saved WS/WS Kalshi-Polymarket pairs file.")
+    mlb_ws_paper_check_parser.add_argument("--pairs", type=Path, help="Saved WS/WS Kalshi-Polymarket pairs file. Required unless --rebuild-pairs-from-snapshots is set.")
+    mlb_ws_paper_check_parser.add_argument(
+        "--rebuild-pairs-from-snapshots",
+        action="store_true",
+        help="Rebuild MLB World Series pairs from the same snapshots enriched in this run.",
+    )
     mlb_ws_paper_check_parser.add_argument("--timeout-seconds", type=float, default=10.0, help="Read-only orderbook request timeout.")
     mlb_ws_paper_check_parser.add_argument("--max-snapshot-age-hours", type=float, default=24.0, help="Maximum age for input snapshots before enrichment fails closed.")
     mlb_ws_paper_check_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0, help="Evaluator and board quote freshness limit.")
@@ -479,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
     mlb_ws_paper_check_parser.add_argument("--trust-settlement-normalization", action="append", default=[], help="Trusted board settlement normalization to honor, e.g. mlb_world_series_timezone_convention_drift.")
     mlb_ws_paper_check_parser.add_argument("--polymarket-enriched-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_fresh_polymarket_enriched.json", help="Output path for freshly enriched Polymarket snapshot.")
     mlb_ws_paper_check_parser.add_argument("--kalshi-enriched-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_fresh_kalshi_enriched.json", help="Output path for freshly enriched Kalshi snapshot.")
+    mlb_ws_paper_check_parser.add_argument("--rebuilt-pairs-json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_pairs_run.json", help="Output path for rebuilt pairs when --rebuild-pairs-from-snapshots is set.")
+    mlb_ws_paper_check_parser.add_argument("--rebuilt-pairs-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_pairs_run.md", help="Output path for rebuilt pairs Markdown when --rebuild-pairs-from-snapshots is set.")
     mlb_ws_paper_check_parser.add_argument("--board-json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.json", help="Output path for same-payoff board JSON.")
     mlb_ws_paper_check_parser.add_argument("--board-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.md", help="Output path for same-payoff board Markdown.")
     mlb_ws_paper_check_parser.add_argument("--derived-pairs-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_pairs_with_evidence_fresh.json", help="Output path for derived pairs with same-payoff evidence.")
@@ -1105,6 +1112,9 @@ def main(argv: list[str] | None = None) -> int:
             trusted_settlement_normalizations=frozenset(args.trust_settlement_normalization or []),
             polymarket_enriched_output=args.polymarket_enriched_output,
             kalshi_enriched_output=args.kalshi_enriched_output,
+            rebuild_pairs_from_snapshots=args.rebuild_pairs_from_snapshots,
+            rebuilt_pairs_json_output=args.rebuilt_pairs_json_output,
+            rebuilt_pairs_markdown_output=args.rebuilt_pairs_markdown_output,
             board_json_output=args.board_json_output,
             board_markdown_output=args.board_markdown_output,
             derived_pairs_output=args.derived_pairs_output,
@@ -2933,6 +2943,12 @@ def fetch_live_overlap_universe(
     report_dir: Path,
     label: str | None = None,
 ) -> int:
+    report_label = _safe_overlap_label(label, category=category, query=query)
+    default_live_readonly_dir = PROJECT_ROOT / "reports" / "live_readonly"
+    if _is_default_live_readonly_dir(output_dir):
+        output_dir = default_live_readonly_dir / report_label
+    if _is_default_reports_dir(report_dir):
+        report_dir = output_dir
     try:
         report = build_live_overlap_universe_report(
             category=category,
@@ -2948,7 +2964,6 @@ def fetch_live_overlap_universe(
     output_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    report_label = _safe_overlap_label(label, category=category, query=query)
     manifest_path = report_dir / "live_overlap_universe_manifest.json"
     json_path = report_dir / "live_overlap_universe_report.json"
     markdown_path = report_dir / "live_overlap_universe_report.md"
@@ -2974,6 +2989,14 @@ def fetch_live_overlap_universe(
         f"labeled_json={labeled_json_path}"
     )
     return 0 if report["report"]["status"] == "OK" else 1
+
+
+def _is_default_live_readonly_dir(path: Path) -> bool:
+    return path in {PROJECT_ROOT / "reports" / "live_readonly", Path("reports") / "live_readonly"}
+
+
+def _is_default_reports_dir(path: Path) -> bool:
+    return path in {PROJECT_ROOT / "reports", Path("reports")}
 
 
 def build_live_overlap_universe_report(
@@ -7863,7 +7886,7 @@ def run_mlb_world_series_paper_check(
     *,
     polymarket_snapshot: Path,
     kalshi_snapshot: Path,
-    pairs: Path,
+    pairs: Path | None = None,
     timeout_seconds: float = 10.0,
     max_snapshot_age_hours: float = 24.0,
     max_quote_age_seconds: float = 1800.0,
@@ -7874,6 +7897,9 @@ def run_mlb_world_series_paper_check(
     trusted_settlement_normalizations: frozenset[str] = frozenset(),
     polymarket_enriched_output: Path = PROJECT_ROOT / "reports" / "mlb_fresh_polymarket_enriched.json",
     kalshi_enriched_output: Path = PROJECT_ROOT / "reports" / "mlb_fresh_kalshi_enriched.json",
+    rebuild_pairs_from_snapshots: bool = False,
+    rebuilt_pairs_json_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_pairs_run.json",
+    rebuilt_pairs_markdown_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_pairs_run.md",
     board_json_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.json",
     board_markdown_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.md",
     derived_pairs_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_pairs_with_evidence_fresh.json",
@@ -7882,7 +7908,22 @@ def run_mlb_world_series_paper_check(
     summary_markdown_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.md",
 ) -> int:
     generated_at = datetime.now(timezone.utc)
+    if rebuild_pairs_from_snapshots:
+        if board_json_output == PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.json":
+            board_json_output = PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_run.json"
+        if board_markdown_output == PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_fresh.md":
+            board_markdown_output = PROJECT_ROOT / "reports" / "mlb_world_series_same_payoff_board_run.md"
+        if derived_pairs_output == PROJECT_ROOT / "reports" / "mlb_world_series_pairs_with_evidence_fresh.json":
+            derived_pairs_output = PROJECT_ROOT / "reports" / "mlb_world_series_pairs_with_evidence_run.json"
+        if evaluator_output == PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_fresh_trust_settlement.json":
+            evaluator_output = PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_run.json"
     try:
+        if pairs is None and not rebuild_pairs_from_snapshots:
+            raise ValueError("provide --pairs or set --rebuild-pairs-from-snapshots")
+        snapshot_universe_validation = _validate_mlb_world_series_snapshot_universe(
+            polymarket_snapshot_path=polymarket_snapshot,
+            kalshi_snapshot_path=kalshi_snapshot,
+        )
         polymarket_enriched = enrich_orderbook_snapshot_file(
             snapshot_path=polymarket_snapshot,
             venue="polymarket",
@@ -7899,8 +7940,27 @@ def run_mlb_world_series_paper_check(
             timeout_seconds=timeout_seconds,
             max_snapshot_age_hours=max_snapshot_age_hours,
         )
+        effective_pairs = pairs
+        rebuilt_pairs = None
+        if rebuild_pairs_from_snapshots:
+            rebuilt_pairs = build_mlb_world_series_pairs_files(
+                polymarket_snapshot_path=polymarket_enriched_output,
+                kalshi_snapshot_path=kalshi_enriched_output,
+                json_output_path=rebuilt_pairs_json_output,
+                markdown_output_path=rebuilt_pairs_markdown_output,
+                match_report_path=None,
+                now=generated_at,
+            )
+            effective_pairs = rebuilt_pairs_json_output
+        if effective_pairs is None:
+            raise ValueError("effective pairs path was not resolved")
+        join_validation = _validate_pairs_join_enriched_markets(
+            pairs_path=effective_pairs,
+            polymarket_enriched=polymarket_enriched,
+            kalshi_enriched=kalshi_enriched,
+        )
         board = build_same_payoff_board_files(
-            pairs_path=pairs,
+            pairs_path=effective_pairs,
             polymarket_enriched_path=polymarket_enriched_output,
             kalshi_enriched_path=kalshi_enriched_output,
             json_output_path=board_json_output,
@@ -7908,7 +7968,7 @@ def run_mlb_world_series_paper_check(
             now=generated_at,
             max_quote_age_seconds=max_quote_age_seconds,
         )
-        derived_pairs = attach_same_payoff_evidence_files(pairs, board_json_output, derived_pairs_output)
+        derived_pairs = attach_same_payoff_evidence_files(effective_pairs, board_json_output, derived_pairs_output)
         evaluator = evaluate_paper_candidate_files(
             pairs_path=derived_pairs_output,
             polymarket_enriched_path=polymarket_enriched_output,
@@ -7932,9 +7992,11 @@ def run_mlb_world_series_paper_check(
         generated_at=generated_at,
         polymarket_snapshot=polymarket_snapshot,
         kalshi_snapshot=kalshi_snapshot,
-        pairs=pairs,
+        pairs=effective_pairs,
         polymarket_enriched_output=polymarket_enriched_output,
         kalshi_enriched_output=kalshi_enriched_output,
+        rebuilt_pairs_output=rebuilt_pairs_json_output if rebuild_pairs_from_snapshots else None,
+        rebuilt_pairs_markdown_output=rebuilt_pairs_markdown_output if rebuild_pairs_from_snapshots else None,
         board_json_output=board_json_output,
         board_markdown_output=board_markdown_output,
         derived_pairs_output=derived_pairs_output,
@@ -7943,6 +8005,9 @@ def run_mlb_world_series_paper_check(
         summary_markdown_output=summary_markdown_output,
         polymarket_enriched=polymarket_enriched,
         kalshi_enriched=kalshi_enriched,
+        rebuilt_pairs=rebuilt_pairs,
+        pair_join_validation=join_validation,
+        snapshot_universe_validation=snapshot_universe_validation,
         board=board,
         derived_pairs=derived_pairs,
         evaluator=evaluator,
@@ -7965,6 +8030,9 @@ def run_mlb_world_series_paper_check(
         "mlb_world_series_paper_check_status=OK "
         f"polymarket_enriched={summary['polymarket_enrichment']['enriched_count']}/{summary['polymarket_enrichment']['market_count']} "
         f"kalshi_enriched={summary['kalshi_enrichment']['enriched_count']}/{summary['kalshi_enrichment']['market_count']} "
+        f"matched_pairs={summary['pair_join_validation']['matched_pairs']} "
+        f"missing_polymarket_enriched_market={summary['pair_join_validation']['missing_polymarket_enriched_market']} "
+        f"missing_kalshi_enriched_market={summary['pair_join_validation']['missing_kalshi_enriched_market']} "
         f"strict_same_payoff_passes={summary['strict_same_payoff_passes']} "
         f"trusted_relationships={summary['trusted_relationships']} "
         f"paper={counts.get('PAPER_CANDIDATE', 0)} "
@@ -8132,6 +8200,163 @@ def run_nba_championship_paper_check(
     return 0
 
 
+def _validate_pairs_join_enriched_markets(
+    *,
+    pairs_path: Path,
+    polymarket_enriched: dict[str, Any],
+    kalshi_enriched: dict[str, Any],
+) -> dict[str, Any]:
+    pairs_payload = _load_json_report(pairs_path, "pairs")
+    pairs = pairs_payload.get("pairs")
+    if not isinstance(pairs, list):
+        raise ValueError("pairs input must contain pairs list")
+    polymarket_ids = {
+        str(row.get("market_id"))
+        for row in _normalized_market_rows_for_join(polymarket_enriched)
+        if row.get("market_id") is not None
+    }
+    kalshi_ids = {
+        str(row.get("ticker") or row.get("market_id"))
+        for row in _normalized_market_rows_for_join(kalshi_enriched)
+        if row.get("ticker") is not None or row.get("market_id") is not None
+    }
+    missing_polymarket = 0
+    missing_kalshi = 0
+    matched = 0
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        poly_id = _paper_check_pair_polymarket_id(pair)
+        kalshi_id = _paper_check_pair_kalshi_id(pair)
+        poly_missing = not poly_id or poly_id not in polymarket_ids
+        kalshi_missing = not kalshi_id or kalshi_id not in kalshi_ids
+        if poly_missing:
+            missing_polymarket += 1
+        if kalshi_missing:
+            missing_kalshi += 1
+        if not poly_missing and not kalshi_missing:
+            matched += 1
+    total = len([pair for pair in pairs if isinstance(pair, dict)])
+    result = {
+        "pair_count": total,
+        "matched_pairs": matched,
+        "missing_polymarket_enriched_market": missing_polymarket,
+        "missing_kalshi_enriched_market": missing_kalshi,
+    }
+    if total > 0 and (missing_polymarket or missing_kalshi):
+        raise ValueError(
+            "snapshot_pair_provenance_mismatch "
+            f"matched_pairs={matched} "
+            f"missing_polymarket_enriched_market={missing_polymarket} "
+            f"missing_kalshi_enriched_market={missing_kalshi}"
+        )
+    return result
+
+
+def _empty_pair_join_validation() -> dict[str, int]:
+    return {
+        "pair_count": 0,
+        "matched_pairs": 0,
+        "missing_polymarket_enriched_market": 0,
+        "missing_kalshi_enriched_market": 0,
+    }
+
+
+def _validate_mlb_world_series_snapshot_universe(
+    *,
+    polymarket_snapshot_path: Path,
+    kalshi_snapshot_path: Path,
+) -> dict[str, Any]:
+    polymarket_snapshot = _load_json_object(polymarket_snapshot_path)
+    kalshi_snapshot = _load_json_object(kalshi_snapshot_path)
+    polymarket_query = _snapshot_overlap_query(polymarket_snapshot)
+    kalshi_query = _snapshot_overlap_query(kalshi_snapshot)
+    bad_queries = {
+        source: query
+        for source, query in {"polymarket": polymarket_query, "kalshi": kalshi_query}.items()
+        if query and not _query_targets_mlb_world_series(query)
+    }
+    polymarket_inventory = _mlb_world_series_inventory_count(polymarket_snapshot, venue="polymarket")
+    kalshi_inventory = _mlb_world_series_inventory_count(kalshi_snapshot, venue="kalshi")
+    result = {
+        "expected_universe": "mlb_world_series_kxmlb",
+        "polymarket_overlap_query": polymarket_query,
+        "kalshi_overlap_query": kalshi_query,
+        "polymarket_mlb_world_series_inventory": polymarket_inventory,
+        "kalshi_mlb_world_series_inventory": kalshi_inventory,
+        "wrong_universe_queries": bad_queries,
+    }
+    if bad_queries or polymarket_inventory <= 0 or kalshi_inventory <= 0:
+        raise ValueError(
+            "wrong_universe_snapshot "
+            f"polymarket_query={_safe_cli_text(polymarket_query or 'none')} "
+            f"kalshi_query={_safe_cli_text(kalshi_query or 'none')} "
+            f"polymarket_mlb_world_series_inventory={polymarket_inventory} "
+            f"kalshi_mlb_world_series_inventory={kalshi_inventory}"
+        )
+    return result
+
+
+def _snapshot_overlap_query(snapshot: dict[str, Any]) -> str | None:
+    overlap = snapshot.get("overlap_universe")
+    if isinstance(overlap, dict) and overlap.get("query") is not None:
+        return str(overlap.get("query") or "")
+    metadata = snapshot.get("overlap_universe_filter")
+    if isinstance(metadata, dict) and metadata.get("query") is not None:
+        return str(metadata.get("query") or "")
+    return None
+
+
+def _query_targets_mlb_world_series(query: str) -> bool:
+    normalized = query.lower()
+    return any(term in normalized for term in ("mlb", "baseball", "world series", "kxmlb"))
+
+
+def _mlb_world_series_inventory_count(snapshot: dict[str, Any], *, venue: str) -> int:
+    return sum(1 for row in _normalized_market_rows_for_join(snapshot) if _is_mlb_world_series_market(row, venue=venue))
+
+
+def _is_mlb_world_series_market(row: dict[str, Any], *, venue: str) -> bool:
+    fields = [
+        row.get("market_id"),
+        row.get("ticker"),
+        row.get("event_ticker"),
+        row.get("series_ticker"),
+        row.get("question"),
+        row.get("title"),
+        row.get("event_title"),
+        row.get("subtitle"),
+        row.get("slug"),
+    ]
+    raw = row.get("raw")
+    if isinstance(raw, dict):
+        fields.extend(raw.get(key) for key in ("ticker", "event_ticker", "series_ticker", "title", "question", "slug"))
+    text = " ".join(str(value or "") for value in fields).lower()
+    if venue == "kalshi" and "kxmlb" in text:
+        return True
+    world_series = "world series" in text
+    pro_baseball_championship = "pro baseball championship" in text
+    baseball_context = any(term in text for term in ("mlb", "baseball", "kxmlb"))
+    return world_series or pro_baseball_championship or ("championship" in text and baseball_context)
+
+
+def _normalized_market_rows_for_join(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = payload.get("normalized_markets")
+    if not isinstance(rows, list):
+        raise ValueError("enriched snapshot must contain normalized_markets list")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _paper_check_pair_polymarket_id(pair: dict[str, Any]) -> str:
+    polymarket = pair.get("polymarket") if isinstance(pair.get("polymarket"), dict) else {}
+    return str(polymarket.get("market_id") or "")
+
+
+def _paper_check_pair_kalshi_id(pair: dict[str, Any]) -> str:
+    kalshi = pair.get("kalshi") if isinstance(pair.get("kalshi"), dict) else {}
+    return str(kalshi.get("ticker") or kalshi.get("market_id") or "")
+
+
 def _mlb_world_series_paper_check_summary(
     *,
     generated_at: datetime,
@@ -8140,6 +8365,8 @@ def _mlb_world_series_paper_check_summary(
     pairs: Path,
     polymarket_enriched_output: Path,
     kalshi_enriched_output: Path,
+    rebuilt_pairs_output: Path | None = None,
+    rebuilt_pairs_markdown_output: Path | None = None,
     board_json_output: Path,
     board_markdown_output: Path,
     derived_pairs_output: Path,
@@ -8148,9 +8375,12 @@ def _mlb_world_series_paper_check_summary(
     summary_markdown_output: Path,
     polymarket_enriched: dict[str, Any],
     kalshi_enriched: dict[str, Any],
+    rebuilt_pairs: dict[str, Any] | None = None,
+    pair_join_validation: dict[str, Any] | None = None,
     board: dict[str, Any],
     derived_pairs: dict[str, Any],
     evaluator: dict[str, Any],
+    snapshot_universe_validation: dict[str, Any] | None = None,
     max_quote_age_seconds: float,
     max_snapshot_age_hours: float,
     max_settlement_delta_seconds: float,
@@ -8183,6 +8413,8 @@ def _mlb_world_series_paper_check_summary(
         "outputs": {
             "polymarket_enriched": str(polymarket_enriched_output),
             "kalshi_enriched": str(kalshi_enriched_output),
+            "rebuilt_pairs_json": str(rebuilt_pairs_output) if rebuilt_pairs_output is not None else None,
+            "rebuilt_pairs_markdown": str(rebuilt_pairs_markdown_output) if rebuilt_pairs_markdown_output is not None else None,
             "same_payoff_board_json": str(board_json_output),
             "same_payoff_board_markdown": str(board_markdown_output),
             "derived_pairs": str(derived_pairs_output),
@@ -8201,6 +8433,12 @@ def _mlb_world_series_paper_check_summary(
         },
         "polymarket_enrichment": _paper_check_enrichment_summary(polymarket_enriched),
         "kalshi_enrichment": _paper_check_enrichment_summary(kalshi_enriched),
+        "rebuilt_pairs": {
+            "enabled": rebuilt_pairs is not None,
+            "pair_count": int((rebuilt_pairs or {}).get("pair_count") or 0),
+        },
+        "snapshot_universe_validation": snapshot_universe_validation or {},
+        "pair_join_validation": pair_join_validation or _empty_pair_join_validation(),
         "strict_same_payoff_passes": int(board.get("strict_same_payoff_pass_count") or 0),
         "trusted_relationships": int(
             (derived_pairs.get("same_payoff_evidence_attachment") or {}).get("trusted_relationship_attached_count") or 0
@@ -8262,7 +8500,8 @@ def _paper_check_quote_freshness(
             stale_rows += 1
         for venue in ("polymarket", "kalshi"):
             quote = row.get(venue) if isinstance(row.get(venue), dict) else {}
-            captured = _parse_datetime_or_none(quote.get("quote_captured_at"))
+            raw_captured = quote.get("quote_captured_at")
+            captured = _parse_datetime_or_none(raw_captured) if isinstance(raw_captured, str) else None
             if captured is not None:
                 ages.append((generated_at - captured).total_seconds())
     max_age = max(ages) if ages else None

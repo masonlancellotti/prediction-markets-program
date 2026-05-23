@@ -696,9 +696,10 @@ def _enrichment_quote(enrichment: dict[str, Any]) -> dict[str, Any]:
 
 def _recommended_commands() -> list[str]:
     return [
-        "python scan.py fetch-live-overlap-universe --category sports --query MLB --max-markets 1000 --kalshi-max-pages 20 --output-dir reports/live_readonly --report-dir reports/live_readonly --label mlb",
-        "python scan.py enrich-orderbooks --snapshot reports/live_readonly/polymarket_live_readonly_snapshot.json --venue polymarket --output reports/mlb_fresh_polymarket_enriched.json",
-        "python scan.py enrich-orderbooks --snapshot reports/live_readonly/kalshi_live_readonly_snapshot.json --venue kalshi --output reports/mlb_fresh_kalshi_enriched.json",
+        "python scan.py fetch-live-overlap-universe --category sports --query MLB --max-markets 1000 --kalshi-max-pages 20 --output-dir reports/live_readonly/mlb --report-dir reports/live_readonly/mlb --label mlb",
+        "python scan.py enrich-orderbooks --snapshot reports/live_readonly/mlb/polymarket_live_readonly_snapshot.json --venue polymarket --output reports/mlb_fresh_polymarket_enriched.json",
+        "python scan.py enrich-orderbooks --snapshot reports/live_readonly/mlb/kalshi_live_readonly_snapshot.json --venue kalshi --output reports/mlb_fresh_kalshi_enriched.json",
+        "python scan.py run-mlb-world-series-paper-check --polymarket-snapshot reports/live_readonly/mlb/polymarket_live_readonly_snapshot.json --kalshi-snapshot reports/live_readonly/mlb/kalshi_live_readonly_snapshot.json --rebuild-pairs-from-snapshots --accept-unit-mismatch --trust-settlement-normalization mlb_world_series_timezone_convention_drift",
         "python scan.py build-mlb-world-series-pairs --polymarket-snapshot reports/mlb_fresh_polymarket_enriched.json --kalshi-snapshot reports/mlb_fresh_kalshi_enriched.json --json-output reports/mlb_world_series_pairs_fresh.json --markdown-output reports/mlb_world_series_pairs_fresh.md",
         "python scan.py same-payoff-board --pairs reports/mlb_world_series_pairs_fresh.json --polymarket-enriched reports/mlb_fresh_polymarket_enriched.json --kalshi-enriched reports/mlb_fresh_kalshi_enriched.json --json-output reports/mlb_world_series_same_payoff_board_fresh.json --markdown-output reports/mlb_world_series_same_payoff_board_fresh.md",
         "python scan.py attach-same-payoff-evidence --pairs reports/mlb_world_series_pairs_fresh.json --board reports/mlb_world_series_same_payoff_board_fresh.json --output reports/mlb_world_series_pairs_with_evidence_fresh.json",

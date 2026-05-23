@@ -333,7 +333,7 @@ def _paper_check_snapshot(venue: str) -> dict:
     row = {
         "venue": venue,
         "market_id": market_id,
-        "question": "Will Team win the championship?",
+        "question": "Will Team win the MLB World Series?",
         "outcomes": [{"name": "Yes"}, {"name": "No"}],
         "active": True,
         "closed": False,
@@ -348,6 +348,7 @@ def _paper_check_snapshot(venue: str) -> dict:
         "captured_at": "2026-05-20T11:59:00+00:00",
         "market_count": 1,
         "normalized_count": 1,
+        "overlap_universe": {"category": "sports", "query": "MLB", "same_payoff_asserted": False},
         "normalized_markets": [row],
     }
 
@@ -458,7 +459,21 @@ def test_mlb_world_series_paper_check_requires_explicit_inputs(capsys) -> None:
     stderr = capsys.readouterr().err
     assert "--polymarket-snapshot" in stderr
     assert "--kalshi-snapshot" in stderr
-    assert "--pairs" in stderr
+
+
+def test_mlb_world_series_paper_check_requires_pairs_without_rebuild(tmp_path: Path, capsys) -> None:
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(_write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))),
+            "--kalshi-snapshot",
+            str(_write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))),
+        ]
+    )
+
+    assert result == 1
+    assert "provide --pairs or set --rebuild-pairs-from-snapshots" in capsys.readouterr().out
 
 
 def test_nba_championship_paper_check_requires_explicit_inputs(capsys) -> None:
@@ -596,6 +611,139 @@ def test_mlb_world_series_paper_check_composes_steps_without_mutating_inputs(mon
     assert "manual_review=1" in stdout
     assert "watch=0" in stdout
     assert "paper=0" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_pair_snapshot_mismatch(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs = _paper_check_pairs()
+    pairs["pairs"][0]["polymarket"]["market_id"] = "different-poly"
+    pairs["pairs"][0]["kalshi"]["ticker"] = "KXMLB-DIFFERENT"
+    pairs_path = _write(tmp_path / "pairs.json", pairs)
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi"]
+    stdout = capsys.readouterr().out
+    assert "snapshot_pair_provenance_mismatch" in stdout
+    assert "matched_pairs=0" in stdout
+    assert "missing_polymarket_enriched_market=1" in stdout
+    assert "missing_kalshi_enriched_market=1" in stdout
+
+
+@pytest.mark.parametrize(
+    ("query", "poly_question", "kalshi_question", "kalshi_ticker"),
+    [
+        ("NHL", "Will Carolina win the Stanley Cup?", "Will Carolina win the Stanley Cup?", "KXNHL-CAR"),
+        ("Fed", "Will the Fed cut rates?", "Will the Fed cut rates?", "FED-26-MAY"),
+        ("BTC", "Will Bitcoin hit 100k?", "Will Bitcoin hit 100k?", "KXBTC-100K"),
+    ],
+)
+def test_mlb_world_series_paper_check_rejects_wrong_universe_snapshots(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+    query: str,
+    poly_question: str,
+    kalshi_question: str,
+    kalshi_ticker: str,
+) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+    poly = _paper_check_snapshot("polymarket")
+    kalshi = _paper_check_snapshot("kalshi")
+    poly["overlap_universe"]["query"] = query
+    kalshi["overlap_universe"]["query"] = query
+    poly["normalized_markets"][0]["question"] = poly_question
+    kalshi["normalized_markets"][0]["question"] = kalshi_question
+    kalshi["normalized_markets"][0]["market_id"] = kalshi_ticker
+    kalshi["normalized_markets"][0]["ticker"] = kalshi_ticker
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(_write(tmp_path / "poly_snapshot.json", poly)),
+            "--kalshi-snapshot",
+            str(_write(tmp_path / "kalshi_snapshot.json", kalshi)),
+            "--rebuild-pairs-from-snapshots",
+        ]
+    )
+
+    assert result == 1
+    assert calls == []
+    stdout = capsys.readouterr().out
+    assert "wrong_universe_snapshot" in stdout
+    assert f"polymarket_query={query}" in stdout
+    assert "polymarket_mlb_world_series_inventory=0" in stdout
+    assert "kalshi_mlb_world_series_inventory=0" in stdout
+
+
+def test_mlb_world_series_paper_check_can_rebuild_pairs_from_snapshots(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+
+    def fake_build_mlb_world_series_pairs_files(**kwargs):
+        calls.append("build_pairs")
+        payload = _paper_check_pairs()
+        kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        kwargs["markdown_output_path"].write_text("# pairs\n", encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "build_mlb_world_series_pairs_files", fake_build_mlb_world_series_pairs_files)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--rebuild-pairs-from-snapshots",
+            "--polymarket-enriched-output",
+            str(tmp_path / "poly_enriched.json"),
+            "--kalshi-enriched-output",
+            str(tmp_path / "kalshi_enriched.json"),
+            "--rebuilt-pairs-json-output",
+            str(tmp_path / "pairs_run.json"),
+            "--rebuilt-pairs-markdown-output",
+            str(tmp_path / "pairs_run.md"),
+            "--board-json-output",
+            str(tmp_path / "board.json"),
+            "--board-markdown-output",
+            str(tmp_path / "board.md"),
+            "--derived-pairs-output",
+            str(tmp_path / "derived_pairs.json"),
+            "--evaluator-output",
+            str(tmp_path / "evaluator.json"),
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+        ]
+    )
+
+    assert result == 0
+    assert calls == ["enrich:polymarket", "enrich:kalshi", "build_pairs", "board", "attach", "evaluate"]
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["rebuilt_pairs"] == {"enabled": True, "pair_count": 1}
+    assert summary["pair_join_validation"]["matched_pairs"] == 1
+    stdout = capsys.readouterr().out
+    assert "matched_pairs=1" in stdout
+    assert "missing_polymarket_enriched_market=0" in stdout
+    assert "missing_kalshi_enriched_market=0" in stdout
 
 
 def test_mlb_world_series_paper_check_stop_and_review_for_paper_candidate(monkeypatch, tmp_path: Path, capsys) -> None:

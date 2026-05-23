@@ -49,6 +49,10 @@ from research.market_universe import MarketUniverseBuilder, MarketUniverseConfig
 from research.opportunity_ranker import OpportunityRanker
 from research.signal_validation import SignalValidator
 from research.source_smoke import SourceSmokeReporter
+from research.strict_market_making_candidate_diagnostics import (
+    StrictMarketMakingCandidateDiagnosticsConfig,
+    StrictMarketMakingCandidateDiagnosticsReporter,
+)
 from research.trading_readiness import TradingReadiness
 from research.weather_edge_miner import WeatherEdgeMiner, WeatherEdgeMiningConfig
 from research.weather_replay_coverage import WeatherReplayCoverageConfig, WeatherReplayCoverageReporter
@@ -230,6 +234,16 @@ def main(argv: list[str] | None = None) -> int:
     market_making.add_argument("--max-snapshots", type=int, default=None, help="Optional diagnostic cap on latest two-sided orderbook rows loaded for analysis; defaults to full window.")
     market_making.add_argument("--profile-runtime", action="store_true", help="Include per-stage runtime timings in the exported summary.")
     market_making.add_argument("--no-export", action="store_true")
+    strict_mm_diag = sub.add_parser("strict-market-making-candidate-diagnostics", help="Read-only diagnostics for why strict paper market-making targets are scarce")
+    strict_mm_diag.add_argument("--last-days", type=int, default=7)
+    strict_mm_diag.add_argument("--search-max-markets", type=int, default=100)
+    strict_mm_diag.add_argument("--min-replay-fills", type=int, default=1)
+    strict_mm_diag.add_argument("--min-recent-trades", type=int, default=0)
+    strict_mm_diag.add_argument("--min-spread-cents", type=float, default=float(settings.passive_min_spread_cents))
+    strict_mm_diag.add_argument("--min-depth", type=float, default=float(settings.passive_min_displayed_depth))
+    strict_mm_diag.add_argument("--stale-current-seconds", type=int, default=180)
+    strict_mm_diag.add_argument("--weather-only", action="store_true")
+    strict_mm_diag.add_argument("--no-export", action="store_true")
     mm_snapshot = sub.add_parser("build-market-making-snapshot", help="Build venue-agnostic market-making snapshot from local read-only research data")
     mm_snapshot.add_argument("--venue", choices=["kalshi"], required=True)
     mm_snapshot.add_argument("--start")
@@ -755,6 +769,19 @@ def main(argv: list[str] | None = None) -> int:
             profile_runtime=args.profile_runtime,
         )
         print(MarketMakingAnalyzer(config=cfg).analyze(last_days=args.last_days, persist_exports=not args.no_export).to_text())
+        return 0
+    if args.command == "strict-market-making-candidate-diagnostics":
+        cfg = StrictMarketMakingCandidateDiagnosticsConfig(
+            last_days=args.last_days,
+            search_max_markets=args.search_max_markets,
+            min_replay_fills=args.min_replay_fills,
+            min_recent_trades=args.min_recent_trades,
+            min_spread_cents=args.min_spread_cents,
+            min_depth=args.min_depth,
+            stale_current_seconds=args.stale_current_seconds,
+            weather_only=args.weather_only,
+        )
+        print(StrictMarketMakingCandidateDiagnosticsReporter().build(cfg, persist_exports=not args.no_export).to_text())
         return 0
     if args.command == "build-market-making-snapshot":
         cfg = MarketMakingSnapshotConfig(venue=args.venue, max_output_markets=args.max_output_markets)
