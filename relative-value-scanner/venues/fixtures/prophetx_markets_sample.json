@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "source_id": "prophetx",
+  "fixture_kind": "prophetx_markets_sample",
+  "markets": [
+    {
+      "market_id": "PX-CPI-JUN-YES",
+      "event_id": "PX-CPI-JUN",
+      "title": "Will US CPI inflation be above 3.0% for June 2026?",
+      "question": "Will US CPI inflation be above 3.0% for June 2026?",
+      "event_category": "macro",
+      "sport": null,
+      "league": null,
+      "market_type": "binary_event",
+      "outcome_names": ["Yes", "No"],
+      "status": "fixture_active",
+      "start_time": "2026-06-01T00:00:00Z",
+      "close_time": "2026-07-15T14:00:00Z",
+      "venue_restriction_notes": "Fixture placeholder: ProphetX venue restrictions are not reviewed."
+    },
+    {
+      "market_id": "PX-NBA-FINALS-BOS-YES",
+      "event_id": "PX-NBA-FINALS-2026",
+      "title": "Will Boston win the 2026 pro basketball championship?",
+      "question": "Will Boston win the 2026 pro basketball championship?",
+      "event_category": "sports",
+      "sport": "basketball",
+      "league": "NBA",
+      "market_type": "championship_future",
+      "outcome_names": ["Yes", "No"],
+      "status": "fixture_active",
+      "start_time": "2026-06-01T00:00:00Z",
+      "close_time": "2026-06-30T04:00:00Z",
+      "venue_restriction_notes": "Fixture placeholder: sports settlement, season scope, and venue restrictions are not reviewed."
+    }
+  ]
+}

@@ -61,6 +61,11 @@ from venues.ibkr_forecastex import (
     IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND,
     load_ibkr_forecastex_research_fixtures,
 )
+from venues.prophetx import (
+    PROPHETX_REQUIRED_BLOCKERS,
+    PROPHETX_RESEARCH_SCHEMA_KIND,
+    load_prophetx_research_fixtures,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -372,6 +377,41 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "ibkr_forecastex_fixture_inspection.md",
+    )
+
+    prophetx_fixture_parser = subparsers.add_parser(
+        "inspect-prophetx-fixtures",
+        help="Inspect local fixture-only ProphetX research schema; no live transport.",
+    )
+    prophetx_fixture_parser.add_argument(
+        "--markets",
+        type=Path,
+        default=PROJECT_ROOT / "venues" / "fixtures" / "prophetx_markets_sample.json",
+    )
+    prophetx_fixture_parser.add_argument(
+        "--orderbook",
+        type=Path,
+        default=PROJECT_ROOT / "venues" / "fixtures" / "prophetx_orderbook_sample.json",
+    )
+    prophetx_fixture_parser.add_argument(
+        "--settlement",
+        type=Path,
+        default=PROJECT_ROOT / "venues" / "fixtures" / "prophetx_settlement_sample.json",
+    )
+    prophetx_fixture_parser.add_argument(
+        "--fees",
+        type=Path,
+        default=PROJECT_ROOT / "venues" / "fixtures" / "prophetx_fee_sample.json",
+    )
+    prophetx_fixture_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "prophetx_fixture_inspection.json",
+    )
+    prophetx_fixture_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "prophetx_fixture_inspection.md",
     )
 
     source_smoke_parser = subparsers.add_parser(
@@ -713,6 +753,15 @@ def main(argv: list[str] | None = None) -> int:
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
+    if args.command == "inspect-prophetx-fixtures":
+        return inspect_prophetx_fixtures(
+            markets_path=args.markets,
+            orderbook_path=args.orderbook,
+            settlement_path=args.settlement,
+            fee_path=args.fees,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
     if args.command == "source-smoke":
         return source_smoke(
             max_markets=args.max_markets,
@@ -1006,6 +1055,146 @@ def _ibkr_forecastex_fixture_markdown(snapshot: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def inspect_prophetx_fixtures(
+    *,
+    markets_path: Path,
+    orderbook_path: Path,
+    settlement_path: Path,
+    fee_path: Path,
+    json_output: Path,
+    markdown_output: Path,
+) -> int:
+    try:
+        snapshot = load_prophetx_research_fixtures(
+            markets_path=markets_path,
+            orderbook_path=orderbook_path,
+            settlement_path=settlement_path,
+            fee_path=fee_path,
+        )
+        status = "OK"
+        failure_reason = None
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        snapshot = _prophetx_fixture_failure_snapshot(
+            markets_path=markets_path,
+            orderbook_path=orderbook_path,
+            settlement_path=settlement_path,
+            fee_path=fee_path,
+            exc=exc,
+        )
+        status = "FAILED"
+        failure_reason = snapshot["failure_reason"]
+    json_output.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    json_output.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_output.write_text(_prophetx_fixture_markdown(snapshot), encoding="utf-8")
+    print(
+        f"prophetx_fixture_inspection_status={status} "
+        "live_fetch_attempted=false "
+        f"schema_kind={snapshot.get('schema_kind')} "
+        f"research_markets={snapshot.get('research_market_count', 0)} "
+        "is_executable=false "
+        "can_create_candidate_pair=false "
+        "can_create_paper_candidate=false "
+        f"failure_reason={failure_reason or 'none'} "
+        f"json={json_output} markdown={markdown_output}"
+    )
+    return 0 if status == "OK" else 1
+
+
+def _prophetx_fixture_failure_snapshot(
+    *,
+    markets_path: Path,
+    orderbook_path: Path,
+    settlement_path: Path,
+    fee_path: Path,
+    exc: Exception,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "schema_kind": PROPHETX_RESEARCH_SCHEMA_KIND,
+        "source": "prophetx_research",
+        "source_id": "prophetx",
+        "source_type": "EXECUTABLE_VENUE",
+        "implementation_status": "PLANNED_NOT_IMPLEMENTED",
+        "permission": "FIXTURE_RESEARCH_ONLY",
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "live_fetch_attempted": False,
+        "live_fetch_succeeded": False,
+        "is_executable": False,
+        "execution_allowed_in_project_now": False,
+        "can_create_candidate_pair": False,
+        "can_create_paper_candidate": False,
+        "market_count": 0,
+        "orderbook_count": 0,
+        "settlement_count": 0,
+        "fee_count": 0,
+        "research_market_count": 0,
+        "research_markets": [],
+        "unresolved_blockers": list(PROPHETX_REQUIRED_BLOCKERS),
+        "fixture_paths": {
+            "markets": str(markets_path),
+            "orderbook": str(orderbook_path),
+            "settlement": str(settlement_path),
+            "fees": str(fee_path),
+        },
+        "failure_reason": f"{type(exc).__name__}: {exc}",
+    }
+
+
+def _prophetx_fixture_markdown(snapshot: dict[str, Any]) -> str:
+    lines = [
+        "# ProphetX Fixture Inspection",
+        "",
+        "Fixture-only inspection for the planned ProphetX read-only research schema.",
+        "",
+        "- Live fetch attempted: `false`",
+        "- Source role: `planned_executable_venue_research_only`",
+        "- Is executable: `false`",
+        "- Candidate-pair eligible: `false`",
+        "- Paper-candidate eligible: `false`",
+        f"- Schema kind: `{snapshot.get('schema_kind')}`",
+        f"- Research markets: `{snapshot.get('research_market_count', 0)}`",
+    ]
+    if snapshot.get("failure_reason"):
+        lines.append(f"- Failure reason: `{snapshot['failure_reason']}`")
+    lines.extend(
+        [
+            "",
+            "## Unresolved Blockers",
+            "",
+        ]
+    )
+    for blocker in snapshot.get("unresolved_blockers", []):
+        lines.append(f"- `{blocker}`")
+    lines.extend(
+        [
+            "",
+            "## Research Markets",
+            "",
+            "| Market | Title | Bid | Ask | Market data timestamp | Fee status | Blockers |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in snapshot.get("research_markets", []):
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row.get("market_id")),
+                    _markdown_cell(row.get("title") or row.get("question")),
+                    _markdown_cell(row.get("best_bid")),
+                    _markdown_cell(row.get("best_ask")),
+                    _markdown_cell(row.get("market_data_timestamp")),
+                    _markdown_cell(row.get("fee_commission_status")),
+                    _markdown_cell(",".join(row.get("unresolved_blockers") or [])),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def build_executable_venue_readiness_report(*, env: dict[str, str] | None = None) -> dict[str, Any]:
     environment = env if env is not None else os.environ
     rows = [_executable_venue_readiness_row(source_id, environment) for source_id in _EXECUTABLE_READINESS_SOURCE_ORDER]
@@ -1215,13 +1404,13 @@ _EXECUTABLE_READINESS_DEFINITIONS: dict[str, dict[str, Any]] = {
         "live_readonly_candidate_adapter_exists": False,
         "live_readonly_adapter_exists": False,
         "live_readonly_smoke_exists": False,
-        "public_market_data_possible": False,
-        "orderbook_or_bidask_possible": False,
-        "depth_possible": False,
-        "settlement_metadata_possible": False,
-        "fixture_research_schema_exists": False,
-        "next_required_step": "Complete manual account/API permission review, then build fixture-backed market/depth/settlement/fee schemas before any live ProphetX transport.",
-        "blocked_reason": "PLANNED_NOT_IMPLEMENTED; API access, endpoint scope, venue restrictions, fees, and settlement metadata are not reviewed.",
+        "public_market_data_possible": True,
+        "orderbook_or_bidask_possible": True,
+        "depth_possible": True,
+        "settlement_metadata_possible": True,
+        "fixture_research_schema_exists": True,
+        "next_required_step": "Fixture-backed schemas exist; next complete manual eligibility/API-permission review and settlement-wording catalog before any live ProphetX transport.",
+        "blocked_reason": "PLANNED_NOT_IMPLEMENTED; fixture-backed schema exists, but API access, endpoint scope, venue restrictions, fees, and settlement metadata are not reviewed.",
     },
     "crypto_com": {
         "display_name": "Crypto.com",

@@ -17,7 +17,7 @@ Why:
 - It must remain read-only: no wallet connection, signing, maker/taker order flow, or FillOrder/settlement-contract calls.
 - It must not create `PAPER_CANDIDATE` until settlement metadata, fee/slippage treatment, quote freshness, source restrictions, and contract relationship equivalence are reviewed.
 
-ForecastEx / IBKR is likely the highest-value regulated venue, but should be deferred because market data and instrument access likely cross into authentication, account permissions, eligibility, and broker API complexity. The current boundary is documented in `docs/IBKR_FORECASTEX_READ_ONLY_BOUNDARY.md`; it is design-only and adds no live transport. PredictIt should not be treated as executable unless permitted execution API support is proven. Azuro and Omen/Gnosis should be deferred because on-chain AMM/protocol/conditional-token models do not fit the current schema-v1 bid/ask/depth assumptions cleanly.
+ForecastEx / IBKR is likely the highest-value regulated venue, but should be deferred because market data and instrument access likely cross into authentication, account permissions, eligibility, and broker API complexity. The current boundary is documented in `docs/IBKR_FORECASTEX_READ_ONLY_BOUNDARY.md`; it is design-only and adds no live transport. ProphetX now has a separate boundary and fixture schema in `docs/PROPHETX_READ_ONLY_BOUNDARY.md`; live API access, endpoint permissions, fees, and settlement metadata remain unreviewed. PredictIt should not be treated as executable unless permitted execution API support is proven. Azuro and Omen/Gnosis should be deferred because on-chain AMM/protocol/conditional-token models do not fit the current schema-v1 bid/ask/depth assumptions cleanly.
 
 ## Adapter Interface Design
 

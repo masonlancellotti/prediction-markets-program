@@ -135,10 +135,10 @@ def source_readiness_report(*, env: dict[str, str] | None = None) -> dict[str, A
             live_fetch_implemented=False,
             live_fetch_currently_used_by_scan_py=False,
             source_mode_currently_used=NOT_IMPLEMENTED,
-            source_type=SourceType.DO_NOT_USE_YET.value,
+            source_type=_registry_source_type("prophetx"),
             can_participate_in_candidate_pair=False,
             can_create_paper_candidate=False,
-            next_required_connection_step="Perform source taxonomy, API-permission, settlement, and read-only data review before any adapter work.",
+            next_required_connection_step="Fixture schema exists; confirm API access/eligibility and review settlement, fee, depth, and freshness before live transport.",
             env=environment,
         ),
         _readiness_row(

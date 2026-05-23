@@ -38,6 +38,11 @@ from venues.ibkr_forecastex import (
     IBKR_FORECASTEX_RESEARCH_SCHEMA_KIND,
     build_ibkr_forecastex_research_snapshot,
 )
+from venues.prophetx import (
+    PROPHETX_REQUIRED_BLOCKERS,
+    PROPHETX_RESEARCH_SCHEMA_KIND,
+    build_prophetx_research_snapshot,
+)
 
 
 def test_fixture_scan_provenance_labels_static_fixture(monkeypatch) -> None:
@@ -244,7 +249,11 @@ def test_executable_venue_readiness_rows_are_conservative(monkeypatch) -> None:
     assert rows["prophetx"]["expected_env_vars"] == ["PROPHETX_BASE_URL", "PROPHETX_API_KEY"]
     assert rows["prophetx"]["live_readonly_research_fetch_exists"] is False
     assert rows["prophetx"]["live_readonly_candidate_adapter_exists"] is False
-    assert rows["prophetx"]["fixture_research_schema_exists"] is False
+    assert rows["prophetx"]["fixture_research_schema_exists"] is True
+    assert rows["prophetx"]["public_market_data_possible"] is True
+    assert rows["prophetx"]["orderbook_or_bidask_possible"] is True
+    assert rows["prophetx"]["depth_possible"] is True
+    assert rows["prophetx"]["settlement_metadata_possible"] is True
     assert rows["prophetx"]["can_create_candidate_pair_now"] is False
     assert rows["crypto_com"]["source_type"] == "DO_NOT_USE_YET"
     assert rows["robinhood"]["source_type"] == "DO_NOT_USE_YET"
@@ -316,9 +325,9 @@ def test_prophetx_boundary_is_inert_and_fail_closed() -> None:
     assert report["source_id"] == "prophetx"
     assert report["source_type"] == "EXECUTABLE_VENUE"
     assert report["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
-    assert report["status"] == "boundary_design_only_no_live_transport"
+    assert report["status"] == "fixture_backed_schema_exists_no_live_transport"
     assert report["expected_env_vars"] == ["PROPHETX_BASE_URL", "PROPHETX_API_KEY"]
-    assert report["fixture_research_schema_exists"] is False
+    assert report["fixture_research_schema_exists"] is True
     assert report["execution_allowed_in_project_now"] is False
     assert report["can_create_candidate_pair"] is False
     assert report["can_create_paper_candidate"] is False
@@ -327,7 +336,10 @@ def test_prophetx_boundary_is_inert_and_fail_closed() -> None:
     forbidden = next(row for row in report["data_categories"] if row["name"] == "account_balances_positions_or_orders")
     assert forbidden["allowed_read_only_research"] is False
     assert forbidden["forbidden_account_or_execution_surface"] is True
-    assert all(row["allowed"] is False for row in report["stages"] if row["stage"] > 0)
+    stages = {row["name"]: row for row in report["stages"]}
+    assert stages["fixture_backed_schema_design"]["allowed"] is True
+    assert stages["live_read_only_transport_after_separate_review"]["allowed"] is False
+    assert stages["matcher_integration_after_separate_review"]["allowed"] is False
     assert report["raw_redaction_policy"]["allow_raw_network_echo"] is False
     serialized = json.dumps(report)
     assert "PAPER_CANDIDATE" not in serialized
@@ -361,6 +373,172 @@ def test_prophetx_source_registry_still_blocks_candidate_use() -> None:
     assert entry.implementation_status.value == "PLANNED_NOT_IMPLEMENTED"
     assert entry.can_create_candidate_pair is False
     assert can_create_tradable_candidate_pair("prophetx", "kalshi") is False
+
+
+def test_prophetx_fixture_parser_emits_research_only_snapshot() -> None:
+    snapshot = build_prophetx_research_snapshot(
+        markets_payload={
+            "markets": [
+                {
+                    "market_id": "PX-TEST",
+                    "event_id": "PX-EVENT",
+                    "title": "Will a ProphetX fixture event happen?",
+                    "event_category": "macro",
+                    "market_type": "binary_event",
+                    "outcome_names": ["Yes", "No"],
+                    "close_time": "2026-07-01T14:00:00Z",
+                    "venue_restriction_notes": "Fixture venue restrictions not reviewed.",
+                }
+            ]
+        },
+        orderbook_payload={
+            "orderbooks": [
+                {
+                    "market_id": "PX-TEST",
+                    "best_bid": 0.22,
+                    "best_ask": 0.28,
+                    "bid_depth": 10,
+                    "ask_depth": 12,
+                    "depth_unit": "fixture_displayed_contracts_unreviewed",
+                    "market_data_timestamp": "2026-05-22T14:00:00Z",
+                }
+            ]
+        },
+        settlement_payload={
+            "settlements": [
+                {
+                    "market_id": "PX-TEST",
+                    "settlement_wording": "Fixture settlement wording.",
+                    "settlement_source": "fixture_placeholder",
+                    "event_window": "Fixture event window.",
+                    "outcome_terms": "Fixture outcome terms.",
+                    "void_or_cancellation_rules": "Fixture void rules.",
+                    "settlement_time": "2026-07-01T15:00:00Z",
+                }
+            ]
+        },
+        fee_payload={
+            "fees": [
+                {
+                    "market_id": "PX-TEST",
+                    "fee_commission_status": "fixture_unreviewed",
+                    "fee_schedule_version": "fixture_unreviewed",
+                    "maker_fee": 0.0,
+                    "taker_fee": 0.02,
+                    "other_venue_fees": "Fixture other fees.",
+                }
+            ]
+        },
+    )
+
+    assert snapshot["schema_kind"] == PROPHETX_RESEARCH_SCHEMA_KIND
+    assert snapshot["source_id"] == "prophetx"
+    assert snapshot["implementation_status"] == "PLANNED_NOT_IMPLEMENTED"
+    assert snapshot["live_fetch_attempted"] is False
+    assert snapshot["is_executable"] is False
+    assert snapshot["can_create_candidate_pair"] is False
+    assert snapshot["can_create_paper_candidate"] is False
+    assert snapshot["execution_allowed_in_project_now"] is False
+    assert snapshot["research_market_count"] == 1
+    row = snapshot["research_markets"][0]
+    assert row["market_id"] == "PX-TEST"
+    assert row["event_id"] == "PX-EVENT"
+    assert row["best_bid"] == 0.22
+    assert row["best_ask"] == 0.28
+    assert row["displayed_depth"]["unit"] == "fixture_displayed_contracts_unreviewed"
+    assert row["market_data_timestamp"] == "2026-05-22T14:00:00Z"
+    assert row["quote_timestamp"] == "2026-05-22T14:00:00Z"
+    assert row["quote_timestamp_alias_of"] == "market_data_timestamp"
+    assert row["settlement_wording"] == "Fixture settlement wording."
+    assert row["fee_commission_status"] == "fixture_unreviewed"
+    assert row["maker_fee"] == 0.0
+    assert row["taker_fee"] == 0.02
+    assert set(PROPHETX_REQUIRED_BLOCKERS).issubset(row["unresolved_blockers"])
+    serialized = json.dumps(snapshot)
+    assert "PAPER_CANDIDATE" not in serialized
+    assert "POSSIBLE_ARB" not in serialized
+
+
+def test_inspect_prophetx_fixtures_command_writes_reports(tmp_path: Path) -> None:
+    json_output = tmp_path / "prophetx_fixture.json"
+    markdown_output = tmp_path / "prophetx_fixture.md"
+
+    result = main(
+        [
+            "inspect-prophetx-fixtures",
+            "--json-output",
+            str(json_output),
+            "--markdown-output",
+            str(markdown_output),
+        ]
+    )
+
+    payload = json.loads(json_output.read_text(encoding="utf-8"))
+    markdown = markdown_output.read_text(encoding="utf-8")
+    assert result == 0
+    assert payload["schema_kind"] == PROPHETX_RESEARCH_SCHEMA_KIND
+    assert payload["research_market_count"] >= 1
+    assert payload["live_fetch_attempted"] is False
+    assert payload["is_executable"] is False
+    assert payload["can_create_candidate_pair"] is False
+    assert payload["can_create_paper_candidate"] is False
+    first = payload["research_markets"][0]
+    assert first["market_id"]
+    assert first["event_id"]
+    assert first["settlement_wording"]
+    assert first["displayed_depth"]["unit"] == "fixture_displayed_contracts_unreviewed"
+    assert first["fee_commission_status"]
+    assert first["market_data_timestamp"]
+    assert "ProphetX Fixture Inspection" in markdown
+    serialized = json.dumps(payload) + markdown
+    assert "PAPER_CANDIDATE" not in serialized
+    assert "POSSIBLE_ARB" not in serialized
+
+
+def test_inspect_prophetx_fixtures_missing_file_fails_cleanly(tmp_path: Path) -> None:
+    json_output = tmp_path / "missing_prophetx_fixture.json"
+    markdown_output = tmp_path / "missing_prophetx_fixture.md"
+
+    result = main(
+        [
+            "inspect-prophetx-fixtures",
+            "--markets",
+            str(tmp_path / "missing_markets.json"),
+            "--json-output",
+            str(json_output),
+            "--markdown-output",
+            str(markdown_output),
+        ]
+    )
+
+    payload = json.loads(json_output.read_text(encoding="utf-8"))
+    markdown = markdown_output.read_text(encoding="utf-8")
+    assert result == 1
+    assert payload["schema_kind"] == PROPHETX_RESEARCH_SCHEMA_KIND
+    assert payload["research_market_count"] == 0
+    assert payload["live_fetch_attempted"] is False
+    assert payload["can_create_candidate_pair"] is False
+    assert payload["can_create_paper_candidate"] is False
+    assert "FileNotFoundError" in payload["failure_reason"]
+    assert "Failure reason" in markdown
+
+
+def test_prophetx_parser_adds_no_live_transport_imports() -> None:
+    source = (Path(__file__).parents[1] / "venues" / "prophetx.py").read_text(encoding="utf-8")
+
+    forbidden_terms = (
+        "requests",
+        "httpx",
+        "aiohttp",
+        "socket",
+        "websocket",
+        "urllib",
+        "http.client",
+        "ssl",
+        "clientportal",
+        "webapi",
+    )
+    assert all(term not in source for term in forbidden_terms)
 
 
 def test_ibkr_forecastex_fixture_parser_emits_research_only_snapshot() -> None:

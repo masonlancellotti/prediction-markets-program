@@ -21,6 +21,7 @@ This taxonomy is infrastructure only. It does not add API fetchers, authenticati
 | Polymarket | `EXECUTABLE_VENUE` | Implemented read-only discovery/enrichment | May participate in candidate pairs with another implemented executable venue. |
 | ForecastEx / IBKR | `EXECUTABLE_VENUE` | Planned, not implemented | Boundary design exists in `docs/IBKR_FORECASTEX_READ_ONLY_BOUNDARY.md`; no candidate-pair impact because auth/account/instrument work is not implemented. |
 | SX Bet | `EXECUTABLE_VENUE` | Planned, not implemented | Candidate venue candidate for read-only research only; no wallet/signing/execution logic. |
+| ProphetX | `EXECUTABLE_VENUE` | Planned, not implemented | Boundary and fixture schema exist in `docs/PROPHETX_READ_ONLY_BOUNDARY.md`; no candidate-pair impact because live API access, permissions, fees, and settlement metadata are unreviewed. |
 | Azuro | `DO_NOT_USE_YET` | Planned, not implemented | On-chain AMM/protocol model needs separate schema work before scanner use. |
 | Omen / Gnosis Conditional Tokens | `DO_NOT_USE_YET` | Planned, not implemented | Conditional-token/indexer model needs token, collateral, oracle, and settlement review first. |
 | PredictIt | `DO_NOT_USE_YET` | Planned, not implemented | Do not treat as executable unless permitted execution API support is proven. |

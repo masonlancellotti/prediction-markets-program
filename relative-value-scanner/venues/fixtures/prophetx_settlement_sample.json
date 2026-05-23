@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "source_id": "prophetx",
+  "fixture_kind": "prophetx_settlement_sample",
+  "settlements": [
+    {
+      "market_id": "PX-CPI-JUN-YES",
+      "settlement_wording": "Fixture placeholder: settles according to the official CPI release for June 2026. This wording is not reviewed for matching.",
+      "settlement_source": "fixture_placeholder_official_cpi_release",
+      "event_window": "June 2026 CPI release window",
+      "outcome_terms": "Fixture placeholder: yes pays if CPI is above the stated threshold; not reviewed.",
+      "void_or_cancellation_rules": "Fixture placeholder: void/cancel behavior is not reviewed.",
+      "settlement_time": "2026-07-15T15:00:00Z"
+    },
+    {
+      "market_id": "PX-NBA-FINALS-BOS-YES",
+      "settlement_wording": "Fixture placeholder: settles according to the 2026 pro basketball championship winner. This wording is not reviewed for matching.",
+      "settlement_source": "fixture_placeholder_league_result",
+      "event_window": "2026 pro basketball championship",
+      "outcome_terms": "Fixture placeholder: yes pays if Boston wins the championship; not reviewed.",
+      "void_or_cancellation_rules": "Fixture placeholder: void/cancel behavior is not reviewed.",
+      "settlement_time": "2026-06-30T05:00:00Z"
+    }
+  ]
+}
