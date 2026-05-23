@@ -28,6 +28,10 @@ from research.market_making_analysis import (
     _ticker_event_date_hint,
 )
 from research.paper_basket_diagnostics import PaperBasketDiagnosticsReporter
+from research.strict_market_making_candidate_diagnostics import (
+    StrictMarketMakingCandidateDiagnosticsConfig,
+    _diagnose_strict_candidates,
+)
 
 
 def _storage(tmp_path) -> Storage:
@@ -80,7 +84,7 @@ def _insert_books(storage: Storage, ticker: str, *, depth: float = 10.0, close_t
 
 
 def _insert_recent_books(storage: Storage, ticker: str, *, depth: float = 10.0, close_time: datetime | None = None) -> None:
-    base = datetime.now(timezone.utc) - timedelta(minutes=35)
+    base = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=12)
     for idx in range(8):
         storage.upsert_live_orderbook_snapshot(
             {
@@ -197,6 +201,11 @@ def test_paper_basket_diagnostics_summarizes_latest_exports(tmp_path):
                 {"market_ticker": "KXNBA2NDTEAMDEF-26-TCAM", "side": "BUY_YES", "tier": "EXPLORATORY_CURRENT"},
             ],
             "targets_removed_reason": {"KXRAINNYC-26MAY21-T0|BUY_NO": "target_removed_after_selector_refresh"},
+            "target_first_seen": {"KXRAINNYC-26MAY21-T0|BUY_NO": "2026-05-21T12:00:00+00:00"},
+            "target_last_seen": {"KXRAINNYC-26MAY21-T0|BUY_NO": "2026-05-21T12:05:00+00:00"},
+            "target_removed_at": {"KXRAINNYC-26MAY21-T0|BUY_NO": "2026-05-21T12:05:00+00:00"},
+            "target_removed_after_seconds": {"KXRAINNYC-26MAY21-T0|BUY_NO": 300},
+            "target_removed_last_spread_cents": {"KXRAINNYC-26MAY21-T0|BUY_NO": 6.0},
         },
         actions=[
             {
@@ -230,6 +239,8 @@ def test_paper_basket_diagnostics_summarizes_latest_exports(tmp_path):
     assert result.summary["quote_rejection_breakdown"]["spread_below_minimum"] == 1
     assert result.summary["spread_below_minimum_count"] == 1
     assert result.summary["targets_with_any_fill"][0]["market_ticker"] == "KXRAINNYC-26MAY21-T0"
+    assert result.summary["target_persistence_diagnostics"][0]["strict_target_lifetime_seconds"] == 300.0
+    assert result.summary["target_persistence_diagnostics"][0]["stopped_qualifying_reason"] == "selector_refresh_or_current_target_filter"
     assert "Increase duration" in result.summary["suggested_next_settings"][0]
     text = result.to_text()
     assert "paper_basket_diagnostics_status=PAPER_BASKET_DIAGNOSTICS_OK" in text
@@ -358,6 +369,70 @@ def test_paper_basket_diagnostics_uses_csv_rejections_when_summary_breakdown_abs
     assert result.summary["quote_rejection_breakdown"]["max_open_quotes_reached"] == 1
 
 
+def test_paper_basket_diagnostics_recommends_max_open_quotes_when_blocking_dominates(tmp_path):
+    reports_dir = tmp_path / "reports"
+    _write_paper_basket_exports(
+        reports_dir,
+        summary={
+            "status": "PAPER_BASKET_ACTIVE_NO_FILLS_YET",
+            "target_hygiene_verdict": "TARGET_HYGIENE_OK",
+            "targets": 1,
+            "quote_rejection_breakdown": {
+                "spread_below_minimum": 1,
+                "max_open_quotes_reached": 5,
+                "target_removed": 0,
+                "stale_or_expired_target": 0,
+                "no_valid_target": 0,
+                "other": 0,
+            },
+        },
+        actions=[
+            {
+                "action": "NO_QUOTE",
+                "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+                "side": "BUY_NO",
+                "reason": "Already has 1 open paper quote(s).",
+            },
+        ],
+        targets=[{"market_ticker": "KXHIGHAUS-26MAY21-B89.5", "side": "BUY_NO", "tier": "REPLAY_SUPPORTED"}],
+        target_summaries=[],
+    )
+
+    result = PaperBasketDiagnosticsReporter(reports_dir=reports_dir).build()
+
+    assert result.summary["quote_blocking_diagnostics"]["max_open_quotes_reached_dominant"] is True
+    assert result.summary["quote_blocking_diagnostics"]["open_quotes_blocking_refresh"] is True
+    assert "max_open_quotes=2" in result.summary["suggested_next_settings"][0]
+
+
+def test_paper_basket_diagnostics_spread_dominant_recommendation_is_conservative(tmp_path):
+    reports_dir = tmp_path / "reports"
+    _write_paper_basket_exports(
+        reports_dir,
+        summary={
+            "status": "PAPER_BASKET_ACTIVE_NO_FILLS_YET",
+            "target_hygiene_verdict": "TARGET_HYGIENE_OK",
+            "targets": 1,
+            "quote_rejection_breakdown": {
+                "spread_below_minimum": 5,
+                "max_open_quotes_reached": 1,
+                "target_removed": 0,
+                "stale_or_expired_target": 0,
+                "no_valid_target": 0,
+                "other": 0,
+            },
+        },
+        actions=[],
+        targets=[{"market_ticker": "KXHIGHAUS-26MAY21-B89.5", "side": "BUY_NO", "tier": "REPLAY_SUPPORTED"}],
+        target_summaries=[],
+    )
+
+    result = PaperBasketDiagnosticsReporter(reports_dir=reports_dir).build()
+
+    assert result.summary["quote_blocking_diagnostics"]["spread_below_minimum_dominant"] is True
+    assert any("wait for wider spreads" in item for item in result.summary["suggested_next_settings"])
+
+
 def test_paper_basket_diagnostics_missing_exports_fails_safely(tmp_path):
     result = PaperBasketDiagnosticsReporter(reports_dir=tmp_path / "reports").build()
 
@@ -365,6 +440,106 @@ def test_paper_basket_diagnostics_missing_exports_fails_safely(tmp_path):
     assert result.summary["research_only"] is True
     assert result.summary["readiness_promotion"] == "none"
     assert set(result.summary["missing_exports"]) == {"summary", "actions", "targets", "target_summaries"}
+
+
+def test_strict_market_making_candidate_diagnostics_counts_blockers():
+    cfg = StrictMarketMakingCandidateDiagnosticsConfig(min_replay_fills=3, min_spread_cents=8.0, min_depth=1.0)
+    markets = [
+        {
+            "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+            "best_side": "BUY_NO",
+            "current_setup_ok": True,
+            "market_likely_expired": False,
+            "fills": 2,
+            "trades": 5,
+            "avg_net_edge_30m_cents": 4.0,
+            "adverse_fill_rate_30m": 0.1,
+            "current_spread_cents": 10.0,
+            "current_displayed_depth": 5.0,
+            "current_book_age_seconds": 30.0,
+            "score": 1.0,
+        },
+        {
+            "market_ticker": "KXLOWNY-26MAY21-T60",
+            "best_side": "BUY_YES",
+            "current_setup_ok": False,
+            "current_setup_reason": "Spread 3.00 below minimum 8.00c.",
+            "market_likely_expired": False,
+            "fills": 4,
+            "trades": 5,
+            "avg_net_edge_30m_cents": 2.0,
+            "adverse_fill_rate_30m": 0.1,
+            "current_spread_cents": 3.0,
+            "current_displayed_depth": 5.0,
+            "current_book_age_seconds": 20.0,
+            "score": 0.5,
+        },
+    ]
+
+    result = _diagnose_strict_candidates(markets, {"verdict": "TEST"}, cfg)
+
+    assert result.summary["research_only"] is True
+    assert result.summary["readiness_promotion"] == "none"
+    assert result.summary["strict_target_count"] == 0
+    assert result.summary["exploratory_target_count"] == 1
+    assert result.summary["blocker_counts"]["too_few_trade_print_fills"] == 1
+    assert result.summary["blocker_counts"]["spread_below_minimum"] == 1
+    assert {row["ticker"] for row in result.near_strict_markets[:2]} == {
+        "KXHIGHAUS-26MAY21-B89.5",
+        "KXLOWNY-26MAY21-T60",
+    }
+
+
+def test_strict_market_making_candidate_diagnostics_excludes_expired_near_strict():
+    cfg = StrictMarketMakingCandidateDiagnosticsConfig()
+    markets = [
+        {
+            "market_ticker": "KXNBATEAMTOTAL-26MAY19CLENYK-CLE91",
+            "best_side": "BUY_NO",
+            "current_setup_ok": True,
+            "market_likely_expired": True,
+            "fills": 0,
+            "trades": 10,
+            "avg_net_edge_30m_cents": 10.0,
+            "adverse_fill_rate_30m": 0.0,
+            "current_spread_cents": 30.0,
+            "current_displayed_depth": 5.0,
+            "current_book_age_seconds": 10.0,
+            "score": 5.0,
+        }
+    ]
+
+    result = _diagnose_strict_candidates(markets, {"verdict": "TEST"}, cfg)
+
+    assert result.summary["blocker_counts"]["stale_or_expired"] == 1
+    assert result.near_strict_markets == []
+    assert result.summary["strict_target_count"] == 0
+
+
+def test_strict_market_making_candidate_diagnostics_identifies_strict_target():
+    cfg = StrictMarketMakingCandidateDiagnosticsConfig(min_replay_fills=1)
+    markets = [
+        {
+            "market_ticker": "KXHIGHAUS-26MAY21-B89.5",
+            "best_side": "BUY_NO",
+            "current_setup_ok": True,
+            "market_likely_expired": False,
+            "fills": 1,
+            "trades": 2,
+            "avg_net_edge_30m_cents": 1.5,
+            "adverse_fill_rate_30m": 0.0,
+            "current_spread_cents": 12.0,
+            "current_displayed_depth": 2.0,
+            "current_book_age_seconds": 10.0,
+            "score": 1.0,
+        }
+    ]
+
+    result = _diagnose_strict_candidates(markets, {"verdict": "TEST"}, cfg)
+
+    assert result.summary["strict_target_count"] == 1
+    assert result.summary["near_strict_count"] == 0
+    assert result.summary["paper_or_live_readiness"] == "not_promoted"
 
 
 def test_market_making_scopes_have_distinct_metadata(tmp_path):
@@ -692,9 +867,15 @@ def test_paper_basket_lifecycle_fill_persists_after_final_zero_state():
     assert summary["total_trade_print_fills_seen"] == 1
     assert summary["final_filled_quotes"] == 0
     assert summary["fill_seen_in_history_but_not_final"] is True
-    assert summary["targets_with_any_fill"] == [{"market_ticker": "OLD", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED"}]
+    assert summary["targets_with_any_fill"] == [
+        {"market_ticker": "OLD", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED", "current_spread_cents": None}
+    ]
     assert summary["quote_rejection_breakdown"]["target_removed"] == 1
     assert summary["targets_removed_reason"] == {"OLD|BUY_YES": "target_removed_after_selector_refresh"}
+    assert "OLD|BUY_YES" in summary["target_first_seen"]
+    assert "OLD|BUY_YES" in summary["target_last_seen"]
+    assert "OLD|BUY_YES" in summary["target_removed_at"]
+    assert summary["target_removed_after_seconds"]["OLD|BUY_YES"] >= 0.0
 
 
 def test_paper_basket_lifecycle_quote_rejection_breakdown_counts_reasons():
@@ -746,8 +927,8 @@ def test_paper_basket_lifecycle_reports_strict_and_exploratory_seen():
     assert summary["strict_targets_seen"] == 1
     assert summary["exploratory_targets_seen"] == 1
     assert summary["targets_seen_over_run"] == [
-        {"market_ticker": "STRICT", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED"},
-        {"market_ticker": "EXP", "side": "BUY_NO", "tier": "EXPLORATORY_CURRENT"},
+        {"market_ticker": "STRICT", "side": "BUY_YES", "tier": "REPLAY_SUPPORTED", "current_spread_cents": None},
+        {"market_ticker": "EXP", "side": "BUY_NO", "tier": "EXPLORATORY_CURRENT", "current_spread_cents": None},
     ]
     assert summary["targets_final"] == summary["targets_seen_over_run"]
 

@@ -30,6 +30,18 @@ class PaperBasketDiagnosticsResult:
         lines.append("Quote rejection breakdown:")
         for key, value in sorted((self.summary.get("quote_rejection_breakdown") or {}).items()):
             lines.append(f"- {key}: {value}")
+        lines.append("Quote blocking diagnostics:")
+        blocking = self.summary.get("quote_blocking_diagnostics") or {}
+        lines.append(f"- max_open_quotes_reached_dominant: {str(blocking.get('max_open_quotes_reached_dominant')).lower()}")
+        lines.append(f"- open_quotes_blocking_refresh: {str(blocking.get('open_quotes_blocking_refresh')).lower()}")
+        lines.append(f"- max_open_quotes_reached_by_target: {blocking.get('max_open_quotes_reached_by_target')}")
+        lines.append(f"- cancel_reason_breakdown: {blocking.get('cancel_reason_breakdown')}")
+        lines.append("Target persistence diagnostics:")
+        for row in self.summary.get("target_persistence_diagnostics") or []:
+            lines.append(
+                f"- {row.get('market_ticker')} {row.get('side')} tier={row.get('tier')} "
+                f"lifetime_seconds={row.get('strict_target_lifetime_seconds')} removed_reason={row.get('target_removed_reason')}"
+            )
         lines.append("Targets with any fill:")
         for row in self.summary.get("targets_with_any_fill") or []:
             lines.append(f"- {row.get('market_ticker')} {row.get('side')} tier={row.get('tier')}")
@@ -130,6 +142,8 @@ def _diagnose(summary: dict[str, Any], actions: pd.DataFrame, targets: pd.DataFr
         "targets_final": final_targets,
         "targets_seen_over_run": summary.get("targets_seen_over_run") or final_targets,
         "targets_removed_reason": summary.get("targets_removed_reason") or {},
+        "target_persistence_diagnostics": _target_persistence(summary),
+        "quote_blocking_diagnostics": _quote_blocking(actions, rejection_breakdown),
         "latest_actions": _latest_actions(actions),
         "suggested_next_settings": [],
         "primary_recommendation": "",
@@ -190,6 +204,14 @@ def _recommend(diagnostics: dict[str, Any]) -> list[str]:
     total_rejects = sum(_int(value) for value in (diagnostics.get("quote_rejection_breakdown") or {}).values())
     fills_seen = _int(diagnostics.get("total_trade_print_fills_seen"))
     final_fills = _int(diagnostics.get("final_filled_quotes"))
+    blocking = diagnostics.get("quote_blocking_diagnostics") or {}
+    quick_removed = [
+        row
+        for row in diagnostics.get("target_persistence_diagnostics") or []
+        if row.get("target_removed_after_seconds") is not None and float(row.get("target_removed_after_seconds") or 0.0) <= 900
+    ]
+    if blocking.get("max_open_quotes_reached_dominant"):
+        suggestions.append("Max-open-quote rejections dominate; test max_open_quotes=2 next before lowering spread thresholds.")
     if diagnostics.get("fill_seen_in_history_but_not_final"):
         suggestions.append("Increase duration or review target rotation; fills appeared earlier but the final target state had fewer/no fills.")
     if strict == 0 and exploratory > 0:
@@ -197,7 +219,9 @@ def _recommend(diagnostics: dict[str, Any]) -> list[str]:
     elif strict > 0 and exploratory > strict:
         suggestions.append("Consider requiring strict-only for the next diagnostic run if the goal is cleaner evidence over faster fill discovery.")
     if spread_rejects > 0 and spread_rejects >= max(1, total_rejects // 2):
-        suggestions.append("Current spread filters may be too strict for the final target state; inspect spread_below_minimum before lowering thresholds.")
+        suggestions.append("Spread-below-minimum rejections dominate; collect more data or wait for wider spreads before lowering thresholds.")
+    if quick_removed:
+        suggestions.append("Targets disappeared quickly; use shorter diagnostic runs or more frequent target-refresh diagnostics before changing thresholds.")
     if _int(diagnostics.get("targets")) >= 5 and fills_seen == 0:
         suggestions.append("Do not raise max targets yet; collect more trade evidence or improve target quality first.")
     elif _int(diagnostics.get("targets")) < 3 and spread_rejects == 0:
@@ -207,6 +231,87 @@ def _recommend(diagnostics: dict[str, Any]) -> list[str]:
     elif final_fills == 0:
         suggestions.append("Do not treat final no-fill state as the full run result; use total_trade_print_fills_seen and targets_with_any_fill.")
     return suggestions or ["Keep settings unchanged for the next short diagnostic run; no dominant rejection or target-quality issue was detected."]
+
+
+def _target_persistence(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    targets_by_key: dict[str, dict[str, Any]] = {}
+    for row in summary.get("targets_seen_over_run") or []:
+        targets_by_key[f"{row.get('market_ticker')}|{row.get('side')}"] = row
+    for row in summary.get("targets_with_any_fill") or []:
+        targets_by_key.setdefault(f"{row.get('market_ticker')}|{row.get('side')}", row)
+    targets = list(targets_by_key.values())
+    first_seen = summary.get("target_first_seen") or {}
+    last_seen = summary.get("target_last_seen") or {}
+    removed_at = summary.get("target_removed_at") or {}
+    removed_after = summary.get("target_removed_after_seconds") or {}
+    removed_spread = summary.get("target_removed_last_spread_cents") or {}
+    removed_reason = summary.get("targets_removed_reason") or {}
+    rows: list[dict[str, Any]] = []
+    for row in targets:
+        key = f"{row.get('market_ticker')}|{row.get('side')}"
+        after = _num(removed_after.get(key))
+        rows.append(
+            {
+                "market_ticker": row.get("market_ticker"),
+                "side": row.get("side"),
+                "tier": row.get("tier"),
+                "target_first_seen": first_seen.get(key),
+                "target_last_seen": last_seen.get(key),
+                "target_removed_at": removed_at.get(key),
+                "target_removed_after_seconds": after,
+                "strict_target_lifetime_seconds": after if row.get("tier") == "REPLAY_SUPPORTED" else None,
+                "target_removed_reason": removed_reason.get(key),
+                "current_spread_at_removal": _num(removed_spread.get(key)),
+                "stopped_qualifying_reason": _stopped_reason(removed_reason.get(key), _num(removed_spread.get(key))),
+            }
+        )
+    return rows
+
+
+def _quote_blocking(actions: pd.DataFrame, rejection_breakdown: dict[str, int]) -> dict[str, Any]:
+    max_open_by_target: dict[str, int] = {}
+    spread_by_target: dict[str, int] = {}
+    cancel_reason_breakdown = {"ttl_or_no_trade_fill": 0, "target_state_or_other": 0}
+    if not actions.empty:
+        for _, row in actions.iterrows():
+            action = str(row.get("action") or "")
+            key = f"{row.get('market_ticker')}|{row.get('side')}"
+            reason = str(row.get("reason") or "")
+            if action == "NO_QUOTE":
+                bucket = _quote_rejection_bucket(reason)
+                if bucket == "max_open_quotes_reached":
+                    max_open_by_target[key] = max_open_by_target.get(key, 0) + 1
+                elif bucket == "spread_below_minimum":
+                    spread_by_target[key] = spread_by_target.get(key, 0) + 1
+            elif action == "QUOTE_CANCELLED":
+                lower = reason.lower()
+                if "no trade-print fill" in lower or "ttl" in lower or "after" in lower:
+                    cancel_reason_breakdown["ttl_or_no_trade_fill"] += 1
+                else:
+                    cancel_reason_breakdown["target_state_or_other"] += 1
+    total_rejections = sum(_int(value) for value in rejection_breakdown.values())
+    max_open = _int(rejection_breakdown.get("max_open_quotes_reached"))
+    spread = _int(rejection_breakdown.get("spread_below_minimum"))
+    return {
+        "max_open_quotes_reached_by_target": dict(sorted(max_open_by_target.items())),
+        "spread_below_minimum_by_target": dict(sorted(spread_by_target.items())),
+        "max_open_quotes_reached_dominant": bool(total_rejections and max_open > total_rejections / 2),
+        "spread_below_minimum_dominant": bool(total_rejections and spread > total_rejections / 2),
+        "open_quotes_blocking_refresh": bool(max_open > 0),
+        "max_open_quotes_1_may_be_restrictive": bool(max_open > 0),
+        "cancel_reason_breakdown": cancel_reason_breakdown,
+    }
+
+
+def _stopped_reason(reason: Any, spread: float | None) -> str | None:
+    text = str(reason or "").lower()
+    if "selector" in text:
+        return "selector_refresh_or_current_target_filter"
+    if spread is not None and spread < 8.0:
+        return "spread_below_minimum"
+    if "stale" in text or "expired" in text:
+        return "stale_or_expired"
+    return None if not reason else str(reason)
 
 
 def _count_tier(frame: pd.DataFrame, tier: str, fallback: Any = 0) -> int:
@@ -280,3 +385,12 @@ def _int(value: Any, fallback: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return fallback
+
+
+def _num(value: Any) -> float | None:
+    try:
+        if value is None or value != value:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None

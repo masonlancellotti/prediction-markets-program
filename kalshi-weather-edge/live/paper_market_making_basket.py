@@ -357,6 +357,11 @@ def _new_lifecycle() -> dict[str, Any]:
             "other": 0,
         },
         "targets_seen": {},
+        "target_first_seen_at": {},
+        "target_last_seen_at": {},
+        "target_removed_at": {},
+        "target_removed_after_seconds": {},
+        "target_removed_last_spread_cents": {},
         "target_fill_max": {},
         "targets_with_any_fill": {},
         "targets_removed_reason": {},
@@ -365,6 +370,8 @@ def _new_lifecycle() -> dict[str, Any]:
 
 
 def _update_lifecycle(lifecycle: dict[str, Any], result: PaperMarketMakingBasketResult) -> None:
+    observed_at = datetime.now(timezone.utc)
+    observed_at_text = observed_at.isoformat()
     lifecycle["target_sets_seen"] += 1
     lifecycle["max_targets_seen"] = max(int(lifecycle["max_targets_seen"]), len(result.targets))
     lifecycle["strict_targets_seen"] = max(
@@ -377,8 +384,12 @@ def _update_lifecycle(lifecycle: dict[str, Any], result: PaperMarketMakingBasket
     )
     current_targets = {_target_key(row): _target_descriptor(row) for row in result.targets}
     seen = lifecycle["targets_seen"]
+    first_seen = lifecycle["target_first_seen_at"]
+    last_seen = lifecycle["target_last_seen_at"]
     for key, descriptor in current_targets.items():
         seen[key] = descriptor
+        first_seen.setdefault(key, observed_at_text)
+        last_seen[key] = observed_at_text
     previous_targets = lifecycle.get("previous_targets") or {}
     removed = set(previous_targets) - set(current_targets)
     if removed:
@@ -387,6 +398,12 @@ def _update_lifecycle(lifecycle: dict[str, Any], result: PaperMarketMakingBasket
         reasons = lifecycle["targets_removed_reason"]
         for key in sorted(removed):
             reasons[key] = "target_removed_after_selector_refresh"
+            lifecycle["target_removed_at"][key] = observed_at_text
+            first = _parse_lifecycle_ts(first_seen.get(key))
+            if first is not None:
+                lifecycle["target_removed_after_seconds"][key] = max(0.0, (observed_at - first).total_seconds())
+            prior = previous_targets.get(key) or {}
+            lifecycle["target_removed_last_spread_cents"][key] = prior.get("current_spread_cents")
     lifecycle["previous_targets"] = current_targets
     if not result.targets:
         lifecycle["quote_rejection_breakdown"]["no_valid_target"] += 1
@@ -426,12 +443,13 @@ def _apply_lifecycle(summary: dict[str, Any], lifecycle: dict[str, Any]) -> None
             "final_cancelled_quotes": int(summary.get("cancelled_quotes") or 0),
             "quote_rejection_breakdown": dict(lifecycle["quote_rejection_breakdown"]),
             "targets_seen_over_run": list(lifecycle["targets_seen"].values()),
+            "target_first_seen": dict(lifecycle["target_first_seen_at"]),
+            "target_last_seen": dict(lifecycle["target_last_seen_at"]),
+            "target_removed_at": dict(lifecycle["target_removed_at"]),
+            "target_removed_after_seconds": dict(lifecycle["target_removed_after_seconds"]),
+            "target_removed_last_spread_cents": dict(lifecycle["target_removed_last_spread_cents"]),
             "targets_final": [
-                {
-                    "market_ticker": str(row.get("market_ticker")),
-                    "side": str(row.get("side")),
-                    "tier": str(row.get("tier")),
-                }
+                _target_descriptor(row)
                 for row in summary.get("_final_targets", [])
             ],
             "targets_with_any_fill": list(lifecycle["targets_with_any_fill"].values()),
@@ -459,12 +477,25 @@ def _target_key(row: dict[str, Any]) -> str:
     return f"{row.get('market_ticker')}|{row.get('side')}"
 
 
-def _target_descriptor(row: dict[str, Any]) -> dict[str, str]:
+def _target_descriptor(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "market_ticker": str(row.get("market_ticker")),
         "side": str(row.get("side")),
         "tier": str(row.get("tier") or ""),
+        "current_spread_cents": row.get("current_spread_cents"),
     }
+
+
+def _parse_lifecycle_ts(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _export(summary: dict[str, Any], targets: list[dict[str, Any]], target_results: list[dict[str, Any]], actions: list[dict[str, Any]]) -> dict[str, str]:
