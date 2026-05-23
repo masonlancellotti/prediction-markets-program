@@ -1,0 +1,63 @@
+{
+  "source_snapshot_id": "fixture-crypto-thresholds-001",
+  "as_of": "2026-05-19T18:10:00+00:00",
+  "markets": [
+    {
+      "market_id": "fixture:btc_over_120k_june",
+      "venue": "fixture",
+      "title": "BTC above 120k by June 30",
+      "canonical_text": "Bitcoin is above 120000 USD by 2026-06-30.",
+      "resolution_criteria": "Resolves yes from the fixture BTC index at the stated window.",
+      "resolution_date": "2026-06-30",
+      "entities": ["BTC"],
+      "themes": ["crypto", "threshold", "fixture"],
+      "yes_price": 0.70,
+      "no_price": 0.30,
+      "bid": 0.68,
+      "ask": 0.72,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "observable": "BTC_USD",
+      "settlement_source": "fixture_btc_index",
+      "window": "2026-06-30"
+    },
+    {
+      "market_id": "fixture:btc_over_100k_june",
+      "venue": "fixture",
+      "title": "BTC above 100k by June 30",
+      "canonical_text": "Bitcoin is above 100000 USD by 2026-06-30.",
+      "resolution_criteria": "Resolves yes from the fixture BTC index at the stated window.",
+      "resolution_date": "2026-06-30",
+      "entities": ["BTC"],
+      "themes": ["crypto", "threshold", "fixture"],
+      "yes_price": 0.50,
+      "no_price": 0.50,
+      "bid": 0.48,
+      "ask": 0.52,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "observable": "BTC_USD",
+      "settlement_source": "fixture_btc_index",
+      "window": "2026-06-30"
+    },
+    {
+      "market_id": "fixture:btc_over_100k_other_window",
+      "venue": "fixture",
+      "title": "BTC above 100k by July 31",
+      "canonical_text": "Bitcoin is above 100000 USD by 2026-07-31.",
+      "resolution_criteria": "Resolves yes from a different fixture BTC window.",
+      "resolution_date": "2026-07-31",
+      "entities": ["BTC"],
+      "themes": ["crypto", "threshold", "fixture"],
+      "yes_price": 0.50,
+      "no_price": 0.50,
+      "bid": 0.48,
+      "ask": 0.52,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "observable": "BTC_USD",
+      "settlement_source": "fixture_btc_index",
+      "window": "2026-07-31"
+    }
+  ]
+}

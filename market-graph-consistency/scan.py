@@ -6,6 +6,7 @@ from pathlib import Path
 from graph_engine.consistency.runner import run_consistency_checks
 from graph_engine.loader import load_fixture_markets
 from graph_engine.relationships.registry import load_relationship_registry
+from graph_engine.reporting.hints import write_relative_value_hints_report
 from graph_engine.reporting.json_report import write_json_report
 from graph_engine.reporting.md_report import write_markdown_report
 from graph_engine.snapshot_loader import NoUsableSnapshotsFound, load_schema_v1_snapshots
@@ -74,11 +75,14 @@ def main(argv: list[str] | None = None) -> int:
     md_path = REPORTS_DIR / "graph_consistency_summary.md"
     diagnostics_json_path = REPORTS_DIR / "market_graph_consistency_diagnostics.json"
     diagnostics_md_path = REPORTS_DIR / "market_graph_consistency_diagnostics.md"
+    hints_json_path = REPORTS_DIR / "market_graph_relative_value_hints.json"
+    hints_md_path = REPORTS_DIR / "market_graph_relative_value_hints.md"
 
     write_json_report(snapshot, violations, json_path, source_metadata)
     write_markdown_report(snapshot, violations, md_path)
     write_json_report(snapshot, violations, diagnostics_json_path, source_metadata)
     write_markdown_report(snapshot, violations, diagnostics_md_path)
+    write_relative_value_hints_report(snapshot, violations, hints_json_path, hints_md_path)
 
     print(f"Mode: {mode}")
     print(f"Loaded {len(snapshot.nodes)} markets, {len(snapshot.edges)} edges, {len(snapshot.exclusion_sets)} exclusion sets.")
@@ -87,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote {md_path}")
     print(f"Wrote {diagnostics_json_path}")
     print(f"Wrote {diagnostics_md_path}")
+    print(f"Wrote {hints_json_path}")
+    print(f"Wrote {hints_md_path}")
     return 0
 
 

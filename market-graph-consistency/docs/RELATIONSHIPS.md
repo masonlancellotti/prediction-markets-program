@@ -18,6 +18,8 @@ Relationships connect market nodes. In v1, relationships are manual and loaded f
 
 - `OpenAI first to AGI by 2027` implies `AGI announced by any company by 2027`.
 - `OpenAI valuation at least $1T by 2027` is a subset of `OpenAI valuation at least $500B by 2027`.
+- Sports champion markets can imply conference or league championship markets in one direction only; the reverse is not valid.
+- BTC above a higher threshold implies BTC above a lower threshold only when observable, settlement source, and window are all proven the same.
 - Two differently worded `OpenAI over $1T valuation before 2028` markets can be modeled as `SAME_EVENT_REWORDED`.
 - `OpenAI first to AGI`, `Anthropic first to AGI`, and `Microsoft first to AGI` belong in an exclusion set, because at most one can be first under the same rules.
 
@@ -27,8 +29,8 @@ Relationships connect market nodes. In v1, relationships are manual and loaded f
 - Put mutual exclusion in `exclusion_sets`, not pairwise edges.
 - Include confidence, source, rationale, evidence snippets, and creation time.
 - Use `AMBIGUOUS` when wording is not safe enough for a hard check.
+- Do not treat subset/superset edges as exact same-payoff.
 
 ## Logic Changes
 
 Current v1 logic enforces only implication/subset/same-event/exclusion constraints and creates manual-review wording findings for ambiguous edges.
-

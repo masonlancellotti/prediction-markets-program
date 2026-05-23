@@ -19,6 +19,7 @@ Future agents should read these first:
 - Highest action remains `MANUAL_REVIEW`.
 - LLM behavior must remain optional, structured, auditable, and never a source of direct prices or direct recommendations.
 - Reference-only nodes, stale nodes, unreviewed LLM edges, missing SAME_EVENT_REWORDED settlement proof, and mismatched threshold-chain basis must stay diagnostic-only and may not become hard approval signals.
+- Relative-value hint exports are graph-local research artifacts only. Do not wire them into sibling evaluators without a separate fail-closed integration task.
 
 ## Invariants
 
@@ -28,6 +29,7 @@ Future agents should read these first:
 - Mutual exclusion is a hyperedge (`ExclusionSet`), not pairwise.
 - Reports must keep action labels inside the `IGNORE` / `WATCH` / `MANUAL_REVIEW` ladder.
 - Violation reports must not add PnL/profit/dollar/fill/size/edge-bps/execution/promoted-action fields; magnitude remains probability-space only.
+- Subset/superset is not exact same-payoff. Treat it as a one-way probability bound until separately reviewed.
 
 ## Commands Run
 
@@ -54,6 +56,7 @@ Select-String -Path reports\graph_consistency_summary.* -Pattern 'TRADE|PAPER|PO
 - Report guardrail tests.
 - LLM-source confidence cap and AMBIGUOUS_WORDING action cap enforced.
 - Reference-only, stale-node, settlement-proof, threshold-basis, and unreviewed-LLM caps are tested.
+- Structural sports, BTC threshold, complete/incomplete exclusion group, and graph hint export fixtures are tested.
 - Read-only schema-v1 saved snapshot loader prototype.
 - Snapshot reports use `GraphSnapshot.notes`; JSON reports serialize notes.
 - No-usable-snapshots fallback path is tested.

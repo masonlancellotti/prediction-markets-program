@@ -9,6 +9,7 @@ This repository is a lean, offline semantic consistency scanner.
 3. `graph_engine.relationships.registry` loads manual relationship files from `relationships/`.
 4. `graph_engine.consistency.runner` applies v1 checks.
 5. `graph_engine.reporting` writes JSON and Markdown reports to `reports/`.
+6. `graph_engine.reporting.hints` writes a graph-local relative-value hints artifact for later research review only.
 
 Saved snapshot prototype mode uses `scan.py --snapshots-dir` or `--snapshot-file` to load schema-v1 normalized snapshot JSON files through `graph_engine.snapshot_loader`. It does not load manual fixture relationships or infer new relationships.
 
@@ -25,6 +26,7 @@ Saved snapshot prototype mode uses `scan.py --snapshots-dir` or `--snapshot-file
 - `graph_engine/consistency/tolerances.py`: v1 tolerances and action ladder.
 - `graph_engine/reporting/json_report.py`: structured report writer.
 - `graph_engine/reporting/md_report.py`: human-readable grouped report writer.
+- `graph_engine/reporting/hints.py`: research-only graph hint export; not an evaluator integration.
 - `graph_engine/semantics/`: minimal future helper functions.
 - `graph_engine/backtest/`: documented placeholders for replay work.
 
@@ -35,6 +37,7 @@ Saved snapshot prototype mode uses `scan.py --snapshots-dir` or `--snapshot-file
 - Relationship files are hand-authored.
 - Highest action is `MANUAL_REVIEW`.
 - No account, execution, private API, scheduler, DB, or cross-repo imports.
+- Graph contradictions and hints are not permission for orders or promoted candidate labels.
 
 ## Known Limits
 
