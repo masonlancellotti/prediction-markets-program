@@ -133,6 +133,14 @@ SOURCE_REGISTRY: dict[str, SourceEntry] = {
         allowed_effects=(),
         notes="May have public read-only market data, but not treated as executable unless permitted execution API support is proven.",
     ),
+    "prophetx": SourceEntry(
+        source_id="prophetx",
+        display_name="ProphetX",
+        source_type=SourceType.EXECUTABLE_VENUE,
+        implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
+        allowed_effects=(),
+        notes="Potential executable venue later; design-only read-only boundary exists, but API access, permissions, fees, and settlement metadata are unreviewed.",
+    ),
     "manifold": SourceEntry(
         source_id="manifold",
         display_name="Manifold",
