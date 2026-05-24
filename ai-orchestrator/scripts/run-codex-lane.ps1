@@ -228,6 +228,16 @@ while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
         continue
     }
 
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "test-next-codex-prompt.ps1") -LaneName $LaneName
+    if ($LASTEXITCODE -ne 0) {
+        $reason = "NEXT_CODEX_PROMPT.md failed autonomy prompt-quality validation. Codex was not launched."
+        Register-CodexFailure -Reason $reason -LogPath "(preflight)" -Output $reason
+        Set-Text -Path $gptReviewNeededPath -Text "$reason $(Get-UtcStamp)"
+        Set-LaneHeartbeat -Lane $lane -Role "codex" -Status "prompt_quality_failed" -Detail $reason
+        Start-Sleep -Seconds $Global:PromptPollSeconds
+        continue
+    }
+
     $runCount = Get-AndIncrementRunCounter -Lane $lane -CounterName "codex"
     $stamp = Get-FileSafeStamp
     $summaryBefore = Get-FileWriteUtc -Path $summaryPath

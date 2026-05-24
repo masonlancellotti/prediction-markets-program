@@ -21,16 +21,40 @@ Every field is required. `cwd` must be an absolute path inside the lane folder. 
 - Classification: `LONG_OR_RISKY_MANUAL`
 - Destination: `.ai_loop/COMMANDS_LONG_REVIEW.md`
 - Mason reviews and runs manually, preferably through `scripts/run-manual-command-and-log.ps1`.
+- Long/risky commands are never auto-run.
 
-Manual requests must include:
+Manual requests must use this structured markdown section:
 
-- command
-- cwd
-- reason
-- expected runtime
-- risk
-- whether it writes files or a database
-- what output matters
+```text
+## command-id-here
+id: command-id-here
+lane: relative_value|graph|weather
+cwd: C:\absolute\lane\path
+command: exact command to run
+why_needed: why the command is needed
+blocking_task_id: task id this blocks, or none
+expected_output: what output matters
+risk_reason: why this is manual instead of SAFE_SHORT_AUTO
+timeout_suggestion: seconds
+status: OPEN | RUNNING | DONE | SKIPPED
+```
+
+Lifecycle:
+
+- `OPEN`: Mason has not run or skipped it yet.
+- `RUNNING`: Mason started it, typically with `run-manual-command-and-log.ps1 -Background`.
+- `DONE`: Output has been written to `.ai_loop/COMMAND_RESULTS.md`.
+- `SKIPPED`: Mason decided not to run it.
+
+If a manual command blocks the current task, GPT should mark that task `WAITING_USER_COMMAND`. If independent ready tasks exist in the same lane, GPT may select one of them next. If no independent task exists, GPT should mark the lane `BLOCKED` and write `BLOCKED_REASON`.
+
+If a task needs credentials, account setup, API connection, venue eligibility approval, or risky settlement approval, GPT must write `USER_ACTION_REQUIRED.md` and mark the task `BLOCKED_USER` instead of guessing.
+
+Manual command output must return through `.ai_loop/COMMAND_RESULTS.md`. Mason should run approved commands with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-manual-command-and-log.ps1 -LaneName relative_value -CommandId command-id-here -Command "exact command"
+```
 
 ## Never Auto-Run
 

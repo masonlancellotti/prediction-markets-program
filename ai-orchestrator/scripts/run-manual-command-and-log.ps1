@@ -3,6 +3,7 @@ param(
     [string]$LaneName,
     [Parameter(Mandatory = $true)]
     [string]$Command,
+    [string]$CommandId = "",
     [int]$TimeoutSeconds = 1800,
     [switch]$Background
 )
@@ -22,6 +23,7 @@ $logPath = Join-Path $logRoot "manual_${stamp}.log"
 $errPath = Join-Path $logRoot "manual_${stamp}.err.log"
 
 Write-Host "Manual command lane '$LaneName'"
+if (-not [string]::IsNullOrWhiteSpace($CommandId)) { Write-Host "command_id: $CommandId" }
 Write-Host "cwd: $($lane.Path)"
 Write-Host "command: $Command"
 Write-Host "log: $logPath"
@@ -40,6 +42,7 @@ if ($Background) {
 ## $(Get-UtcStamp) [$LaneName] background manual command
 
 pid: $($process.Id)
+command_id: $CommandId
 cwd: $($lane.Path)
 command: $Command
 stdout_log: $logPath
@@ -92,6 +95,7 @@ $block = @"
 ## $(Get-UtcStamp) [$LaneName] manual command
 
 cwd: $($lane.Path)
+command_id: $CommandId
 command: $Command
 timeout_seconds: $TimeoutSeconds
 exit_code: $exitCode

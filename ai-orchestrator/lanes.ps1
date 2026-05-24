@@ -66,6 +66,7 @@ $Global:StateFiles = @(
     "ACTIVE_GOALS.md",
     "NEXT_STEPS.md",
     "DECISION_LOG.md",
+    "AUTONOMY_MODE.json",
     "TASK_QUEUE.json",
     "REVIEW_POLICY.json",
     "ROADMAP_BACKLOG.json",
@@ -403,7 +404,7 @@ Read $charterPath, this lane's `.ai_loop/LANE_CONTEXT.md`, `.ai_loop/LANE_STATUS
         "LATEST_CLAUDE_REVIEW.md" { return "# Latest Claude Review`r`n" }
         "NEXT_ACTION_PACKET.md" { return "# Next Action Packet`r`n" }
         "COMMANDS_SHORT_PENDING.jsonl" { return "" }
-        "COMMANDS_LONG_REVIEW.md" { return "# Long/Manual Command Requests`r`n" }
+        "COMMANDS_LONG_REVIEW.md" { return "# Long/Manual Command Requests`r`n`r`nUse this structure for each request:`r`n`r`n````text`r`n## command-id-here`r`nid: command-id-here`r`nlane: lane-name`r`ncwd: C:\absolute\lane\path`r`ncommand: exact command`r`nwhy_needed: why Mason should run it`r`nblocking_task_id: task id or none`r`nexpected_output: what output matters`r`nrisk_reason: why this is manual`r`ntimeout_suggestion: seconds`r`nstatus: OPEN | RUNNING | DONE | SKIPPED`r`n```` `r`n" }
         "COMMAND_RESULTS.md" { return "# Command Results`r`n" }
         "COMMANDS_DONE.jsonl" { return "" }
         "RECOVERY_CONTEXT_PACKET.md" { return "# Recovery Context Packet`r`n" }

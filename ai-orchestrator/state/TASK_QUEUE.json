@@ -114,7 +114,9 @@
         "**/*order*",
         "**/*execution*"
       ],
-      "required_tests": [],
+      "required_tests": [
+        "python -m pytest tests -q"
+      ],
       "success_criteria": [
         "Maintenance task is bounded and diagnostic.",
         "No live trading, account, auth, or order behavior is added.",

@@ -5,7 +5,7 @@ export function chooseModel(packet = {}, env = process.env) {
   const normal = packet.gptDefaultModel || env.GPT_DEFAULT_MODEL || "gpt-5.4-mini";
   const strategic = packet.gptStrategicModel || env.GPT_STRATEGIC_MODEL || "gpt-5.5";
 
-  const text = [
+  const allText = [
     packet.text,
     packet.laneStatus,
     packet.failureLogTail,
@@ -19,18 +19,47 @@ export function chooseModel(packet = {}, env = process.env) {
     packet.latestCodexSummary
   ].filter(Boolean).join("\n").toLowerCase();
 
-  const failureCount = Number(packet.failureCount || 0);
-  const blocked = /\bblocked\b/.test(text);
-  const repeatedFailure = failureCount > 1 || /retry failed|context_length_exceeded|stream disconnected|rate limit|econnreset|etimedout/.test(text);
-  const architecture = /architecture|cross-lane|strategy change|strategic|disagree|disagreement/.test(text);
-  const risky = /evaluator|settlement|slippage|fee|gas|paper_candidate|paper-candidate|same_payoff|matching|matcher|execution|live|risk|trust|graph-to-relative/.test(text);
-  const highProfitConflict = /conflicting high-profit|profit path conflict|venue expansion|paper candidate appeared/.test(text);
+  const failureCountFromText = Number((allText.match(/failure count:\s*(\d+)/) || [])[1] || 0);
+  const failureCount = Number(packet.failureCount || failureCountFromText || 0);
+  const laneStatusText = String(packet.laneStatus || "").toLowerCase();
 
-  if (blocked || repeatedFailure || architecture || highProfitConflict || (risky && /claude|review|before commit/.test(text))) {
+  // Plain-text packets include stable guardrails, so generic words like
+  // "risk", "matching", "same_payoff", "review", and "evaluator" are
+  // deliberately not escalation triggers by themselves.
+  const blocked =
+    /status:\s*blocked/.test(laneStatusText) ||
+    /## lane_status\.md[\s\S]{0,800}status:\s*blocked/.test(allText) ||
+    /lane is blocked|blocked lane recovery/.test(String(packet.triggerReason || "").toLowerCase());
+  const repeatedFailure =
+    failureCount > 1 ||
+    /retry failed|same task failed twice|repeated failure|context_length_exceeded|stream disconnected|rate limit|econnreset|etimedout/.test(allText);
+  const explicitDisagreement = /claude\/codex disagreement|claude and codex disagree|codex and claude disagree|conflicting reviews/.test(allText);
+  const architecture = /architecture planning|architecture change|cross-lane strategy change|cross lane strategy change|strategic direction change/.test(allText);
+  const paperCandidate = /paper_candidate_found|paper candidate appeared|paper candidate found/.test(allText);
+  const evaluatorGateChange = /evaluator gate change|change evaluator gate|weaken evaluator|weaken.*gate/.test(allText);
+  const settlementTrustChange = /settlement trust change|trust new settlement|settlement normalization trust|change settlement trust/.test(allText);
+  const feeModelChange = /fee\/slippage\/gas model change|fee model change|slippage model change|gas model change/.test(allText);
+  const graphIntegration = /graph-to-relative integration|promote graph hints|graph hints.*paper candidate/.test(allText);
+  const liveExecutionDesign = /live execution design|live trading design|order submission design|execution logic design/.test(allText);
+  const highProfitConflict = /conflicting high-profit|profit path conflict/.test(allText);
+
+  if (
+    blocked ||
+    repeatedFailure ||
+    paperCandidate ||
+    explicitDisagreement ||
+    architecture ||
+    evaluatorGateChange ||
+    settlementTrustChange ||
+    feeModelChange ||
+    graphIntegration ||
+    liveExecutionDesign ||
+    highProfitConflict
+  ) {
     return { model: strategic, reason: "Strategic escalation: blocked/repeated/risk-sensitive planning signal detected." };
   }
 
-  if (/command extraction|classification|log tail|tiny summary|summarize|backlog extraction/.test(text)) {
+  if (/command extraction|classification|log tail|log clipping|tiny summary|summarize|backlog extraction/.test(allText)) {
     return { model: cheap, reason: "Cheap route: command/log classification, tiny summary, or backlog extraction." };
   }
 

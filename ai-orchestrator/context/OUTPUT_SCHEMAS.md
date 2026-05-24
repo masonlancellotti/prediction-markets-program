@@ -64,9 +64,11 @@ model name
 MODEL_USED_END
 
 REASONING_SUMMARY_START
-brief non-sensitive planning/routing summary
+UNCHANGED by default. If `GPT_PROMPTER_REASONING_SUMMARY=1`, a brief non-sensitive planning/routing summary of 1-2 lines.
 REASONING_SUMMARY_END
 ```
+
+`REASONING_SUMMARY` remains required for parser compatibility. Hidden model reasoning is never visible. Visible summaries are generated output text and cost output tokens, so routine GPT prompter calls should use `UNCHANGED`.
 
 ## Handled Sections
 

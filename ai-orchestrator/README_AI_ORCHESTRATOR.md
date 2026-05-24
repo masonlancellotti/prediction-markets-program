@@ -50,6 +50,36 @@ Each lane gets `.ai_loop/` handoff files when initialized, including lane status
 
 The API/GPT prompter owns roadmap and task-queue updates. Codex receives exactly one bounded task from the selected task id. Claude is a sparse reviewer and does not own the roadmap.
 
+## Autonomy Ladder
+
+Autonomy mode lives in `ai-orchestrator/state/AUTONOMY_MODE.json`.
+
+Supported modes:
+
+- `off`: no automated lane work.
+- `gpt_one_shot_only`: conservative default. GPT can prepare one bounded handoff; Codex should not be launched automatically.
+- `codex_one_task`: allow one prompt-quality-gated Codex task.
+- `one_lane_supervised`: one visible lane can run under supervision after clean preflight cycles.
+- `multi_lane_supervised`: full visible multi-lane supervision; do not use until several clean one-lane cycles.
+
+Full multi-lane autonomous mode is not the default. Start with `relative_value` only, inspect the handoff files after each cycle, and stop if prompts become vague, tests fail, file scope is unclear, or Claude review is required.
+
+## Autonomy Preflight
+
+Run this before any live loop or Codex worker:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\test-autonomy-preflight.ps1
+```
+
+The preflight runs setup checks, task queue validation, prompt-quality validation for active lane prompts, review-gating checks, and a basic git danger scan. It reports:
+
+- `READY_FOR_GPT_ONE_SHOT`
+- `READY_FOR_CODEX_ONE_TASK`
+- `BLOCKED` with reasons
+
+Codex supervisors also call `test-next-codex-prompt.ps1` immediately before launching Codex. A prompt is rejected if it is vague, lacks task id/lane/tests/scope/success criteria/stop conditions, asks for commit/push, omits no-trading or `.env` guardrails, or appears to touch the wrong lane.
+
 ## Model Routing
 
 GPT routing is dynamic:
@@ -65,6 +95,24 @@ claude -p --model opus
 ```
 
 Claude is for review gates, not routine prompt generation.
+
+## Reasoning Summary Cost Control
+
+`REASONING_SUMMARY` remains in GPT output for parser compatibility, but routine visible summaries are disabled by default:
+
+```text
+GPT_PROMPTER_REASONING_SUMMARY=0
+```
+
+Hidden model reasoning is never visible. A visible `REASONING_SUMMARY` is generated text and costs output tokens, so the default GPT prompt requires:
+
+```text
+REASONING_SUMMARY_START
+UNCHANGED
+REASONING_SUMMARY_END
+```
+
+Set `GPT_PROMPTER_REASONING_SUMMARY=1` only when you want a brief non-sensitive routing summary of 1-2 lines.
 
 ## Initialize
 
@@ -118,6 +166,15 @@ If a one-shot test looks stuck, inspect the latest `.log` file under `ai-orchest
 `run-gpt-prompter-lane.ps1 -Once` is deprecated and delegates to `run-gpt-prompter-once.ps1`.
 
 ## Launch Visible Loop
+
+Safe launch procedure:
+
+1. Run `test-autonomy-preflight.ps1`.
+2. Run one GPT prompter one-shot for `relative_value`.
+3. Inspect `NEXT_CODEX_PROMPT.md`, `NEXT_ACTION_PACKET.md`, command requests, and `FAILURE_LOG.md`.
+4. Run `test-next-codex-prompt.ps1 -LaneName relative_value`.
+5. Only then run one Codex lane worker if `AUTONOMY_MODE.json` is `codex_one_task` or higher.
+6. Do not start all visible loops until several one-lane cycles are clean.
 
 Persistent GPT prompter loop for a single lane:
 
@@ -234,16 +291,42 @@ When API credentials, account connection, venue eligibility, long/manual command
 
 ## Manual Long Commands
 
+Long/manual commands are never auto-run. GPT and Codex must write them to:
+
+```text
+<lane>\.ai_loop\COMMANDS_LONG_REVIEW.md
+```
+
+Each request uses this structure:
+
+```text
+## command-id-here
+id: command-id-here
+lane: relative_value
+cwd: C:\absolute\lane\path
+command: exact command
+why_needed: why Mason should run it
+blocking_task_id: task id or none
+expected_output: what output matters
+risk_reason: why this is manual
+timeout_suggestion: seconds
+status: OPEN | RUNNING | DONE | SKIPPED
+```
+
+If the command blocks the current task, GPT marks that task `WAITING_USER_COMMAND`. If another independent ready task exists in the same lane, GPT can select that next. If there is no independent task, GPT marks the lane `BLOCKED` with `BLOCKED_REASON`. If the task needs credentials, account setup, API connection, venue eligibility, or risky approval, GPT writes `USER_ACTION_REQUIRED.md` and marks the task `BLOCKED_USER`.
+
+`NEXT_ACTION_PACKET.md` should show the command id, lane, why it is needed, and the exact command below for Mason to run. Output is appended to `COMMAND_RESULTS.md`, and GPT reads that tail on the next pass.
+
 Foreground logged command:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-manual-command-and-log.ps1 -LaneName relative_value -Command "pytest tests\test_matching.py -q" -TimeoutSeconds 180
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-manual-command-and-log.ps1 -LaneName relative_value -CommandId command-id-here -Command "pytest tests\test_matching.py -q" -TimeoutSeconds 180
 ```
 
 Background logged command:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-manual-command-and-log.ps1 -LaneName weather -Command "python main.py --help" -Background
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-manual-command-and-log.ps1 -LaneName weather -CommandId command-id-here -Command "python main.py --help" -Background
 ```
 
 Background process info is written to `<lane>\.ai_loop\BACKGROUND_JOBS.md`.

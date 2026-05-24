@@ -58,7 +58,19 @@ function getApiTimeoutMs(env = process.env) {
   return Math.round(seconds * 1000);
 }
 
-function buildSystemPrompt(packet, modelInfo) {
+function isReasoningSummaryEnabled(env = process.env) {
+  return /^(1|true|yes|on)$/i.test(String(env.GPT_PROMPTER_REASONING_SUMMARY || ""));
+}
+
+function getReasoningSummaryInstruction(env = process.env) {
+  if (!isReasoningSummaryEnabled(env)) {
+    return "UNCHANGED";
+  }
+  return "brief non-sensitive routing summary, max 1-2 lines";
+}
+
+function buildSystemPrompt(packet, modelInfo, env = process.env) {
+  const reasoningSummaryInstruction = getReasoningSummaryInstruction(env);
   return `You are the GPT prompter for a visible local AI orchestrator.
 
 Use compact context. Do not execute commands. Do not ask Mason to paste command outputs manually; write command requests into the marked sections.
@@ -70,11 +82,23 @@ Task rules:
 - Include the selected task id in NEXT_CODEX_PROMPT and NEXT_ACTION_PACKET.
 - Do not invent runnable tasks while TASK_QUEUE has a ready task for this lane.
 - Never output a broad "continue previous work" task. Every task needs task id, file scope, tests, success criteria, and stop conditions.
+- NEXT_CODEX_PROMPT must be launchable by Codex only after passing the prompt-quality gate: include Task ID, Lane, explicit repo/work directory, allowed file scope, required tests, success criteria, stop conditions, "Do not trade", "Do not edit .env", and forbidden auth/order/account/private-key/signing/wallet language.
+- Do not create slop feature prompts. If scope, tests, or stop conditions are unclear, write BLOCKED_REASON instead of a Codex prompt.
 - If NEXT_CODEX_PROMPT already has an active task and there is no new Codex summary, command result, review, or explicit GPT trigger, return UNCHANGED for NEXT_CODEX_PROMPT.
 - If tests failed, produce a fix-tests task instead of a feature task.
 - If a paper candidate appears, stop the lane and request Claude/human review.
 - If changed files fall outside the selected task allowed_files, mark the lane BLOCKED.
 - If untracked imported modules appear, request import hygiene instead of feature work.
+
+Command handoff:
+- SAFE_SHORT_AUTO commands go only to SHORT_COMMANDS_JSONL as JSONL.
+- LONG_OR_RISKY_MANUAL commands go only to LONG_COMMANDS_MD using the structured format from COMMAND_POLICY.md.
+- Long/manual commands are never auto-run.
+- If a long command blocks the current task, mark that task WAITING_USER_COMMAND.
+- If independent ready tasks exist in the same lane, you may select one next.
+- If no independent task exists, write BLOCKED_REASON.
+- If credentials, account setup, API connection, or user approval are needed, write USER_ACTION_REQUIRED and mark the task BLOCKED_USER.
+- NEXT_ACTION_PACKET must tell Mason the manual command id, why it is needed, and the exact run-manual-command-and-log.ps1 command to use.
 
 Roadmap replenishment:
 - Identify blockers, feature opportunities, missing APIs/venues/data sources, and repeated failure patterns from fresh outputs.
@@ -127,10 +151,12 @@ MODEL_USED_START
 ${modelInfo.model}
 MODEL_USED_END
 REASONING_SUMMARY_START
-brief non-sensitive routing/planning summary
+${reasoningSummaryInstruction}
 REASONING_SUMMARY_END
 
 Guardrails:
+- Do not trade.
+- Do not edit .env.
 - Relative-value dislocations are not guaranteed edge.
 - Do not confuse detected mismatch with tradable/profitable opportunity.
 - No midpoint-fill assumptions.
@@ -146,6 +172,19 @@ Guardrails:
 
 Safe short command schema, one JSON object per line:
 {"id":"unique-stable-id","classification":"SAFE_SHORT_AUTO","cwd":"C:\\\\absolute\\\\lane\\\\path","command":"git status --short","reason":"why needed","expected_output":"what success looks like","timeout_seconds":120}
+
+Manual long command markdown format:
+## command-id-here
+id: command-id-here
+lane: ${packet.laneName || "lane-name"}
+cwd: C:\\absolute\\lane\\path
+command: exact command
+why_needed: why Mason should run it
+blocking_task_id: task id or none
+expected_output: what output matters
+risk_reason: why this is manual
+timeout_suggestion: seconds
+status: OPEN
 
 Router decision: ${modelInfo.reason}
 
@@ -259,7 +298,7 @@ MODEL_USED_START
 ${model}
 MODEL_USED_END
 REASONING_SUMMARY_START
-Node no-api smoke path wrote deterministic marker-complete output without calling OpenAI.
+UNCHANGED
 REASONING_SUMMARY_END
 `;
 }

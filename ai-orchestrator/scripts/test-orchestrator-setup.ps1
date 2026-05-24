@@ -57,6 +57,7 @@ $stateMarkdownFiles = @(
 )
 
 $stateJsonFiles = @(
+    "AUTONOMY_MODE.json",
     "TASK_QUEUE.json",
     "REVIEW_POLICY.json",
     "ROADMAP_BACKLOG.json"
@@ -229,6 +230,12 @@ foreach ($field in @("id", "classification", "cwd", "command", "reason", "expect
     if ($commandPolicy -notmatch [regex]::Escape($field)) { Add-Failure "COMMAND_POLICY missing field $field" }
     if ($runnerText -notmatch [regex]::Escape($field)) { Add-Failure "run-short-command-runner missing field $field" }
 }
+foreach ($field in @("id", "lane", "cwd", "command", "why_needed", "blocking_task_id", "expected_output", "risk_reason", "timeout_suggestion", "status: OPEN | RUNNING | DONE | SKIPPED")) {
+    if ($commandPolicy -notmatch [regex]::Escape($field)) { Add-Failure "COMMAND_POLICY missing long/manual field or lifecycle text: $field" }
+}
+foreach ($term in @("WAITING_USER_COMMAND", "BLOCKED_USER", "COMMAND_RESULTS.md", "run-manual-command-and-log.ps1")) {
+    if ($commandPolicy -notmatch [regex]::Escape($term)) { Add-Failure "COMMAND_POLICY missing manual command workflow term: $term" }
+}
 
 Write-Host "Checking task and roadmap schemas..."
 $taskQueue = Get-Content -LiteralPath (Join-Path $Global:StateRoot "TASK_QUEUE.json") -Raw | ConvertFrom-Json
@@ -253,9 +260,35 @@ Write-Host "Checking anti-loop and no-giant-context policies..."
 $prompterPolicy = Read-TextIfExists -Path (Join-Path $Global:ContextRoot "PROMPTER_POLICY.md")
 if ($prompterPolicy -notmatch "must not output `"continue previous work`" as a task") { Add-Failure "PROMPTER_POLICY must ban broad continue prompts" }
 if ($prompterPolicy -notmatch "No file should become a giant log") { Add-Failure "PROMPTER_POLICY must mention no giant logs" }
+if ($prompterPolicy -notmatch "ROADMAP_BACKLOG" -or $prompterPolicy -notmatch "not directly to Codex prompts") { Add-Failure "PROMPTER_POLICY must keep new ideas in ROADMAP_BACKLOG instead of direct Codex prompts" }
 if ($psPrompterText -notmatch "LAST_GPT_INPUT_HASH") { Add-Failure "GPT prompter loop must persist input hash anti-loop guard" }
 if ($schemaText -notmatch "ROADMAP_BACKLOG_UPDATES" -or $schemaText -notmatch "USER_ACTION_REQUIRED") {
     Add-Failure "OUTPUT_SCHEMAS must include roadmap and user-action markers"
+}
+if ($schemaText -notmatch "REASONING_SUMMARY_START" -or $schemaText -notmatch "GPT_PROMPTER_REASONING_SUMMARY" -or $schemaText -notmatch "UNCHANGED by default") {
+    Add-Failure "OUTPUT_SCHEMAS must document REASONING_SUMMARY marker and disabled-by-default behavior"
+}
+foreach ($script in @("test-next-codex-prompt.ps1","test-task-queue.ps1","test-lane-file-scope.ps1","test-review-gating.ps1","test-autonomy-preflight.ps1")) {
+    Assert-File -Path (Join-Path $Global:OrchestratorRoot "scripts\$script")
+}
+if ($psPrompterText -notmatch "test-next-codex-prompt.ps1") {
+    $codexRunnerText = Read-TextIfExists -Path (Join-Path $Global:OrchestratorRoot "scripts\run-codex-lane.ps1")
+    if ($codexRunnerText -notmatch "test-next-codex-prompt.ps1") {
+        Add-Failure "run-codex-lane.ps1 must validate NEXT_CODEX_PROMPT before launching Codex"
+    }
+}
+$readmeText = Read-TextIfExists -Path (Join-Path $Global:OrchestratorRoot "README_AI_ORCHESTRATOR.md")
+if ($readmeText -notmatch "run-manual-command-and-log\.ps1" -or $readmeText -notmatch "CommandId" -or $readmeText -notmatch "WAITING_USER_COMMAND") {
+    Add-Failure "README must document manual command logging with command id and WAITING_USER_COMMAND"
+}
+if ($readmeText -notmatch "GPT_PROMPTER_REASONING_SUMMARY" -or $readmeText -notmatch "costs output tokens") {
+    Add-Failure "README must document GPT_PROMPTER_REASONING_SUMMARY cost behavior"
+}
+if ($prompterPolicy -notmatch "independent ready tasks exist" -or $prompterPolicy -notmatch "WAITING_USER_COMMAND" -or $prompterPolicy -notmatch "BLOCKED_USER") {
+    Add-Failure "PROMPTER_POLICY must document manual command wait/continue behavior"
+}
+if ($prompterPolicy -notmatch "GPT_PROMPTER_REASONING_SUMMARY=0" -or $prompterPolicy -notmatch "visible generated text") {
+    Add-Failure "PROMPTER_POLICY must document disabled routine reasoning summaries"
 }
 
 Write-Host "Checking ignore/safety setup..."
@@ -302,6 +335,63 @@ if ($git) {
 Write-Host "Checking model configuration..."
 foreach ($value in @($Global:GptCheapModel, $Global:GptDefaultModel, $Global:GptStrategicModel, $Global:ClaudeModel)) {
     if ([string]::IsNullOrWhiteSpace($value)) { Add-Failure "Model config contains an empty value" }
+}
+if ($node) {
+    Write-Host "Checking model router decisions..."
+    $routerSmokeRoot = Join-Path $Global:LogsRoot "setup-smoke"
+    Ensure-Directory -Path $routerSmokeRoot
+    $routerCheckPath = Join-Path $routerSmokeRoot "model_router_check_$(Get-FileSafeStamp).mjs"
+    $routerCheckOutput = Join-Path $routerSmokeRoot "model_router_check_$(Get-FileSafeStamp).json"
+    $routerCheckError = Join-Path $routerSmokeRoot "model_router_check_$(Get-FileSafeStamp).err"
+    $routerScript = @"
+import { chooseModel } from "../../node/model-router.mjs";
+
+const env = {
+  GPT_CHEAP_MODEL: "$($Global:GptCheapModel)",
+  GPT_DEFAULT_MODEL: "$($Global:GptDefaultModel)",
+  GPT_STRATEGIC_MODEL: "$($Global:GptStrategicModel)"
+};
+
+const cases = [
+  {
+    name: "routine",
+    packet: {
+      text: "Stable guardrails mention risk, matching, same_payoff, review, evaluator, settlement, and fees. Dynamic program state: routine next prompt generation for relative_value.",
+      laneStatus: "Status: ACTIVE"
+    },
+    expected: env.GPT_DEFAULT_MODEL
+  },
+  {
+    name: "repeated_failure",
+    packet: {
+      text: "Dynamic program state. Failure count: 2. Retry failed on same task.",
+      laneStatus: "Status: ACTIVE"
+    },
+    expected: env.GPT_STRATEGIC_MODEL
+  },
+  {
+    name: "cheap_summary",
+    packet: {
+      triggerReason: "log tail tiny summary and command extraction"
+    },
+    expected: env.GPT_CHEAP_MODEL
+  }
+];
+
+const results = cases.map((item) => ({ name: item.name, expected: item.expected, actual: chooseModel(item.packet, env).model }));
+const failures = results.filter((item) => item.actual !== item.expected);
+process.stdout.write(JSON.stringify({ results, failures }, null, 2));
+if (failures.length > 0) {
+  process.exitCode = 1;
+}
+"@
+    Set-Text -Path $routerCheckPath -Text $routerScript
+    & $node $routerCheckPath > $routerCheckOutput 2> $routerCheckError
+    if ($LASTEXITCODE -ne 0) {
+        $outText = Read-TextIfExists -Path $routerCheckOutput -TailChars 2000
+        $errText = Read-TextIfExists -Path $routerCheckError -TailChars 1000
+        Add-Failure "model-router decision smoke failed. stdout: $outText stderr: $errText"
+    }
 }
 
 Write-Host "Checking tool availability..."
