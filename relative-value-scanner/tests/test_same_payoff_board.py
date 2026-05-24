@@ -11,6 +11,80 @@ from relative_value.same_payoff_board import build_same_payoff_board
 NOW = datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc)
 
 
+def _live_readonly_snapshot(source_id: str, *, category: str, query: str) -> dict:
+    venue = "kalshi" if source_id == "kalshi" else "polymarket"
+    market = {
+        "venue": venue,
+        "market_id": f"{venue}-market-1",
+        "event_title": "Sample event",
+        "question": "Will sample happen?",
+        "end_date": "2026-05-23T20:00:00+00:00",
+        "best_bid": 0.45,
+        "best_ask": 0.55,
+        "raw": {},
+    }
+    if source_id == "kalshi":
+        market["ticker"] = "KXSAMPLE"
+        market["close_time"] = "2026-05-23T20:00:00+00:00"
+    else:
+        market["condition_id"] = "0xsample"
+    return {
+        "schema_version": 1,
+        "source_id": source_id,
+        "source": f"{source_id}_snapshot",
+        "data_source_mode": "LIVE_API",
+        "captured_at": "2026-05-23T19:00:00+00:00",
+        "live_fetch_succeeded": True,
+        "event_count": 1,
+        "market_count": 1,
+        "normalized_count": 1,
+        "normalized_markets": [market],
+        "overlap_universe": {
+            "category": category,
+            "query": query,
+            "research_only": True,
+            "readiness_promotion": "none",
+            "can_create_paper_candidate": False,
+            "same_payoff_asserted": False,
+        },
+    }
+
+
+def test_live_readonly_match_refuses_mismatched_overlap_universes(tmp_path: Path) -> None:
+    (tmp_path / "kalshi_live_readonly_snapshot.json").write_text(
+        json.dumps(_live_readonly_snapshot("kalshi", category="sports", query="NBA")),
+        encoding="utf-8",
+    )
+    (tmp_path / "polymarket_live_readonly_snapshot.json").write_text(
+        json.dumps(_live_readonly_snapshot("polymarket", category="sports", query="MLB")),
+        encoding="utf-8",
+    )
+
+    report = scan.build_live_readonly_match_report(snapshot_dir=tmp_path)
+
+    assert report["status"] == "VALIDATION_FAILED"
+    assert report["pairs"] == []
+    assert "kalshi:overlap_universe_mismatch" in report["validation_errors"]
+    assert "polymarket:overlap_universe_mismatch" in report["validation_errors"]
+    assert "PAPER_CANDIDATE" not in json.dumps(report)
+
+
+def test_live_overlap_universe_builder_rejects_bare_live_readonly_dir() -> None:
+    try:
+        scan.build_live_overlap_universe_report(
+            category="sports",
+            query="NBA",
+            max_markets=1,
+            timeout_seconds=1.0,
+            kalshi_max_pages=1,
+            output_dir=Path("reports") / "live_readonly",
+        )
+    except ValueError as exc:
+        assert "universe-specific output_dir" in str(exc)
+    else:
+        raise AssertionError("bare live_readonly output_dir should fail closed")
+
+
 def _pair(poly_id: str = "poly-1", kalshi_ticker: str = "KXNBA-1", similarity: float = 0.98) -> dict:
     return {
         "schema_version": 1,

@@ -3012,6 +3012,8 @@ def build_live_overlap_universe_report(
         raise ValueError("max_markets must be positive")
     if kalshi_max_pages <= 0:
         raise ValueError("kalshi_max_pages must be positive")
+    if _is_default_live_readonly_dir(output_dir):
+        raise ValueError("live_readonly overlap snapshots require a universe-specific output_dir")
 
     generated_at = datetime.now(timezone.utc)
     previous_summary = _current_saved_overlap_summary(output_dir)
@@ -4185,6 +4187,7 @@ def _validate_live_readonly_match_inputs(kalshi_path: Path, polymarket_path: Pat
         _validate_live_readonly_snapshot(kalshi_path, expected_source_id="kalshi"),
         _validate_live_readonly_snapshot(polymarket_path, expected_source_id="polymarket"),
     ]
+    _validate_live_readonly_universe_alignment(rows)
     return {
         "rows": rows,
         "errors": [issue for row in rows for issue in row["issues"]],
@@ -4199,6 +4202,8 @@ def _validate_live_readonly_snapshot(path: Path, *, expected_source_id: str) -> 
         "source_type": None,
         "data_source_mode": None,
         "captured_at": None,
+        "overlap_universe": None,
+        "overlap_universe_key": None,
         "live_fetch_succeeded": False,
         "normalized_count": 0,
         "issues": [],
@@ -4221,10 +4226,14 @@ def _validate_live_readonly_snapshot(path: Path, *, expected_source_id: str) -> 
             "source_type": _source_type(str(source_id or "")),
             "data_source_mode": payload.get("data_source_mode"),
             "captured_at": payload.get("captured_at"),
+            "overlap_universe": payload.get("overlap_universe")
+            if isinstance(payload.get("overlap_universe"), dict)
+            else None,
             "live_fetch_succeeded": payload.get("live_fetch_succeeded") is True,
             "normalized_count": len(payload.get("normalized_markets")) if isinstance(payload.get("normalized_markets"), list) else 0,
         }
     )
+    row["overlap_universe_key"] = _live_readonly_universe_key(row["overlap_universe"])
     if source_id != expected_source_id:
         row["issues"].append(f"{expected_source_id}:source_id_invalid")
     if row["source_type"] != SourceType.EXECUTABLE_VENUE.value:
@@ -4240,6 +4249,34 @@ def _validate_live_readonly_snapshot(path: Path, *, expected_source_id: str) -> 
     if _payload_has_secretish_key(payload):
         row["issues"].append(f"{expected_source_id}:secretish_field_present")
     return row
+
+
+def _live_readonly_universe_key(overlap_universe: Any) -> str | None:
+    if not isinstance(overlap_universe, dict):
+        return None
+    category = overlap_universe.get("category")
+    query = overlap_universe.get("query")
+    if category is None and query is None:
+        return None
+    return f"{str(category or '').strip().lower()}::{str(query or '').strip().lower()}"
+
+
+def _validate_live_readonly_universe_alignment(rows: list[dict[str, Any]]) -> None:
+    universe_keys = {
+        row["expected_source_id"]: row.get("overlap_universe_key")
+        for row in rows
+        if row.get("overlap_universe_key")
+    }
+    if not universe_keys:
+        return
+    if len(universe_keys) != len(rows):
+        for row in rows:
+            if not row.get("overlap_universe_key"):
+                row["issues"].append(f"{row['expected_source_id']}:overlap_universe_missing")
+        return
+    if len(set(universe_keys.values())) > 1:
+        for row in rows:
+            row["issues"].append(f"{row['expected_source_id']}:overlap_universe_mismatch")
 
 
 def _reference_snapshot_valid_for_context(path: Path) -> bool:
