@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://market-graph-consistency.local/schemas/relative_value_hint.schema.json",
+  "title": "Market Graph Relative Value Hint Export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "diagnostic_only",
+    "banner",
+    "snapshot_id",
+    "allowed_actions",
+    "hint_count",
+    "counts_by_relation_type",
+    "counts_by_max_action_cap",
+    "hints"
+  ],
+  "properties": {
+    "diagnostic_only": {
+      "const": true
+    },
+    "banner": {
+      "type": "string"
+    },
+    "snapshot_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowed_actions": {
+      "$ref": "#/$defs/allowedActions"
+    },
+    "hint_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "counts_by_relation_type": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "AMBIGUOUS_WORDING": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "COMPLEMENT": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "CORRELATED_ONLY": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "EXACT_SAME_PAYOFF": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "EXHAUSTIVE_GROUP": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "MUTUALLY_EXCLUSIVE": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "NEEDS_MANUAL_REVIEW": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "OVERLAP_NOT_EQUIVALENT": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SAME_PAYOFF": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SUBSET": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SUPERSET": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "UNRELATED": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "counts_by_max_action_cap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "WATCH": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "MANUAL_REVIEW": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "hints": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/hint"
+      }
+    }
+  },
+  "$defs": {
+    "allowedActions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "WATCH",
+          "MANUAL_REVIEW"
+        ]
+      }
+    },
+    "hint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "graph_hint_id",
+        "source_market_id",
+        "target_market_id",
+        "relation_type",
+        "direction",
+        "hard_bound_type",
+        "diagnostic_only",
+        "allowed_actions",
+        "max_action_cap",
+        "max_action_cap_reason",
+        "blockers",
+        "edge_source",
+        "banner"
+      ],
+      "properties": {
+        "graph_hint_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_market_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_market_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relation_type": {
+          "enum": [
+            "AMBIGUOUS_WORDING",
+            "COMPLEMENT",
+            "CORRELATED_ONLY",
+            "EXACT_SAME_PAYOFF",
+            "EXHAUSTIVE_GROUP",
+            "MUTUALLY_EXCLUSIVE",
+            "NEEDS_MANUAL_REVIEW",
+            "OVERLAP_NOT_EQUIVALENT",
+            "SAME_PAYOFF",
+            "SUBSET",
+            "SUPERSET",
+            "UNRELATED"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "bidirectional",
+            "group_level",
+            "none",
+            "source_implies_target",
+            "target_implies_source"
+          ]
+        },
+        "hard_bound_type": {
+          "enum": [
+            "mutual_exclusion_sum_only",
+            "none",
+            "same_payoff_equality_if_settlement_proven",
+            "sum_to_one_only_if_complete",
+            "upper_probability_bound"
+          ]
+        },
+        "diagnostic_only": {
+          "const": true
+        },
+        "allowed_actions": {
+          "$ref": "#/$defs/allowedActions"
+        },
+        "max_action_cap": {
+          "enum": [
+            "WATCH",
+            "MANUAL_REVIEW"
+          ]
+        },
+        "max_action_cap_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edge_source": {
+          "enum": [
+            "manual",
+            "heuristic",
+            "llm",
+            "fixture",
+            "mixed"
+          ]
+        },
+        "reviewed_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "settlement_source_proven": {
+          "type": "boolean"
+        },
+        "banner": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

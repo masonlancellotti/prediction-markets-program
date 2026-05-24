@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main.py project-status)",
+      "Bash(python -m pytest -q)",
+      "Bash(python main.py trading-readiness --last-days 7)",
+      "Bash(python main.py analyze-liquidity --last-days 7)",
+      "Bash(python main.py analyze-market-making --last-days 7)"
+    ]
+  }
+}

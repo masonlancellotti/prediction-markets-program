@@ -1,0 +1,33 @@
+# LLM Relationship Classifier Stub
+
+`relative_value/llm_relationship_classifier.py` is a review-only interface for a future LLM-assisted contract relationship classifier. It does not call a model or external network service today, does not require an API key, and does not write reports by itself.
+
+The deterministic `contract_relationship` layer remains authoritative. LLM output can only attach review metadata and can only escalate manual review. It cannot approve a candidate, cannot set `same_payoff=true`, cannot emit `EQUIVALENT`, and cannot change `PAPER_CANDIDATE`, `PAPER`, or `POSSIBLE_ARB` behavior.
+
+## Allowed Proposal Shape
+
+Future LLM proposals are limited to these fields:
+
+- `proposed_relationship`
+- `confidence`
+- `rationale`
+- `extracted_terms`
+- `uncertainties`
+- `manual_review_required`
+- `evidence_references`
+
+Unknown fields are rejected. Forbidden fields and tokens such as `same_payoff`, `action`, `trade_permission`, `EQUIVALENT`, `PAPER_CANDIDATE`, `PAPER`, and `POSSIBLE_ARB` are rejected.
+
+## Audit Sidecar
+
+The in-memory audit sidecar contains `prompt_hash`, `input_payload_hash`, `model_id`, `model_version`, `timestamp`, `raw_output`, `parsed_output`, and `validation_errors`. This is meant for future review traceability only; there is no persistence layer yet.
+
+## Saved-Report Audit Command
+
+`python scan.py llm-review-relationships --input <matcher_or_ledger>.json --output <reviewed>.json --stub` reads a saved `live_snapshot_matcher` or `paper_candidate_evaluator` report, finds rows with `contract_relationship`, and attaches `llm_review` sidecars. It does not rerun matching or evaluation, does not call a real LLM, and refuses non-stub mode. The lower-level report transformer also rejects non-`StubLLMRelationshipClient` clients.
+
+The command preserves deterministic `contract_relationship` fields and row `action` fields unchanged. It does not mutate canonical `contract_relationship.manual_review_required`. Validation errors from malformed or forbidden LLM proposals are recorded and force manual-review escalation only in `llm_review.combined_manual_review_required`; they do not promote actions.
+
+Consumers must read both the deterministic relationship object and the `llm_review` sidecar: deterministic fields remain authoritative, while the sidecar records audit-only review metadata and escalation state. This is saved-file audit metadata only, not trade permission.
+
+Semantic similarity is not settlement equivalence. A future LLM may help identify terms and uncertainty, but it cannot approve trades or override deterministic blocking reasons.

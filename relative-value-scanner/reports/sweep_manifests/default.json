@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "universes": [
+    {
+      "label": "nba_kxnba",
+      "polymarket_tag_slug": "nba",
+      "kalshi_series_ticker": "KXNBA"
+    },
+    {
+      "label": "nhl_kxnhl",
+      "polymarket_tag_slug": "nhl",
+      "kalshi_series_ticker": "KXNHL"
+    },
+    {
+      "label": "mlb_kxmlb",
+      "polymarket_tag_slug": "mlb",
+      "kalshi_series_ticker": "KXMLB"
+    },
+    {
+      "label": "nfl_kxnfl",
+      "polymarket_tag_slug": "nfl",
+      "kalshi_series_ticker": "KXNFL"
+    }
+  ]
+}

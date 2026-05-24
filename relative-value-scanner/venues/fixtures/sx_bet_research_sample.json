@@ -1,0 +1,54 @@
+{
+  "markets": [
+    {
+      "marketHash": "0xabc123",
+      "eventName": "Boston Celtics vs New York Knicks",
+      "leagueLabel": "NBA",
+      "sportLabel": "Basketball",
+      "type": 52,
+      "line": null,
+      "mainLine": true,
+      "status": "ACTIVE",
+      "gameTime": "2026-05-21T23:00:00Z",
+      "outcomeOneName": "Boston Celtics",
+      "outcomeTwoName": "New York Knicks",
+      "outcomeVoidName": "Game cancelled or voided",
+      "settlementSource": "official league result",
+      "settlementRule": "Moneyline market; void if event is cancelled or neither outcome is valid."
+    }
+  ],
+  "orders": [
+    {
+      "orderHash": "0xorder1",
+      "marketHash": "0xabc123",
+      "isMakerBettingOutcomeOne": false,
+      "percentageOdds": "42000000000000000000",
+      "totalBetSize": "758990000",
+      "fillAmount": "0"
+    },
+    {
+      "orderHash": "0xorder2",
+      "marketHash": "0xabc123",
+      "isMakerBettingOutcomeOne": false,
+      "percentageOdds": "46000000000000000000",
+      "totalBetSize": "530000000",
+      "fillAmount": "30000000"
+    },
+    {
+      "orderHash": "0xorder3",
+      "marketHash": "0xabc123",
+      "isMakerBettingOutcomeOne": true,
+      "percentageOdds": "52000000000000000000",
+      "totalBetSize": "999650000",
+      "fillAmount": "0"
+    },
+    {
+      "orderHash": "0xorder4",
+      "marketHash": "0xabc123",
+      "isMakerBettingOutcomeOne": true,
+      "percentageOdds": "51500000000000000000",
+      "totalBetSize": "799000000",
+      "fillAmount": "0"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "edges": [
+    {
+      "edge_id": "edge_world_series_implies_al_champion",
+      "src_market_id": "fixture:cleveland_world_series",
+      "dst_market_id": "fixture:cleveland_al_champion",
+      "relation": "IMPLICATION",
+      "confidence": 0.96,
+      "source": "fixture",
+      "rationale": "A World Series winner from the American League must also have won the league championship.",
+      "evidence": ["Fixture structural sports relationship."],
+      "created_at": "2026-05-19T18:30:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_stanley_cup_implies_conference",
+      "src_market_id": "fixture:team_stanley_cup",
+      "dst_market_id": "fixture:team_conference_winner",
+      "relation": "IMPLICATION",
+      "confidence": 0.96,
+      "source": "fixture",
+      "rationale": "A Stanley Cup winner must have won its conference.",
+      "evidence": ["Fixture structural sports relationship."],
+      "created_at": "2026-05-19T18:31:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_nba_champion_implies_conference",
+      "src_market_id": "fixture:nba_team_champion",
+      "dst_market_id": "fixture:nba_team_conference_champion",
+      "relation": "IMPLICATION",
+      "confidence": 0.96,
+      "source": "fixture",
+      "rationale": "An NBA champion must have won its conference.",
+      "evidence": ["Fixture structural sports relationship."],
+      "created_at": "2026-05-19T18:32:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_btc_120k_subset_btc_100k_same_window",
+      "src_market_id": "fixture:btc_over_120k_june",
+      "dst_market_id": "fixture:btc_over_100k_june",
+      "relation": "SUBSET",
+      "confidence": 0.97,
+      "source": "fixture",
+      "rationale": "BTC above 120k by the same window is a subset of BTC above 100k by that window.",
+      "evidence": ["Same observable, settlement source, and window."],
+      "observable": "BTC_USD",
+      "window": "2026-06-30",
+      "created_at": "2026-05-19T18:33:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_btc_120k_subset_btc_100k_different_window",
+      "src_market_id": "fixture:btc_over_120k_june",
+      "dst_market_id": "fixture:btc_over_100k_other_window",
+      "relation": "SUBSET",
+      "confidence": 0.97,
+      "source": "fixture",
+      "rationale": "Fixture intentionally mismatches the settlement window and must downgrade.",
+      "evidence": ["Different threshold window."],
+      "created_at": "2026-05-19T18:34:00+00:00",
+      "reviewed_by": "fixture-author"
+    }
+  ],
+  "exclusion_sets": [
+    {
+      "set_id": "example_election_complete_partition",
+      "member_market_ids": [
+        "fixture:election_candidate_a",
+        "fixture:election_candidate_b",
+        "fixture:election_candidate_c"
+      ],
+      "completeness": "partition",
+      "tolerance": 0.03
+    },
+    {
+      "set_id": "example_award_incomplete_subset",
+      "member_market_ids": [
+        "fixture:award_nominee_a",
+        "fixture:award_nominee_b"
+      ],
+      "completeness": "subset",
+      "tolerance": 0.03
+    }
+  ]
+}

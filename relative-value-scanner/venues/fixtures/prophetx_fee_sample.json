@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "source_id": "prophetx",
+  "fixture_kind": "prophetx_fee_sample",
+  "fees": [
+    {
+      "market_id": "PX-CPI-JUN-YES",
+      "fee_commission_status": "fixture_unreviewed",
+      "fee_schedule_version": "fixture_unreviewed",
+      "maker_fee": 0.0,
+      "taker_fee": 0.02,
+      "other_venue_fees": "Fixture placeholder: other fees, commissions, and withdrawal constraints are not reviewed."
+    },
+    {
+      "market_id": "PX-NBA-FINALS-BOS-YES",
+      "fee_commission_status": "fixture_unreviewed",
+      "fee_schedule_version": "fixture_unreviewed",
+      "maker_fee": 0.0,
+      "taker_fee": 0.02,
+      "other_venue_fees": "Fixture placeholder: other fees, commissions, and withdrawal constraints are not reviewed."
+    }
+  ]
+}

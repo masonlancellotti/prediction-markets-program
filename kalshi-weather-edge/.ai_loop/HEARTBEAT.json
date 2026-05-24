@@ -1,0 +1,7 @@
+{
+  "lane": "kalshi-weather-edge",
+  "status": "initialized",
+  "updated_at": null,
+  "active_worker": null,
+  "notes": "Heartbeat is updated by supervisors."
+}

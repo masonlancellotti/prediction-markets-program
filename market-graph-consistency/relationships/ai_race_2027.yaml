@@ -1,0 +1,59 @@
+{
+  "edges": [
+    {
+      "edge_id": "edge_openai_first_agi_implies_agi_by_2027",
+      "src_market_id": "manifold:openai_first_agi_2027",
+      "dst_market_id": "manifold:agi_by_2027",
+      "relation": "IMPLICATION",
+      "confidence": 0.93,
+      "source": "manual",
+      "rationale": "If OpenAI is first to announce AGI before 2028, then at least one company announced AGI before 2028.",
+      "evidence": [
+        "Source market requires OpenAI first to announce AGI.",
+        "Destination market requires any company to announce AGI."
+      ],
+      "created_at": "2026-05-19T18:20:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_anthropic_first_agi_implies_agi_by_2027_low_conf",
+      "src_market_id": "polymarket:anthropic_first_agi_2027",
+      "dst_market_id": "manifold:agi_by_2027",
+      "relation": "IMPLICATION",
+      "confidence": 0.20,
+      "source": "manual",
+      "rationale": "A low-confidence cross-venue implication fixture used to test action downgrading.",
+      "evidence": [
+        "The wording appears related but venue resolution standards may differ."
+      ],
+      "created_at": "2026-05-19T18:21:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_microsoft_leader_ambiguous_openai_first_agi",
+      "src_market_id": "kalshi:microsoft_first_agi_2027",
+      "dst_market_id": "manifold:openai_first_agi_2027",
+      "relation": "AMBIGUOUS",
+      "confidence": 0.55,
+      "source": "llm",
+      "rationale": "Fixture-only ambiguous relation for wording review; no hard price constraint is used.",
+      "evidence": [
+        "Both markets mention AI leadership-like outcomes, but one is company-specific and first-to-AGI wording differs."
+      ],
+      "created_at": "2026-05-19T18:22:00+00:00",
+      "reviewed_by": null
+    }
+  ],
+  "exclusion_sets": [
+    {
+      "set_id": "first_company_to_agi_2027_named_companies",
+      "member_market_ids": [
+        "manifold:openai_first_agi_2027",
+        "polymarket:anthropic_first_agi_2027",
+        "kalshi:microsoft_first_agi_2027"
+      ],
+      "completeness": "subset",
+      "tolerance": 0.03
+    }
+  ]
+}
