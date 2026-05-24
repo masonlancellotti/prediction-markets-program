@@ -1,13 +1,13 @@
-{
+﻿{
   "version": 2,
-  "updated_by": "manual_audit",
+  "updated_by": "gpt-5.5",
   "selection_policy": "GPT prompter selects only the first ready task for the lane unless that task is blocked, waiting_review, done, or stale.",
   "tasks": [
     {
       "id": "rv-live-readonly-universe-snapshots",
       "lane": "relative_value",
       "repo_path": "relative-value-scanner",
-      "status": "ready",
+      "status": "done",
       "priority": 1,
       "risk_level": "medium",
       "requires_claude": false,
@@ -44,6 +44,8 @@
         "Changed files fall outside allowed_files.",
         "A paper candidate appears."
       ],
+      "blocked_reason": "",
+      "completion_note": "Mason manually verified the bounded change with `py -m pytest tests/test_paper_candidate_evaluator.py tests/test_same_payoff_board.py -q`; result PASSED; paper candidates count 0; no reported evaluator/settlement/fee/slippage/freshness gate weakening.",
       "notes": "Relative-value remains the primary profit-speed lane, but fake-edge killing is progress."
     },
     {

@@ -212,6 +212,29 @@ This runs init, clears `STOP.txt`, then opens visible Windows Terminal panes:
 
 If `wt.exe` is unavailable, it prints manual commands for separate PowerShell windows.
 
+Grouped Windows mode:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\open-visible-loop.ps1 -GroupedWindows
+```
+
+This opens three grouped Windows Terminal windows:
+
+- `AI Loop - Codex`: relative_value, graph, and weather Codex supervisors.
+- `AI Loop - Claude`: relative_value, graph, and weather Claude reviewers.
+- `AI Loop - Commands`: short-command runner, command center, relative_value GPT prompter, and a monitor pane for action/long-command/failure files.
+
+Debug launch flags:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\open-visible-loop.ps1 -GroupedWindows -CodexOnly
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\open-visible-loop.ps1 -GroupedWindows -ClaudeOnly
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\open-visible-loop.ps1 -GroupedWindows -CommandsOnly
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\open-visible-loop.ps1 -GroupedWindows -MonitorOnly
+```
+
+If `wt.exe` is unavailable, the launcher prints exact fallback PowerShell commands grouped by Codex, Claude, Commands, and Monitors. Run one-lane supervised first before overnight or multi-lane operation.
+
 ## Stop
 
 ```powershell
@@ -258,6 +281,38 @@ Long/manual/risky commands go to:
 
 ## Codex Recovery
 
+Codex prompts are written to timestamped prompt files under:
+
+```text
+ai-orchestrator\logs\<lane>\codex\
+```
+
+The supervisor invokes Codex with a short stdin-based command:
+
+```powershell
+codex exec --sandbox workspace-write --cd <lane-path> -
+```
+
+On this Windows setup the runner prefers the bundled Node runtime plus the installed Codex JS entrypoint, but the effective Codex CLI arguments are the same. The trailing `-` tells Codex to read the prompt from stdin. The runner uses redirected stdin/stdout/stderr, writes the full prompt text to stdin, closes stdin immediately, then waits with a finite timeout. The large prompt text is not passed as a command-line argument. Each Codex log records the prompt file path, prompt character count, argument count, argument length, process id, and whether stdin was written and closed.
+
+If Codex stalls at command start, inspect the latest `codex_*_run*.log`. A healthy launch should show `mode: stdin_written_and_closed`, `stdin_will_be_written: true`, and `stdin_closed: true`. If Codex exits with code `2` or prints a usage error such as `unexpected argument`, inspect the latest `codex_*_run*.log` and `codex_*_prompt.md` files. The command line should stay short and should end with `--cd <lane-path> -`.
+
+Safe Codex supervisor tests that do not launch Codex:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-codex-lane.ps1 -LaneName relative_value -PrintCodexCommandOnly
+```
+
+This validates the active prompt and prints the command shape, prompt path, prompt character count, and command argument length.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-codex-lane.ps1 -LaneName relative_value -NoCodexSmoke
+```
+
+This validates the active prompt, writes a fake `LATEST_CODEX_SUMMARY.md`, updates heartbeat, and exits without launching Codex.
+
+`-NoCodexSmoke` also simulates the stdin prompt path: it prepares the wrapped prompt, reports `stdin_written_and_closed`, and confirms the prompt would be written to redirected stdin and closed. It does not call Codex.
+
 The Codex supervisor detects:
 
 - nonzero exit
@@ -270,8 +325,10 @@ On failure it:
 
 1. Appends to `FAILURE_LOG.md`.
 2. Builds `RECOVERY_CONTEXT_PACKET.md`.
-3. Retries once with the same task plus recovery context.
+3. Retries once with a compact recovery prompt that tells Codex to read `.ai_loop\RECOVERY_CONTEXT_PACKET.md` and `.ai_loop\NEXT_CODEX_PROMPT.md`.
 4. If retry fails, marks the lane `BLOCKED`, writes `GPT_REVIEW_NEEDED.txt`, and stops hammering Codex.
+
+Recovery avoids embedding the recovery packet in the command line. This prevents Windows command-line length failures such as `The filename or extension is too long`.
 
 ## Claude Gating
 

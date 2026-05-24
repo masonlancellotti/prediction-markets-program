@@ -271,15 +271,50 @@ if ($schemaText -notmatch "REASONING_SUMMARY_START" -or $schemaText -notmatch "G
 foreach ($script in @("test-next-codex-prompt.ps1","test-task-queue.ps1","test-lane-file-scope.ps1","test-review-gating.ps1","test-autonomy-preflight.ps1")) {
     Assert-File -Path (Join-Path $Global:OrchestratorRoot "scripts\$script")
 }
+$codexRunnerText = Read-TextIfExists -Path (Join-Path $Global:OrchestratorRoot "scripts\run-codex-lane.ps1")
 if ($psPrompterText -notmatch "test-next-codex-prompt.ps1") {
-    $codexRunnerText = Read-TextIfExists -Path (Join-Path $Global:OrchestratorRoot "scripts\run-codex-lane.ps1")
     if ($codexRunnerText -notmatch "test-next-codex-prompt.ps1") {
         Add-Failure "run-codex-lane.ps1 must validate NEXT_CODEX_PROMPT before launching Codex"
     }
 }
+if ($codexRunnerText -match 'codex\s+exec\s+--sandbox\s+workspace-write\s+\$JobPrompt') {
+    Add-Failure "run-codex-lane.ps1 must not pass prompt text as a codex exec command-line argument"
+}
+if ($codexRunnerText -match 'codex\s+exec\s+status') {
+    Add-Failure "run-codex-lane.ps1 contains known bad codex exec status pattern"
+}
+if ($codexRunnerText -notmatch '\[switch\]\s*\$PrintCodexCommandOnly' -or $codexRunnerText -notmatch '\[switch\]\s*\$NoCodexSmoke') {
+    Add-Failure "run-codex-lane.ps1 must support -PrintCodexCommandOnly and -NoCodexSmoke"
+}
+if ($codexRunnerText -notmatch 'PromptFilePath' -or $codexRunnerText -notmatch 'command_arg_chars' -or $codexRunnerText -notmatch '--cd' -or $codexRunnerText -notmatch '"-"') {
+    Add-Failure "run-codex-lane.ps1 must invoke Codex with prompt-file/stdin metadata and --cd lane path"
+}
+foreach ($stdinTerm in @("System.Diagnostics.ProcessStartInfo", "RedirectStandardInput", "RedirectStandardOutput", "RedirectStandardError", "StandardInput.Write", "StandardInput.Close", "WaitForExit")) {
+    if ($codexRunnerText -notmatch [regex]::Escape($stdinTerm)) {
+        Add-Failure "run-codex-lane.ps1 must use redirected stdin/stdout/stderr with explicit stdin close; missing $stdinTerm"
+    }
+}
+if ($codexRunnerText -match '\|\s*&\s*\$JobFilePath\s+@JobArgs') {
+    Add-Failure "run-codex-lane.ps1 must not rely on a PowerShell pipeline into Codex stdin"
+}
+if ($codexRunnerText -match 'Start-Job[\s\S]{0,500}codex' -or $codexRunnerText -match 'Start-Job[\s\S]{0,500}JobFilePath') {
+    Add-Failure "run-codex-lane.ps1 must not launch Codex through a background job for stdin prompt passing"
+}
+if ($codexRunnerText -notmatch "stdin_written_and_closed") {
+    Add-Failure "run-codex-lane.ps1 must label Codex prompt mode as stdin_written_and_closed"
+}
+if ($codexRunnerText -match 'RECOVERY CONTEXT:' -or $codexRunnerText -match '-RecoveryPacket') {
+    Add-Failure "run-codex-lane.ps1 recovery retry must not embed RECOVERY_CONTEXT_PACKET.md in command-line prompt text"
+}
+if ($codexRunnerText -notmatch 'RECOVERY_CONTEXT_PACKET.md' -or $codexRunnerText -notmatch 'RecoveryRetry') {
+    Add-Failure "run-codex-lane.ps1 recovery retry must be file/path based and bounded"
+}
 $readmeText = Read-TextIfExists -Path (Join-Path $Global:OrchestratorRoot "README_AI_ORCHESTRATOR.md")
 if ($readmeText -notmatch "run-manual-command-and-log\.ps1" -or $readmeText -notmatch "CommandId" -or $readmeText -notmatch "WAITING_USER_COMMAND") {
     Add-Failure "README must document manual command logging with command id and WAITING_USER_COMMAND"
+}
+if ($readmeText -notmatch "codex exec --sandbox workspace-write --cd" -or $readmeText -notmatch "stdin" -or $readmeText -notmatch "Windows command-line length") {
+    Add-Failure "README must document Codex stdin prompt passing and recovery command-line length handling"
 }
 if ($readmeText -notmatch "GPT_PROMPTER_REASONING_SUMMARY" -or $readmeText -notmatch "costs output tokens") {
     Add-Failure "README must document GPT_PROMPTER_REASONING_SUMMARY cost behavior"

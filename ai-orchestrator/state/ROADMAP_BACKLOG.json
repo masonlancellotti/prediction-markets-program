@@ -232,6 +232,49 @@
       ],
       "status": "idea",
       "created_from": "failure_log_2026-05-24"
+    },
+    {
+      "id": "orchestrator-codex-runner-invocation-hygiene",
+      "lane": "orchestrator",
+      "category": "orchestration_reliability",
+      "title": "Codex runner invocation and prompt-length hygiene",
+      "why_it_matters": "Relative-value work is blocked when the local Codex wrapper fails before task execution or retries with oversized command arguments.",
+      "profit_proximity": 2,
+      "fake_edge_risk": 1,
+      "implementation_effort": 2,
+      "review_required": false,
+      "requires_user_help": true,
+      "user_help_needed": "Confirm the local Codex CLI/wrapper path is usable after runner fixes; do not paste logs manually because outputs should flow through orchestrator log files.",
+      "prerequisites": [],
+      "allowed_files": [
+        "ai-orchestrator/README_AI_ORCHESTRATOR.md",
+        "ai-orchestrator/open-visible-loop.ps1",
+        "ai-orchestrator/scripts/run-codex-lane.ps1",
+        "ai-orchestrator/scripts/test-orchestrator-setup.ps1",
+        "ai-orchestrator/state/USER_ACTION_REQUIRED.md"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*secret*",
+        "**/*key*",
+        "**/*wallet*",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "success_criteria": [
+        "Codex launch no longer passes stray arguments such as `status` to `codex exec`.",
+        "Retries avoid command lines that exceed local shell/path limits.",
+        "Failures are logged clearly without overwriting task summaries as if work completed.",
+        "No live trading, account, order, signing, wallet, or secret-handling behavior is introduced."
+      ],
+      "stop_conditions": [
+        "Would require editing .env or exposing credentials.",
+        "Would require changing the relative-value task scope to include unrelated orchestrator edits.",
+        "Would mask Codex failures as successful task completion."
+      ],
+      "status": "idea",
+      "created_from": "codex_failure_2026-05-24T08:35:59Z"
     }
   ]
 }

@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$LaneName
+    [string]$LaneName,
+    [switch]$PrintCodexCommandOnly,
+    [switch]$NoCodexSmoke
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +20,8 @@ $failureLogPath = Join-Path $loopPath "FAILURE_LOG.md"
 $reviewMarkerPath = Join-Path $loopPath "READY_FOR_CLAUDE_REVIEW.txt"
 $gptReviewNeededPath = Join-Path $loopPath "GPT_REVIEW_NEEDED.txt"
 $recoveryPacketPath = Join-Path $loopPath "RECOVERY_CONTEXT_PACKET.md"
+$blockedReasonPath = Join-Path $loopPath "BLOCKED_REASON.md"
+$maxCodexArgChars = 6000
 
 function Get-FileWriteUtc {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -48,18 +52,96 @@ function Test-CodexFailureText {
     return $false
 }
 
+function Get-BundledNodePath {
+    $candidate = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if ($node) { return $node.Source }
+    return ""
+}
+
+function Get-CodexJsPath {
+    $candidate = Join-Path $env:APPDATA "npm\node_modules\@openai\codex\bin\codex.js"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    return ""
+}
+
+function Get-CodexInvocation {
+    $nodePath = Get-BundledNodePath
+    $codexJsPath = Get-CodexJsPath
+    if (-not [string]::IsNullOrWhiteSpace($nodePath) -and -not [string]::IsNullOrWhiteSpace($codexJsPath)) {
+        return [pscustomobject]@{
+            FilePath = $nodePath
+            Arguments = @($codexJsPath, "exec", "--sandbox", "workspace-write", "--cd", $lane.Path, "-")
+            Display = "`"$nodePath`" `"$codexJsPath`" exec --sandbox workspace-write --cd `"$($lane.Path)`" -"
+            Mode = "stdin_written_and_closed"
+        }
+    }
+
+    $codex = Get-Command codex -ErrorAction SilentlyContinue
+    if ($codex) {
+        return [pscustomobject]@{
+            FilePath = $codex.Source
+            Arguments = @("exec", "--sandbox", "workspace-write", "--cd", $lane.Path, "-")
+            Display = "`"$($codex.Source)`" exec --sandbox workspace-write --cd `"$($lane.Path)`" -"
+            Mode = "stdin_written_and_closed"
+        }
+    }
+
+    throw "codex executable not found and npm Codex JS entrypoint is unavailable."
+}
+
+function Get-ArgLength {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    return (($Arguments | ForEach-Object { [string]$_ }) -join " ").Length
+}
+
+function ConvertTo-NativeArgument {
+    param([AllowNull()][string]$Value)
+
+    if ($null -eq $Value) { return '""' }
+    $text = [string]$Value
+    if ($text.Length -eq 0) { return '""' }
+    if ($text -notmatch '[\s"]') { return $text }
+
+    $escaped = $text -replace '\\', '\\' -replace '"', '\"'
+    return '"' + $escaped + '"'
+}
+
+function Join-NativeArguments {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    return (($Arguments | ForEach-Object { ConvertTo-NativeArgument -Value $_ }) -join " ")
+}
+
+function Stop-ProcessTreeSafe {
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+
+    if ($Process.HasExited) { return }
+
+    try {
+        & taskkill.exe /PID $Process.Id /T /F | Out-Null
+    }
+    catch {
+        try { $Process.Kill() } catch { }
+    }
+}
+
 function New-CodexWorkerPrompt {
     param(
         [Parameter(Mandatory = $true)][string]$LanePrompt,
-        [string]$RecoveryPacket = ""
+        [switch]$RecoveryRetry
     )
 
     $recoverySection = ""
-    if (-not [string]::IsNullOrWhiteSpace($RecoveryPacket)) {
+    if ($RecoveryRetry) {
         $recoverySection = @"
 
-RECOVERY CONTEXT:
-$RecoveryPacket
+RECOVERY RETRY:
+- Read `.ai_loop/RECOVERY_CONTEXT_PACKET.md` from the lane repo for recovery context.
+- Read `.ai_loop/NEXT_CODEX_PROMPT.md` for the active task.
+- Continue the same task only if it remains safe and bounded.
+- If recovery context indicates the task is stale, unsafe, or blocked, update `.ai_loop/LATEST_CODEX_SUMMARY.md`, `.ai_loop/LANE_STATUS.md`, and `.ai_loop/NEXT_CODEX_PROMPT.md` accordingly and stop.
 "@
     }
 
@@ -120,42 +202,115 @@ $recoverySection
 function Invoke-CodexOnce {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
-        [Parameter(Mandatory = $true)][string]$LogPath
+        [Parameter(Mandatory = $true)][string]$LogPath,
+        [Parameter(Mandatory = $true)][string]$PromptFilePath
     )
 
-    $job = Start-Job -ScriptBlock {
-        param($JobCwd, $JobPrompt)
-        Set-Location -LiteralPath $JobCwd
-        $jobOutput = & codex exec --sandbox workspace-write $JobPrompt 2>&1 | ForEach-Object { [string]$_ }
-        [pscustomobject]@{
-            ExitCode = $LASTEXITCODE
-            Output = ($jobOutput -join "`r`n")
-        }
-    } -ArgumentList $lane.Path, $Prompt
+    Set-Text -Path $PromptFilePath -Text $Prompt
+    $promptChars = ([string]$Prompt).Length
+    $invocation = Get-CodexInvocation
+    $argLength = Get-ArgLength -Arguments $invocation.Arguments
+    $prelude = @"
+Codex invocation metadata
+timestamp: $(Get-UtcStamp)
+mode: $($invocation.Mode)
+prompt_file: $PromptFilePath
+prompt_chars: $promptChars
+command_arg_count: $($invocation.Arguments.Count)
+command_arg_chars: $argLength
+command: $($invocation.Display)
+stdin_will_be_written: true
+stdin_will_be_closed: true
 
-    $finished = Wait-Job -Job $job -Timeout $Global:CodexTimeoutSeconds
+"@
+    Set-Text -Path $LogPath -Text $prelude
+    Write-Host $prelude
+
+    if ($argLength -gt $maxCodexArgChars) {
+        $text = "Codex command arguments are too long ($argLength chars). Refusing to invoke Codex; prompt content must be passed by stdin/file only."
+        Append-Text -Path $LogPath -Text $text
+        return [pscustomobject]@{ ExitCode = -1; Output = $text; TimedOut = $false }
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $process.StartInfo.FileName = $invocation.FilePath
+    $process.StartInfo.Arguments = Join-NativeArguments -Arguments $invocation.Arguments
+    $process.StartInfo.WorkingDirectory = $lane.Path
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.RedirectStandardInput = $true
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    $process.StartInfo.CreateNoWindow = $true
+
+    try {
+        [void]$process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+
+        $process.StandardInput.Write($Prompt)
+        $process.StandardInput.Close()
+        Append-Text -Path $LogPath -Text "stdin_written: true`r`nstdin_closed: true`r`nprocess_id: $($process.Id)`r`n`r`n"
+
+        $finished = $process.WaitForExit([int]$Global:CodexTimeoutSeconds * 1000)
+    }
+    catch {
+        $text = "Codex process failed before completion: $($_.Exception.Message)"
+        Append-Text -Path $LogPath -Text $text
+        try {
+            if ($process -and -not $process.HasExited) { Stop-ProcessTreeSafe -Process $process }
+        }
+        catch { }
+        return [pscustomobject]@{ ExitCode = -1; Output = $text; TimedOut = $false }
+    }
+
     if (-not $finished) {
-        Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        Stop-ProcessTreeSafe -Process $process
         $text = "Codex timed out after $Global:CodexTimeoutSeconds seconds."
-        Set-Text -Path $LogPath -Text $text
+        Append-Text -Path $LogPath -Text $text
         Write-Warning $text
         return [pscustomobject]@{ ExitCode = -1; Output = $text; TimedOut = $true }
     }
 
-    $received = @(Receive-Job -Job $job)
-    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-    if ($received.Count -eq 0) {
-        $result = [pscustomobject]@{ ExitCode = -1; Output = "(no Codex output object returned)"; TimedOut = $false }
-    }
-    else {
-        $last = $received[-1]
-        $result = [pscustomobject]@{ ExitCode = [int]$last.ExitCode; Output = [string]$last.Output; TimedOut = $false }
-    }
+    $stdout = [string]$stdoutTask.Result
+    $stderr = [string]$stderrTask.Result
+    $combined = @()
+    if (-not [string]::IsNullOrWhiteSpace($stdout)) { $combined += $stdout }
+    if (-not [string]::IsNullOrWhiteSpace($stderr)) { $combined += "STDERR:`r`n$stderr" }
+    $output = ($combined -join "`r`n")
+    if ([string]::IsNullOrWhiteSpace($output)) { $output = "(Codex produced no stdout/stderr output.)" }
 
-    Set-Text -Path $LogPath -Text $result.Output
+    $result = [pscustomobject]@{ ExitCode = [int]$process.ExitCode; Output = $output; TimedOut = $false }
+
+    Append-Text -Path $LogPath -Text $result.Output
     Write-Host $result.Output
     return $result
+}
+
+function Write-CodexCommandPreview {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [Parameter(Mandatory = $true)][string]$PromptFilePath
+    )
+
+    Set-Text -Path $PromptFilePath -Text $Prompt
+    $invocation = Get-CodexInvocation
+    $argLength = Get-ArgLength -Arguments $invocation.Arguments
+    $preview = @"
+Codex command preview
+mode: $($invocation.Mode)
+prompt_file: $PromptFilePath
+prompt_chars: $(([string]$Prompt).Length)
+command_arg_count: $($invocation.Arguments.Count)
+command_arg_chars: $argLength
+command: $($invocation.Display)
+stdin_will_be_written: true
+stdin_will_be_closed: true
+"@
+    Write-Host $preview
+    if ($argLength -gt $maxCodexArgChars) {
+        throw "Codex command arguments are too long ($argLength chars). Prompt must be passed by stdin/file only."
+    }
 }
 
 function Register-CodexFailure {
@@ -165,6 +320,8 @@ function Register-CodexFailure {
         [Parameter(Mandatory = $true)][string]$Output
     )
 
+    $outputText = [string]$Output
+    $outputTail = if ($outputText.Length -gt 12000) { $outputText.Substring($outputText.Length - 12000) } else { $outputText }
     $block = @"
 
 ## $(Get-UtcStamp) Codex failure
@@ -173,7 +330,7 @@ reason: $Reason
 log: $LogPath
 
 ````text
-$(if ($Output.Length -gt 12000) { $Output.Substring($Output.Length - 12000) } else { $Output })
+$outputTail
 ````
 "@
     Append-Text -Path $failureLogPath -Text $block
@@ -196,9 +353,63 @@ GPT review needed. Do not hammer Codex until the prompt is repaired or the block
 "@
     Set-Text -Path $laneStatusPath -Text $status
     Set-Text -Path $gptReviewNeededPath -Text "Codex retry failed at $(Get-UtcStamp). Reason: $Reason"
+    Set-Text -Path $blockedReasonPath -Text $Reason
 }
 
 $runCount = 0
+
+if ($PrintCodexCommandOnly -or $NoCodexSmoke) {
+    $lanePrompt = Read-TextIfExists -Path $promptPath
+    if ([string]::IsNullOrWhiteSpace($lanePrompt)) {
+        throw "NEXT_CODEX_PROMPT.md is empty."
+    }
+
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "test-next-codex-prompt.ps1") -LaneName $LaneName
+    if ($LASTEXITCODE -ne 0) {
+        throw "NEXT_CODEX_PROMPT.md failed autonomy prompt-quality validation."
+    }
+
+    $stamp = Get-FileSafeStamp
+    $debugPromptPath = Join-Path $logRoot "codex_${stamp}_debug_prompt.md"
+    $wrappedPrompt = New-CodexWorkerPrompt -LanePrompt $lanePrompt
+    Write-CodexCommandPreview -Prompt $wrappedPrompt -PromptFilePath $debugPromptPath
+
+    if ($PrintCodexCommandOnly) {
+        Write-Host "PrintCodexCommandOnly complete. Codex was not launched."
+        exit 0
+    }
+
+    $summary = @"
+# Latest Codex Summary
+
+task id: no-codex-smoke
+lane: $LaneName
+files changed: none
+commands run: none
+tests run: none
+pass/fail: pass
+paper candidates count: 0
+risk flags: none
+Claude review needed: no
+recommended next task: existing NEXT_CODEX_PROMPT.md remains active
+docs/state updated: LATEST_CODEX_SUMMARY.md smoke only
+
+NoCodexSmoke completed at $(Get-UtcStamp). Codex was not launched.
+Prompt file prepared for command-shape validation:
+$debugPromptPath
+
+Prompt passing mode:
+stdin_written_and_closed
+
+NoCodexSmoke simulated writing $(([string]$wrappedPrompt).Length) chars to redirected stdin and closing stdin. Codex was not launched.
+"@
+    Set-Text -Path $summaryPath -Text $summary
+    Set-LaneHeartbeat -Lane $lane -Role "codex" -Status "no_codex_smoke_completed" -Detail "NoCodexSmoke completed without launching Codex."
+    Write-Host "NoCodexSmoke simulated stdin write+close for $(([string]$wrappedPrompt).Length) chars. Codex was not launched."
+    Write-Host "NoCodexSmoke complete. Fake summary written: $summaryPath"
+    exit 0
+}
+
 Write-Host "Codex supervisor loop started for '$LaneName'. Stop file: $Global:StopFile"
 
 while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
@@ -211,10 +422,12 @@ while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
         continue
     }
 
-    $codex = Get-Command codex -ErrorAction SilentlyContinue
-    if (-not $codex) {
-        Write-Warning "codex executable not found. Waiting $Global:PromptPollSeconds seconds."
-        Set-LaneHeartbeat -Lane $lane -Role "codex" -Status "missing_executable" -Detail "codex not found."
+    try {
+        $null = Get-CodexInvocation
+    }
+    catch {
+        Write-Warning "$($_.Exception.Message) Waiting $Global:PromptPollSeconds seconds."
+        Set-LaneHeartbeat -Lane $lane -Role "codex" -Status "missing_executable" -Detail $_.Exception.Message
         Start-Sleep -Seconds $Global:PromptPollSeconds
         continue
     }
@@ -243,13 +456,14 @@ while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
     $summaryBefore = Get-FileWriteUtc -Path $summaryPath
     $promptBeforeHash = Get-ContentHash -Text $lanePrompt
     $logPath = Join-Path $logRoot "codex_${stamp}_run${runCount}.log"
+    $promptFilePath = Join-Path $logRoot "codex_${stamp}_run${runCount}_prompt.md"
 
     Write-Host ""
     Write-Host "[$(Get-UtcStamp)] Starting Codex run $runCount for '$LaneName'. Log: $logPath"
     Set-LaneHeartbeat -Lane $lane -Role "codex" -Status "running" -Detail "Run $runCount"
 
     $wrappedPrompt = New-CodexWorkerPrompt -LanePrompt $lanePrompt
-    $result = Invoke-CodexOnce -Prompt $wrappedPrompt -LogPath $logPath
+    $result = Invoke-CodexOnce -Prompt $wrappedPrompt -LogPath $logPath -PromptFilePath $promptFilePath
 
     $summaryAfter = Get-FileWriteUtc -Path $summaryPath
     $promptAfter = Read-TextIfExists -Path $promptPath
@@ -265,17 +479,17 @@ while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
         Write-Warning "Codex failure detected for '$LaneName': $reason"
 
         & (Join-Path $PSScriptRoot "build-recovery-packet.ps1") -LaneName $LaneName | Out-Null
-        $recoveryPacket = Read-TextIfExists -Path $recoveryPacketPath
 
         $retrySucceeded = $false
         for ($retry = 1; $retry -le [int]$Global:MaxFailureRetries; $retry += 1) {
             $retryStamp = Get-FileSafeStamp
             $retryLogPath = Join-Path $logRoot "codex_${retryStamp}_run${runCount}_retry${retry}.log"
+            $retryPromptFilePath = Join-Path $logRoot "codex_${retryStamp}_run${runCount}_retry${retry}_prompt.md"
             Write-Host "Retrying Codex once with recovery packet for '$LaneName'. Retry $retry."
             Set-LaneHeartbeat -Lane $lane -Role "codex" -Status "retrying" -Detail "Retry $retry for run $runCount"
-            $retryPrompt = New-CodexWorkerPrompt -LanePrompt $lanePrompt -RecoveryPacket $recoveryPacket
+            $retryPrompt = New-CodexWorkerPrompt -LanePrompt $lanePrompt -RecoveryRetry
             $retrySummaryBefore = Get-FileWriteUtc -Path $summaryPath
-            $retryResult = Invoke-CodexOnce -Prompt $retryPrompt -LogPath $retryLogPath
+            $retryResult = Invoke-CodexOnce -Prompt $retryPrompt -LogPath $retryLogPath -PromptFilePath $retryPromptFilePath
             $retryPromptAfter = Read-TextIfExists -Path $promptPath
             $retryFailed = $retryResult.ExitCode -ne 0 -or
                 (Test-CodexFailureText -Text $retryResult.Output) -or

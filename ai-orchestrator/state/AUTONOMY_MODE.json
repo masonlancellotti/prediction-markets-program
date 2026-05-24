@@ -1,5 +1,5 @@
 {
-  "mode": "gpt_one_shot_only",
+  "mode": "codex_one_task",
   "supported_modes": [
     "off",
     "gpt_one_shot_only",
@@ -10,3 +10,6 @@
   "default_reason": "Conservative default: GPT may prepare one bounded handoff, but persistent Codex or multi-lane autonomy requires Mason to opt in after clean preflight cycles.",
   "last_updated": "2026-05-24"
 }
+
+
+
