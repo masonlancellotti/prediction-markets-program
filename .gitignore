@@ -39,6 +39,7 @@ build/
 # Agent/tool junk
 .claude/
 .claude-flow/
+ai-orchestrator/logs/
 *.log
 before_autonomous_*
 before_overnight_*

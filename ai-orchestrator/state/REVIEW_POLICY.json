@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "claude_required_for": [
+    "paper_candidate_found",
+    "evaluator_gate_changes",
+    "settlement_trust",
+    "settlement_normalization_trust",
+    "fee_slippage_gas_model_changes",
+    "graph_to_relative_integration",
+    "live_execution_design",
+    "changed_files_outside_task_scope",
+    "codex_claude_disagreement",
+    "high_profit_path_conflict"
+  ],
+  "claude_skippable_for": [
+    "docs",
+    "schemas",
+    "diagnostic_only_reports",
+    "import_hygiene",
+    "tests_green_fixture_only_changes",
+    "formatting",
+    "status_files"
+  ],
+  "gating_rules": [
+    "Claude runs only when READY_FOR_CLAUDE_REVIEW.txt exists and a required review trigger is present.",
+    "GPT can request Claude by writing YES in CLAUDE_REVIEW_NEEDED and creating READY_FOR_CLAUDE_REVIEW.txt.",
+    "Docs/status/schema-only changes are deferred unless GPT explicitly asks.",
+    "Same diff-stat hash is not reviewed repeatedly.",
+    "Claude output is review input; GPT converts it into a bounded task or marks the task done."
+  ],
+  "default": "manual_review_when_uncertain",
+  "notes": [
+    "Graph hints cannot become paper candidates without strict review.",
+    "Evaluator trust, settlement normalization, and fee/slippage/gas changes are high risk.",
+    "Live trading/order/auth/account/private-key/signing/wallet logic is out of scope."
+  ]
+}

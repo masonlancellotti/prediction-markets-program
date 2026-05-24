@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "updated_by": "manual_seed",
+  "scoring_note": "priority = 3*profit_proximity - 2*fake_edge_risk - implementation_effort + prerequisite_bonus",
+  "items": [
+    {
+      "id": "rv-exact-universe-inventory-ranking",
+      "lane": "relative_value",
+      "category": "exact_payoff",
+      "title": "Rank exact same-payoff universe inventory",
+      "why_it_matters": "Profit-speed depends on credible executable exact-payoff candidates, not broad text matches.",
+      "profit_proximity": 5,
+      "fake_edge_risk": 2,
+      "implementation_effort": 3,
+      "review_required": false,
+      "requires_user_help": false,
+      "user_help_needed": "",
+      "prerequisites": [
+        "rv-live-readonly-universe-snapshots"
+      ],
+      "allowed_files": [
+        "relative-value-scanner/.ai_loop/**",
+        "relative-value-scanner/tests/**",
+        "relative-value-scanner/src/**",
+        "relative-value-scanner/*.py"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "success_criteria": [
+        "Inventory is ranked by exact payoff credibility.",
+        "Uncertain pairs stay WATCH or MANUAL_REVIEW."
+      ],
+      "stop_conditions": [
+        "Requires trusting title similarity as settlement equivalence.",
+        "Would create PAPER_CANDIDATE without review."
+      ],
+      "status": "idea",
+      "created_from": "manual_seed"
+    },
+    {
+      "id": "rv-btc-fed-exact-threshold-pipelines",
+      "lane": "relative_value",
+      "category": "settlement_normalization",
+      "title": "Design BTC/Fed exact threshold and meeting-specific pipelines",
+      "why_it_matters": "BTC and Fed broad matching is fake-edge prone until exact source/date/threshold matching exists.",
+      "profit_proximity": 4,
+      "fake_edge_risk": 4,
+      "implementation_effort": 4,
+      "review_required": true,
+      "requires_user_help": false,
+      "user_help_needed": "",
+      "prerequisites": [
+        "exact source/date/threshold inventory report"
+      ],
+      "allowed_files": [
+        "relative-value-scanner/.ai_loop/**",
+        "relative-value-scanner/tests/**",
+        "relative-value-scanner/src/**",
+        "relative-value-scanner/*.py"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "success_criteria": [
+        "Meeting or threshold scope is explicit.",
+        "No evaluator trust is added without Claude review."
+      ],
+      "stop_conditions": [
+        "Would rely on broad text matching.",
+        "Would weaken settlement trust gates."
+      ],
+      "status": "idea",
+      "created_from": "manual_seed"
+    },
+    {
+      "id": "graph-watchlist-export-contract",
+      "lane": "graph",
+      "category": "graph_consistency",
+      "title": "Keep graph watchlist export diagnostic-only",
+      "why_it_matters": "Graph hints can surface structural questions without creating executable claims.",
+      "profit_proximity": 2,
+      "fake_edge_risk": 2,
+      "implementation_effort": 2,
+      "review_required": false,
+      "requires_user_help": false,
+      "user_help_needed": "",
+      "prerequisites": [],
+      "allowed_files": [
+        "market-graph-consistency/.ai_loop/**",
+        "market-graph-consistency/tests/**",
+        "market-graph-consistency/src/**",
+        "market-graph-consistency/*.py",
+        "market-graph-consistency/schemas/**"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "success_criteria": [
+        "Watchlist outputs are clearly WATCH/MANUAL_REVIEW.",
+        "No graph-to-relative execution path is added."
+      ],
+      "stop_conditions": [
+        "Would promote graph hint to paper candidate.",
+        "Would alter relative-value evaluator behavior."
+      ],
+      "status": "idea",
+      "created_from": "manual_seed"
+    },
+    {
+      "id": "venue-sxbet-research-only-inventory",
+      "lane": "orchestrator",
+      "category": "venue_expansion",
+      "title": "Research-only SX Bet venue readiness note",
+      "why_it_matters": "New venues may expand breadth, but should pause for Mason when auth/account setup is needed.",
+      "profit_proximity": 3,
+      "fake_edge_risk": 3,
+      "implementation_effort": 2,
+      "review_required": false,
+      "requires_user_help": true,
+      "user_help_needed": "Confirm eligibility, data access, and whether any account/API setup is allowed later.",
+      "prerequisites": [],
+      "allowed_files": [
+        "ai-orchestrator/state/VENUE_EXPANSION_PLAN.md",
+        "ai-orchestrator/state/USER_ACTION_REQUIRED.md"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "success_criteria": [
+        "Venue remains research-only.",
+        "Any credential or account need is written to USER_ACTION_REQUIRED.md."
+      ],
+      "stop_conditions": [
+        "Would require live API credentials or account reads.",
+        "Would add scraping or execution transport."
+      ],
+      "status": "idea",
+      "created_from": "manual_seed"
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "version": 2,
+  "updated_by": "manual_audit",
+  "selection_policy": "GPT prompter selects only the first ready task for the lane unless that task is blocked, waiting_review, done, or stale.",
+  "tasks": [
+    {
+      "id": "rv-live-readonly-universe-snapshots",
+      "lane": "relative_value",
+      "repo_path": "relative-value-scanner",
+      "status": "ready",
+      "priority": 1,
+      "risk_level": "medium",
+      "requires_claude": false,
+      "title": "Universe-specific live_readonly snapshot handling",
+      "objective": "Keep exact-universe relative-value work moving by tightening live_readonly snapshot handling without weakening evaluator, settlement, or fee gates.",
+      "allowed_files": [
+        ".ai_loop/**",
+        "tests/**",
+        "src/**",
+        "*.py",
+        "README*.md"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*secret*",
+        "**/*key*",
+        "**/*wallet*",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "required_tests": [
+        "python -m pytest tests/test_paper_candidate_evaluator.py tests/test_same_payoff_board.py -q"
+      ],
+      "success_criteria": [
+        "Universe-specific snapshot behavior is explicit and fail-closed.",
+        "Exact same-payoff continuation remains bounded to reviewed universes.",
+        "No PAPER_CANDIDATE is promoted without strict evidence and review.",
+        "Codex summary includes task id, files changed, tests, paper candidate count, and risk flags."
+      ],
+      "stop_conditions": [
+        "Task would weaken evaluator/settlement/fee/slippage trust.",
+        "Task would add live trading, auth, account, or order logic.",
+        "Changed files fall outside allowed_files.",
+        "A paper candidate appears."
+      ],
+      "notes": "Relative-value remains the primary profit-speed lane, but fake-edge killing is progress."
+    },
+    {
+      "id": "graph-diagnostic-hint-diff-watchlist",
+      "lane": "graph",
+      "repo_path": "market-graph-consistency",
+      "status": "ready",
+      "priority": 2,
+      "risk_level": "low",
+      "requires_claude": false,
+      "title": "Diagnostic hint diff/schema/watchlist maintenance",
+      "objective": "Keep graph outputs useful as diagnostic WATCH/MANUAL_REVIEW hints without creating paper candidates or evaluator integration.",
+      "allowed_files": [
+        ".ai_loop/**",
+        "tests/**",
+        "src/**",
+        "*.py",
+        "README*.md",
+        "schemas/**"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*secret*",
+        "**/*key*",
+        "**/*wallet*",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "required_tests": [
+        "python -m pytest tests -q"
+      ],
+      "success_criteria": [
+        "Hints remain diagnostic-only.",
+        "Outputs stay WATCH or MANUAL_REVIEW.",
+        "No graph output is treated as executable or as a paper candidate."
+      ],
+      "stop_conditions": [
+        "Task would integrate graph hints into relative-value evaluator trust.",
+        "Task would promote a hint into an executable signal.",
+        "Changed files fall outside allowed_files."
+      ],
+      "notes": "Graph is a structural hint lane, not a trading lane."
+    },
+    {
+      "id": "weather-maintenance-bounded-diagnostics",
+      "lane": "weather",
+      "repo_path": "kalshi-weather-edge",
+      "status": "ready",
+      "priority": 3,
+      "risk_level": "low",
+      "requires_claude": false,
+      "title": "Weather maintenance-only bounded diagnostics",
+      "objective": "Maintain weather evidence/replay/status hygiene without adding live APIs, auth, order logic, or real-money assumptions.",
+      "allowed_files": [
+        ".ai_loop/**",
+        "tests/**",
+        "src/**",
+        "*.py",
+        "README*.md"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*secret*",
+        "**/*key*",
+        "**/*wallet*",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "required_tests": [],
+      "success_criteria": [
+        "Maintenance task is bounded and diagnostic.",
+        "No live trading, account, auth, or order behavior is added.",
+        "Any candidate edge remains WATCH or MANUAL_REVIEW without paper promotion."
+      ],
+      "stop_conditions": [
+        "Task requires external credentialed data.",
+        "Task would add live transport/auth/order logic.",
+        "Changed files fall outside allowed_files."
+      ],
+      "notes": "Weather is lower priority unless strict evidence-backed paper history appears."
+    }
+  ]
+}
