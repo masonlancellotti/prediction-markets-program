@@ -6,13 +6,30 @@ from pathlib import Path
 from typing import Any
 
 from graph_engine.reporting.json_report import _assert_safe_violation_schema
-from graph_engine.reporting.schema_validation import validate_json_schema_subset
+from graph_engine.reporting.schema_validation import (
+    validate_hint_diff_contract,
+    validate_json_schema_subset,
+    validate_relative_value_hint_contract,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HINT_SCHEMA_PATH = PROJECT_ROOT / "schemas" / "relative_value_hint.schema.json"
 ALLOWED_ACTIONS = ["WATCH", "MANUAL_REVIEW"]
 ACTION_LEVEL = {"WATCH": 0, "MANUAL_REVIEW": 1}
+RELATION_PRIORITY = {
+    "SAME_PAYOFF": 50,
+    "SUBSET": 40,
+    "SUPERSET": 40,
+    "EXHAUSTIVE_GROUP": 35,
+    "MUTUALLY_EXCLUSIVE": 30,
+    "COMPLEMENT": 30,
+    "AMBIGUOUS_WORDING": 20,
+    "NEEDS_MANUAL_REVIEW": 20,
+    "OVERLAP_NOT_EQUIVALENT": 15,
+    "CORRELATED_ONLY": 10,
+    "UNRELATED": 0,
+}
 COMPARED_FIELDS = [
     "relation_type",
     "hard_bound_type",
@@ -29,6 +46,7 @@ def load_validated_hint_report(path: Path | str, schema_path: Path | str = DEFAU
     schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
     validate_json_schema_subset(report, schema)
     _assert_safe_violation_schema(report)
+    validate_relative_value_hint_contract(report)
     return report
 
 
@@ -38,17 +56,21 @@ def build_hint_diff_report(old_report: dict[str, Any], new_report: dict[str, Any
     old_ids = set(old_hints)
     new_ids = set(new_hints)
 
-    new_items = [_hint_summary(new_hints[hint_id]) for hint_id in sorted(new_ids - old_ids)]
-    removed_items = [_hint_summary(old_hints[hint_id]) for hint_id in sorted(old_ids - new_ids)]
+    added_items = [_ranked_hint_summary(new_hints[hint_id]) for hint_id in sorted(new_ids - old_ids)]
+    removed_items = [_ranked_hint_summary(old_hints[hint_id]) for hint_id in sorted(old_ids - new_ids)]
 
     field_changes: list[dict[str, Any]] = []
     upgraded: list[dict[str, Any]] = []
     downgraded: list[dict[str, Any]] = []
+    changed_items: list[dict[str, Any]] = []
     for hint_id in sorted(old_ids & new_ids):
         old_hint = old_hints[hint_id]
         new_hint = new_hints[hint_id]
         changes = _field_changes(hint_id, old_hint, new_hint)
+        if not changes:
+            continue
         field_changes.extend(changes)
+        changed_items.append(_changed_hint_summary(old_hint, new_hint, changes))
         cap_change = next((change for change in changes if change["field"] == "max_action_cap"), None)
         if cap_change is None:
             continue
@@ -64,7 +86,13 @@ def build_hint_diff_report(old_report: dict[str, Any], new_report: dict[str, Any
         elif new_level < old_level:
             downgraded.append(summary)
 
+    added_items = _rank_hints(added_items)
+    removed_items = _rank_hints(removed_items)
+    changed_items = _rank_hints(changed_items)
+    top_watch_items = _top_items(added_items + changed_items, "WATCH")
+    top_manual_review_items = _top_items(added_items + changed_items, "MANUAL_REVIEW")
     change_counts = Counter(change["field"] for change in field_changes)
+    changed_count = len(changed_items)
     report = {
         "diagnostic_only": True,
         "banner": BANNER,
@@ -72,20 +100,31 @@ def build_hint_diff_report(old_report: dict[str, Any], new_report: dict[str, Any
         "old_snapshot_id": old_report["snapshot_id"],
         "new_snapshot_id": new_report["snapshot_id"],
         "summary": {
-            "new_count": len(new_items),
+            "added_count": len(added_items),
+            "new_count": len(added_items),
             "removed_count": len(removed_items),
-            "changed_count": len({change["graph_hint_id"] for change in field_changes}),
+            "changed_count": changed_count,
+            "unchanged_count": len(old_ids & new_ids) - changed_count,
             "upgraded_count": len(upgraded),
             "downgraded_count": len(downgraded),
             "changes_by_field": dict(sorted(change_counts.items())),
         },
-        "new_hints": new_items,
+        "added_hints": added_items,
+        "new_hints": added_items,
         "removed_hints": removed_items,
+        "changed_hints": changed_items,
+        "unchanged_count": len(old_ids & new_ids) - changed_count,
+        "severity_or_priority_change": _changes_for_fields(field_changes, {"relation_type", "hard_bound_type"}),
+        "reason_change": _changes_for_fields(field_changes, {"blockers", "settlement_source_proven"}),
+        "action_change": _changes_for_fields(field_changes, {"max_action_cap"}),
         "upgraded_hints": upgraded,
         "downgraded_hints": downgraded,
         "field_changes": field_changes,
+        "top_watch_items": top_watch_items,
+        "top_manual_review_items": top_manual_review_items,
     }
     _assert_safe_violation_schema(report)
+    validate_hint_diff_contract(report)
     return report
 
 
@@ -99,6 +138,7 @@ def write_hint_diff_report(
     old_report = load_validated_hint_report(old_path, schema_path)
     new_report = load_validated_hint_report(new_path, schema_path)
     report = build_hint_diff_report(old_report, new_report)
+    validate_hint_diff_contract(report)
 
     json_path = Path(json_output)
     md_path = Path(markdown_output)
@@ -107,6 +147,20 @@ def write_hint_diff_report(
     json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     md_path.write_text(render_hint_diff_markdown(report), encoding="utf-8")
     return report
+
+
+def render_console_summary(report: dict[str, Any]) -> str:
+    summary = report["summary"]
+    lines = [
+        "Mode: saved hint diff",
+        f"Added hints: {summary['added_count']}",
+        f"Removed hints: {summary['removed_count']}",
+        f"Changed hints: {summary['changed_count']}",
+        f"Unchanged hints: {summary['unchanged_count']}",
+        "Top WATCH items: " + _console_items(report["top_watch_items"]),
+        "Top MANUAL_REVIEW items: " + _console_items(report["top_manual_review_items"]),
+    ]
+    return "\n".join(lines)
 
 
 def render_hint_diff_markdown(report: dict[str, Any]) -> str:
@@ -120,15 +174,17 @@ def render_hint_diff_markdown(report: dict[str, Any]) -> str:
         f"- Allowed actions: `{', '.join(report['allowed_actions'])}`",
         f"- Old snapshot: `{report['old_snapshot_id']}`",
         f"- New snapshot: `{report['new_snapshot_id']}`",
-        f"- New hints: {summary['new_count']}",
+        f"- Added hints: {summary['added_count']}",
         f"- Removed hints: {summary['removed_count']}",
         f"- Changed hints: {summary['changed_count']}",
+        f"- Unchanged hints: {summary['unchanged_count']}",
         f"- Upgraded caps: {summary['upgraded_count']}",
         f"- Downgraded caps: {summary['downgraded_count']}",
         "",
     ]
-    lines.extend(_markdown_hint_table("New Hints", report["new_hints"]))
+    lines.extend(_markdown_hint_table("Added Hints", report["added_hints"]))
     lines.extend(_markdown_hint_table("Removed Hints", report["removed_hints"]))
+    lines.extend(_markdown_hint_table("Changed Hints", report["changed_hints"]))
     lines.extend(_markdown_cap_table("Upgraded Caps", report["upgraded_hints"]))
     lines.extend(_markdown_cap_table("Downgraded Caps", report["downgraded_hints"]))
     lines.extend(
@@ -194,6 +250,70 @@ def _hint_summary(hint: dict[str, Any]) -> dict[str, Any]:
         "diagnostic_only": True,
         "allowed_actions": ALLOWED_ACTIONS,
     }
+
+
+def _ranked_hint_summary(hint: dict[str, Any]) -> dict[str, Any]:
+    summary = _hint_summary(hint)
+    summary["priority_score"] = _priority_score(summary)
+    summary["priority_reason"] = _priority_reason(summary)
+    return summary
+
+
+def _changed_hint_summary(old_hint: dict[str, Any], new_hint: dict[str, Any], changes: list[dict[str, Any]]) -> dict[str, Any]:
+    summary = _ranked_hint_summary(new_hint)
+    summary["field_changes"] = changes
+    summary["severity_or_priority_change"] = _changes_for_fields(changes, {"relation_type", "hard_bound_type"})
+    summary["reason_change"] = _changes_for_fields(changes, {"blockers", "settlement_source_proven"})
+    summary["action_change"] = _changes_for_fields(changes, {"max_action_cap"})
+    summary["previous_max_action_cap"] = old_hint["max_action_cap"]
+    return summary
+
+
+def _priority_score(hint: dict[str, Any]) -> int:
+    action_score = ACTION_LEVEL[hint["max_action_cap"]] * 100
+    relation_score = RELATION_PRIORITY.get(hint["relation_type"], 0)
+    blocker_penalty = min(len(hint["blockers"]), 10)
+    return action_score + relation_score - blocker_penalty
+
+
+def _priority_reason(hint: dict[str, Any]) -> str:
+    if hint["max_action_cap"] == "MANUAL_REVIEW":
+        return "manual_review_cap"
+    if hint["blockers"]:
+        return "watch_with_review_blockers"
+    return "watch"
+
+
+def _rank_hints(hints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked = sorted(hints, key=lambda hint: (-hint["priority_score"], hint["graph_hint_id"]))
+    for index, hint in enumerate(ranked, start=1):
+        hint["priority_rank"] = index
+    return ranked
+
+
+def _top_items(hints: list[dict[str, Any]], action: str, limit: int = 5) -> list[dict[str, Any]]:
+    return [
+        {
+            "graph_hint_id": hint["graph_hint_id"],
+            "relation_type": hint["relation_type"],
+            "max_action_cap": hint["max_action_cap"],
+            "priority_score": hint["priority_score"],
+            "priority_reason": hint["priority_reason"],
+            "diagnostic_only": True,
+            "allowed_actions": ALLOWED_ACTIONS,
+        }
+        for hint in _rank_hints([dict(item) for item in hints if item["max_action_cap"] == action])[:limit]
+    ]
+
+
+def _changes_for_fields(changes: list[dict[str, Any]], fields: set[str]) -> list[dict[str, Any]]:
+    return [change for change in changes if change["field"] in fields]
+
+
+def _console_items(hints: list[dict[str, Any]]) -> str:
+    if not hints:
+        return "none"
+    return ", ".join(f"{hint['graph_hint_id']} ({hint['relation_type']})" for hint in hints[:3])
 
 
 def _normalized_value(value: Any) -> Any:

@@ -1,0 +1,111 @@
+{
+  "diagnostic_only": true,
+  "affects_evaluator_gates": false,
+  "allowed_actions": [
+    "WATCH",
+    "MANUAL_REVIEW"
+  ],
+  "formula_count": 5,
+  "proposed_formulas": [
+    {
+      "market_id": "proposal:btc_over_100k_june_a",
+      "family": "BTC_THRESHOLD",
+      "subject": "BTC",
+      "asset": "BTC",
+      "source": "fixture_btc_index",
+      "date": "2026-06-30",
+      "settlement_time": "2026-06-30",
+      "comparator": ">",
+      "threshold": 100000,
+      "units": "USD",
+      "side": "YES",
+      "parse_quality": 0.92,
+      "blockers": [],
+      "provenance": {
+        "proposed_by": "fixture_json",
+        "proposal_mode": "offline_fixture",
+        "validator_required": true
+      }
+    },
+    {
+      "market_id": "proposal:btc_over_100k_june_b",
+      "family": "BTC_THRESHOLD",
+      "subject": "BTC",
+      "asset": "BTC",
+      "source": "fixture_btc_index",
+      "date": "2026-06-30",
+      "settlement_time": "2026-06-30",
+      "comparator": ">",
+      "threshold": 100000,
+      "units": "USD",
+      "side": "YES",
+      "parse_quality": 0.91,
+      "blockers": [],
+      "provenance": {
+        "proposed_by": "fixture_json",
+        "proposal_mode": "offline_fixture",
+        "validator_required": true
+      }
+    },
+    {
+      "market_id": "proposal:btc_over_120k_june",
+      "family": "BTC_THRESHOLD",
+      "subject": "BTC",
+      "asset": "BTC",
+      "source": "fixture_btc_index",
+      "date": "2026-06-30",
+      "settlement_time": "2026-06-30",
+      "comparator": ">",
+      "threshold": 120000,
+      "units": "USD",
+      "side": "YES",
+      "parse_quality": 0.9,
+      "blockers": [],
+      "provenance": {
+        "proposed_by": "fixture_json",
+        "proposal_mode": "offline_fixture",
+        "validator_required": true
+      }
+    },
+    {
+      "market_id": "proposal:fed_june_425_450_a",
+      "family": "FED_MEETING_RANGE",
+      "subject": "FED_FUNDS",
+      "source": "federal_reserve_official",
+      "meeting_date": "2026-06-17",
+      "settlement_time": "2026-06-17",
+      "comparator": "in_range",
+      "lower_bound": 4.25,
+      "upper_bound": 4.5,
+      "units": "percent",
+      "side": "YES",
+      "parse_quality": 0.93,
+      "blockers": [],
+      "provenance": {
+        "proposed_by": "fixture_json",
+        "proposal_mode": "offline_fixture",
+        "validator_required": true
+      }
+    },
+    {
+      "market_id": "proposal:fed_july_425_450",
+      "family": "FED_MEETING_RANGE",
+      "subject": "FED_FUNDS",
+      "source": "federal_reserve_official",
+      "meeting_date": "2026-07-29",
+      "settlement_time": "2026-07-29",
+      "comparator": "in_range",
+      "lower_bound": 4.25,
+      "upper_bound": 4.5,
+      "units": "percent",
+      "side": "YES",
+      "parse_quality": 0.93,
+      "blockers": [],
+      "provenance": {
+        "proposed_by": "fixture_json",
+        "proposal_mode": "offline_fixture",
+        "validator_required": true
+      }
+    }
+  ]
+}

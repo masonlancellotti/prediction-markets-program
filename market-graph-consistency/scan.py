@@ -6,7 +6,7 @@ from pathlib import Path
 from graph_engine.consistency.runner import run_consistency_checks
 from graph_engine.loader import load_fixture_markets
 from graph_engine.relationships.registry import load_relationship_registry
-from graph_engine.reporting.hint_diff import write_hint_diff_report
+from graph_engine.reporting.hint_diff import render_console_summary, write_hint_diff_report
 from graph_engine.reporting.hints import write_relative_value_hints_report
 from graph_engine.reporting.json_report import write_json_report
 from graph_engine.reporting.md_report import write_markdown_report
@@ -82,10 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.command == "diff-relative-value-hints":
         report = write_hint_diff_report(args.old, args.new, args.json_output, args.markdown_output)
-        print("Mode: saved hint diff")
-        print(f"New hints: {report['summary']['new_count']}")
-        print(f"Removed hints: {report['summary']['removed_count']}")
-        print(f"Changed hints: {report['summary']['changed_count']}")
+        print(render_console_summary(report))
         print(f"Wrote {args.json_output}")
         print(f"Wrote {args.markdown_output}")
         return 0

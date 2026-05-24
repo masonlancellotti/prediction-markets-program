@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from graph_engine.models import ConsistencyViolation, GraphSnapshot, utc_now
+from graph_engine.formula import build_formula_diagnostics_report
+from graph_engine.reporting.multi_leg import build_multi_leg_constraints_report
+from graph_engine.reporting.schema_validation import (
+    validate_formula_diagnostics_contract,
+    validate_multi_leg_constraints_contract,
+)
 
 PROHIBITED_VIOLATION_FIELDS = {
     "buy",
@@ -17,17 +23,21 @@ PROHIBITED_VIOLATION_FIELDS = {
     "fill_size",
     "order",
     "paper",
+    "paper_candidate",
     "pnl",
     "position",
     "profit",
+    "profit_usd",
     "possible_arb",
     "sell",
     "signature",
     "signing",
     "trade",
+    "trade_permission",
     "wallet",
     "dollars",
     "size",
+    "size_usd",
 }
 
 
@@ -79,6 +89,8 @@ def build_json_report(
     edge_source_counts = Counter(edge.source.value for edge in snapshot.edges)
     cap_counts = Counter(violation.max_action_cap_reason for violation in violations)
     violation_rows = [violation.to_dict() for violation in violations]
+    multi_leg_report = build_multi_leg_constraints_report(snapshot)
+    formula_report = build_formula_diagnostics_report(snapshot)
     report = {
         "generated_at": utc_now().astimezone(timezone.utc).isoformat(),
         "snapshot_id": snapshot.snapshot_id,
@@ -90,6 +102,8 @@ def build_json_report(
             "edge_count": len(snapshot.edges),
             "exclusion_set_count": len(snapshot.exclusion_sets),
             "violation_count": len(violations),
+            "multi_leg_constraint_count": multi_leg_report["constraint_count"],
+            "formula_diagnostic_count": formula_report["comparison_count"],
             "counts_by_kind": dict(sorted(kind_counts.items())),
             "counts_by_action": dict(sorted(action_counts.items())),
             "highest_action": "MANUAL_REVIEW" if any(v.action.value == "MANUAL_REVIEW" for v in violations) else "WATCH" if violations else "IGNORE",
@@ -102,6 +116,8 @@ def build_json_report(
             "max_action_cap_reasons": dict(sorted(cap_counts.items())),
         },
         "violations": violation_rows,
+        "multi_leg_constraints": multi_leg_report,
+        "formula_diagnostics": formula_report,
         "source_fixture_metadata": fixture_metadata or [],
     }
     _assert_safe_violation_schema(report)
@@ -115,6 +131,8 @@ def write_json_report(
     fixture_metadata: list[dict[str, Any]] | None = None,
 ) -> None:
     report = build_json_report(snapshot, violations, fixture_metadata)
+    validate_multi_leg_constraints_contract(report["multi_leg_constraints"])
+    validate_formula_diagnostics_contract(report["formula_diagnostics"])
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

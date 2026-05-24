@@ -4,6 +4,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from graph_engine.models import Action, ConsistencyViolation, GraphSnapshot, ViolationKind
+from graph_engine.formula import build_formula_diagnostics_report
+from graph_engine.reporting.multi_leg import build_multi_leg_constraints_report
 
 
 def _price_line(snapshot: GraphSnapshot, market_id: str) -> str:
@@ -46,6 +48,8 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
     grouped: dict[ViolationKind, list[ConsistencyViolation]] = defaultdict(list)
     for violation in violations:
         grouped[violation.kind].append(violation)
+    multi_leg_report = build_multi_leg_constraints_report(snapshot)
+    formula_report = build_formula_diagnostics_report(snapshot)
 
     lines = [
         "# Graph Consistency Summary",
@@ -55,6 +59,8 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
         f"- Relationships: {len(snapshot.edges)}",
         f"- Exclusion sets: {len(snapshot.exclusion_sets)}",
         f"- Findings: {len(violations)}",
+        f"- Multi-leg constraints: {multi_leg_report['constraint_count']}",
+        f"- Formula diagnostics: {formula_report['comparison_count']}",
         f"- Highest action: `{_highest_action(violations).value}`",
         f"- Scope: {_scope_text(snapshot)}",
         f"- Diagnostic only: true",
@@ -101,6 +107,53 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
 
     if not violations:
         lines.extend(["No findings in this snapshot.", ""])
+
+    lines.extend(["## Multi-Leg Constraints", ""])
+    if not multi_leg_report["multi_leg_constraints"]:
+        lines.extend(["No multi-leg structural inconsistencies in this snapshot.", ""])
+    for constraint in multi_leg_report["multi_leg_constraints"]:
+        lines.extend(
+            [
+                f"### `{constraint['constraint_id']}`",
+                "",
+                f"- Constraint type: `{constraint['constraint_type']}`",
+                f"- Constraint family: `{constraint['constraint_family']}`",
+                f"- Diagnostic rank: {constraint['diagnostic_rank']}",
+                f"- Diagnostic priority: `{constraint['diagnostic_priority']}`",
+                f"- Bound gap: {constraint['bound_gap']:.3f}",
+                f"- Normalized bound gap: {constraint['normalized_bound_gap']:.3f}",
+                f"- Observed value: {constraint['observed_value']:.3f}",
+                f"- Expected lower bound: {constraint['expected_lower_bound']:.3f}",
+                f"- Expected upper bound: {constraint['expected_upper_bound']:.3f}",
+                f"- Confidence basis: {constraint['confidence_basis']['description']} ({constraint['confidence_basis']['score']:.3f})",
+                f"- Blockers: {', '.join(constraint['blockers']) if constraint['blockers'] else 'none'}",
+                f"- Structural inconsistency: `{str(constraint['structural_inconsistency']).lower()}`",
+                "- Involved markets:",
+            ]
+        )
+        lines.extend(_price_line(snapshot, market_id) for market_id in constraint["market_ids"])
+        lines.extend([f"- Review reason: {constraint['review_reason']}", "- Required review questions:"])
+        lines.extend(f"  - {question}" for question in constraint["required_review_questions"])
+        lines.append("")
+
+    lines.extend(["## Formula Diagnostics", ""])
+    if not formula_report["formula_diagnostics"]:
+        lines.extend(["No formula comparison diagnostics in this snapshot.", ""])
+    for diagnostic in formula_report["formula_diagnostics"]:
+        lines.extend(
+            [
+                f"### `{diagnostic['comparison_id']}`",
+                "",
+                f"- Family: `{diagnostic['family']}`",
+                f"- Formula relation: `{diagnostic['formula_relation']}`",
+                f"- Diagnostic priority: `{diagnostic['diagnostic_priority']}`",
+                f"- Affects evaluator gates: `{str(diagnostic['affects_evaluator_gates']).lower()}`",
+                f"- Blockers: {', '.join(diagnostic['blockers']) if diagnostic['blockers'] else 'none'}",
+                "- Involved markets:",
+            ]
+        )
+        lines.extend(_price_line(snapshot, market_id) for market_id in diagnostic["market_ids"])
+        lines.extend([f"- Review reason: {diagnostic['review_reason']}", ""])
 
     return "\n".join(lines)
 

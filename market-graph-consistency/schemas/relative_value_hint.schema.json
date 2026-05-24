@@ -48,10 +48,6 @@
           "type": "integer",
           "minimum": 0
         },
-        "EXACT_SAME_PAYOFF": {
-          "type": "integer",
-          "minimum": 0
-        },
         "EXHAUSTIVE_GROUP": {
           "type": "integer",
           "minimum": 0
@@ -123,6 +119,35 @@
     "hint": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "relation_type": {
+                "enum": [
+                  "COMPLEMENT",
+                  "EXHAUSTIVE_GROUP",
+                  "MUTUALLY_EXCLUSIVE",
+                  "SUBSET",
+                  "SUPERSET"
+                ]
+              }
+            },
+            "required": [
+              "relation_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "hard_bound_type": {
+                "not": {
+                  "const": "same_payoff_equality_if_settlement_proven"
+                }
+              }
+            }
+          }
+        }
+      ],
       "required": [
         "graph_hint_id",
         "source_market_id",
@@ -156,7 +181,6 @@
             "AMBIGUOUS_WORDING",
             "COMPLEMENT",
             "CORRELATED_ONLY",
-            "EXACT_SAME_PAYOFF",
             "EXHAUSTIVE_GROUP",
             "MUTUALLY_EXCLUSIVE",
             "NEEDS_MANUAL_REVIEW",
@@ -181,6 +205,7 @@
             "mutual_exclusion_sum_only",
             "none",
             "same_payoff_equality_if_settlement_proven",
+            "complement_sum_to_one_only_if_proven",
             "sum_to_one_only_if_complete",
             "upper_probability_bound"
           ]
@@ -198,6 +223,10 @@
           ]
         },
         "max_action_cap_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "review_reason": {
           "type": "string",
           "minLength": 1
         },

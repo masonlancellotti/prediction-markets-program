@@ -262,6 +262,32 @@ def check_subset(snapshot: GraphSnapshot, edge: RelationshipEdge) -> Consistency
     )
 
 
+def check_complement(snapshot: GraphSnapshot, edge: RelationshipEdge) -> ConsistencyViolation | None:
+    if edge.relation != RelationshipType.COMPLEMENT:
+        return None
+    src = _node(snapshot, edge.src_market_id)
+    dst = _node(snapshot, edge.dst_market_id)
+    raw_sum = src.probability + dst.probability
+    raw_gap = abs(raw_sum - 1.0)
+    adjusted_gap = raw_gap - DEFAULT_EDGE_TOLERANCE - spread_buffer(src.spread, dst.spread)
+    return _make_pair_violation(
+        snapshot=snapshot,
+        edge=edge,
+        kind=ViolationKind.COMPLEMENT_MISMATCH,
+        raw_gap=raw_gap,
+        adjusted_gap=adjusted_gap,
+        explanation=(
+            f"{src.market_id} and {dst.market_id} are modeled as complements, but their "
+            f"probabilities sum to {raw_sum:.3f} before tolerance and spread buffers."
+        ),
+        review_questions=[
+            "Do the two markets define exact opposite outcomes under the same resolution rules?",
+            "Are there cancellation, tie, or neither/both cases that break complementarity?",
+            "Do both markets use comparable data freshness and venue wording?",
+        ],
+    )
+
+
 def check_same_event_reworded(snapshot: GraphSnapshot, edge: RelationshipEdge) -> ConsistencyViolation | None:
     if edge.relation != RelationshipType.SAME_EVENT_REWORDED:
         return None

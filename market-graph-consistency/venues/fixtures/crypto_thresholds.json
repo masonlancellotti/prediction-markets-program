@@ -3,6 +3,25 @@
   "as_of": "2026-05-19T18:10:00+00:00",
   "markets": [
     {
+      "market_id": "fixture:btc_over_140k_june",
+      "venue": "fixture",
+      "title": "BTC above 140k by June 30",
+      "canonical_text": "Bitcoin is above 140000 USD by 2026-06-30.",
+      "resolution_criteria": "Resolves yes from the fixture BTC index at the stated window.",
+      "resolution_date": "2026-06-30",
+      "entities": ["BTC"],
+      "themes": ["crypto", "threshold", "fixture"],
+      "yes_price": 0.74,
+      "no_price": 0.26,
+      "bid": 0.72,
+      "ask": 0.76,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "observable": "BTC_USD",
+      "settlement_source": "fixture_btc_index",
+      "window": "2026-06-30"
+    },
+    {
       "market_id": "fixture:btc_over_120k_june",
       "venue": "fixture",
       "title": "BTC above 120k by June 30",

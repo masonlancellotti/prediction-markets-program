@@ -10,8 +10,8 @@ from tests.conftest import PROJECT_ROOT
 def test_fixture_loader_loads_expected_markets_entities_and_themes() -> None:
     snapshot, metadata = load_fixture_markets(PROJECT_ROOT / "venues" / "fixtures")
 
-    assert len(snapshot.nodes) == 21
-    assert len(metadata) == 6
+    assert len(snapshot.nodes) == 35
+    assert len(metadata) == 9
     openai_valuation = snapshot.nodes["polymarket:openai_valuation_1t_2027"]
     assert "OpenAI" in openai_valuation.entities
     assert "private-company-valuation" in openai_valuation.themes
@@ -19,8 +19,8 @@ def test_fixture_loader_loads_expected_markets_entities_and_themes() -> None:
 
 
 def test_relationship_registry_validates_referenced_market_ids(fixture_snapshot) -> None:
-    assert len(fixture_snapshot.edges) == 10
-    assert len(fixture_snapshot.exclusion_sets) == 3
+    assert len(fixture_snapshot.edges) == 14
+    assert len(fixture_snapshot.exclusion_sets) == 4
 
 
 def test_relationship_registry_rejects_unknown_market_ids(tmp_path, fixture_snapshot) -> None:

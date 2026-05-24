@@ -21,6 +21,7 @@ Future agents should read these first:
 - Reference-only nodes, stale nodes, unreviewed LLM edges, missing SAME_EVENT_REWORDED settlement proof, and mismatched threshold-chain basis must stay diagnostic-only and may not become hard approval signals.
 - Relative-value hint exports are graph-local research artifacts only. Do not wire them into sibling evaluators without a separate fail-closed integration task.
 - Future readers of `reports/market_graph_relative_value_hints.json` must first validate it against `schemas/relative_value_hint.schema.json`; passing that schema does not change the diagnostic-only status.
+- Relative-value hint diffing is saved-file-only. Do not connect hint diffs to live fetching, sibling evaluator gates, or any execution workflow.
 
 ## Invariants
 
@@ -31,6 +32,7 @@ Future agents should read these first:
 - Reports must keep action labels inside the `IGNORE` / `WATCH` / `MANUAL_REVIEW` ladder.
 - Violation reports must not add PnL/profit/dollar/fill/size/edge-bps/execution/promoted-action fields; magnitude remains probability-space only.
 - Hint reports must match `schemas/relative_value_hint.schema.json`, including strict relation/action enums, `diagnostic_only=true`, and unknown-field rejection.
+- Hint diff reports must remain saved-file diagnostics with `diagnostic_only=true`, `WATCH` / `MANUAL_REVIEW` action vocabulary only, narrowed relation vocabulary, and prohibited-token rejection in both JSON and Markdown outputs.
 - Subset/superset is not exact same-payoff. Treat it as a one-way probability bound until separately reviewed.
 
 ## Commands Run

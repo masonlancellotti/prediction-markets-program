@@ -34,3 +34,13 @@ Relationships connect market nodes. In v1, relationships are manual and loaded f
 ## Logic Changes
 
 Current v1 logic enforces only implication/subset/same-event/exclusion constraints and creates manual-review wording findings for ambiguous edges.
+
+## Typed Formula Notes
+
+- A future LLM may propose `MarketFormula` JSON for text or text/number markets, but it must not be trusted directly.
+- LLM output is limited to proposed JSON; there is no direct promotion from text similarity or model output into graph relationships.
+- The deterministic validator must verify required fields such as family, subject or asset, source, date or meeting date, comparator, thresholds or ranges, units, side, parse quality, and blockers.
+- The deterministic validator is mandatory before proposed formulas can feed graph-local formula diagnostics.
+- Formula comparison output remains graph-local diagnostics capped to `WATCH` or `MANUAL_REVIEW`.
+- Similar titles are not enough for trusted equality. Typed formula matches remain review-only in this project.
+- Any relative-value evaluator must independently prove exact same-payoff before producing candidate labels in its own repository.

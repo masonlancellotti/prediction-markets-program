@@ -1,0 +1,44 @@
+{
+  "edges": [
+    {
+      "edge_id": "edge_referendum_supermajority_subset_yes",
+      "src_market_id": "fixture:referendum_supermajority_yes",
+      "dst_market_id": "fixture:referendum_yes",
+      "relation": "SUBSET",
+      "confidence": 0.94,
+      "source": "fixture",
+      "rationale": "Passing by supermajority is a subset of passing overall.",
+      "evidence": ["Same referendum result, source, and window."],
+      "observable": "example_referendum_result",
+      "window": "2026-11-03",
+      "created_at": "2026-05-19T18:34:30+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_referendum_yes_complement_no",
+      "src_market_id": "fixture:referendum_yes",
+      "dst_market_id": "fixture:referendum_no",
+      "relation": "COMPLEMENT",
+      "confidence": 0.94,
+      "source": "fixture",
+      "rationale": "The pass and fail outcomes should be complements only after confirming resolution rules exclude neither/both outcomes.",
+      "evidence": ["Fixture binary referendum pair with same observable, source, and window."],
+      "created_at": "2026-05-19T18:35:00+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
+      "edge_id": "edge_rate_cut_rewording_unproven",
+      "src_market_id": "fixture:rate_cut_by_june",
+      "dst_market_id": "fixture:rate_reduction_before_july",
+      "relation": "SAME_EVENT_REWORDED",
+      "confidence": 0.88,
+      "source": "fixture",
+      "rationale": "The wording looks similar, but the fixture intentionally uses different settlement-source wording so it remains manual review only.",
+      "evidence": ["Same broad policy event with intentionally unproven settlement-source equivalence."],
+      "settlement_source_proven": false,
+      "created_at": "2026-05-19T18:36:00+00:00",
+      "reviewed_by": "fixture-author"
+    }
+  ],
+  "exclusion_sets": []
+}

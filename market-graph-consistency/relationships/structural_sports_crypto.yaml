@@ -37,6 +37,20 @@
       "reviewed_by": "fixture-author"
     },
     {
+      "edge_id": "edge_btc_140k_subset_btc_120k_same_window",
+      "src_market_id": "fixture:btc_over_140k_june",
+      "dst_market_id": "fixture:btc_over_120k_june",
+      "relation": "SUBSET",
+      "confidence": 0.97,
+      "source": "fixture",
+      "rationale": "BTC above 140k by the same window is a subset of BTC above 120k by that window.",
+      "evidence": ["Same observable, settlement source, and window."],
+      "observable": "BTC_USD",
+      "window": "2026-06-30",
+      "created_at": "2026-05-19T18:32:30+00:00",
+      "reviewed_by": "fixture-author"
+    },
+    {
       "edge_id": "edge_btc_120k_subset_btc_100k_same_window",
       "src_market_id": "fixture:btc_over_120k_june",
       "dst_market_id": "fixture:btc_over_100k_june",
@@ -81,6 +95,16 @@
         "fixture:award_nominee_b"
       ],
       "completeness": "subset",
+      "tolerance": 0.03
+    },
+    {
+      "set_id": "example_turnout_range_bucket_partition",
+      "member_market_ids": [
+        "fixture:turnout_under_50",
+        "fixture:turnout_50_to_60",
+        "fixture:turnout_over_60"
+      ],
+      "completeness": "partition",
       "tolerance": 0.03
     }
   ]

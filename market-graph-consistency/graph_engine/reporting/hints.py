@@ -8,9 +8,13 @@ from typing import Any
 
 from graph_engine.models import ConsistencyViolation, ExclusionCompleteness, GraphSnapshot, RelationshipEdge, RelationshipType, ViolationKind
 from graph_engine.reporting.json_report import _assert_safe_violation_schema
+from graph_engine.reporting.schema_validation import validate_relative_value_hint_report
 
 
-BANNER = "Research-only graph hint. Not permission for any market action."
+BANNER = (
+    "Diagnostic-only graph hint. Not exact same-payoff evidence. "
+    "Not permission for any market action."
+)
 ALLOWED_ACTIONS = ["WATCH", "MANUAL_REVIEW"]
 
 
@@ -29,6 +33,7 @@ def build_relative_value_hints_report(snapshot: GraphSnapshot, violations: list[
         "hints": hints,
     }
     _assert_safe_violation_schema(report)
+    validate_relative_value_hint_report(report)
     return report
 
 
@@ -43,6 +48,7 @@ def write_relative_value_hints_report(
     md_output = Path(markdown_path)
     json_output.parent.mkdir(parents=True, exist_ok=True)
     md_output.parent.mkdir(parents=True, exist_ok=True)
+    validate_relative_value_hint_report(report)
     json_output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     md_output.write_text(render_relative_value_hints_markdown(report), encoding="utf-8")
 
@@ -115,6 +121,7 @@ def _edge_hint(violation: ConsistencyViolation, edge: RelationshipEdge) -> dict[
         "allowed_actions": ALLOWED_ACTIONS,
         "max_action_cap": violation.max_action_cap,
         "max_action_cap_reason": violation.max_action_cap_reason,
+        "review_reason": violation.explanation,
         "blockers": list(violation.blockers),
         "edge_source": edge.source.value,
         "reviewed_by": edge.reviewed_by,
@@ -146,6 +153,7 @@ def _exclusion_hint(
         "allowed_actions": ALLOWED_ACTIONS,
         "max_action_cap": violation.max_action_cap,
         "max_action_cap_reason": violation.max_action_cap_reason,
+        "review_reason": violation.explanation,
         "blockers": sorted(set(blockers)),
         "edge_source": violation.edge_source or "manual",
         "reviewed_by": violation.reviewed_by,
@@ -158,6 +166,10 @@ def _relation_type(relation: RelationshipType, violation: ConsistencyViolation) 
         return "AMBIGUOUS_WORDING"
     if relation == RelationshipType.SAME_EVENT_REWORDED:
         return "SAME_PAYOFF"
+    if relation == RelationshipType.COMPLEMENT:
+        return "COMPLEMENT"
+    if relation == RelationshipType.MUTUAL_EXCLUSION:
+        return "MUTUALLY_EXCLUSIVE"
     if relation == RelationshipType.IMPLICATION:
         return "SUBSET"
     if relation == RelationshipType.SUBSET:
@@ -176,6 +188,8 @@ def _direction(relation: RelationshipType, violation: ConsistencyViolation) -> s
         return "target_implies_source"
     if relation == RelationshipType.SAME_EVENT_REWORDED:
         return "bidirectional"
+    if relation in {RelationshipType.COMPLEMENT, RelationshipType.MUTUAL_EXCLUSION}:
+        return "bidirectional"
     return "none"
 
 
@@ -186,6 +200,10 @@ def _hard_bound_type(relation: RelationshipType, violation: ConsistencyViolation
         return "upper_probability_bound"
     if relation == RelationshipType.SAME_EVENT_REWORDED:
         return "same_payoff_equality_if_settlement_proven"
+    if relation == RelationshipType.COMPLEMENT:
+        return "complement_sum_to_one_only_if_proven"
+    if relation == RelationshipType.MUTUAL_EXCLUSION:
+        return "mutual_exclusion_sum_only"
     return "none"
 
 

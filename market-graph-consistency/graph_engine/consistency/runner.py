@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from graph_engine.consistency.checks import (
     check_ambiguous_wording,
+    check_complement,
     check_exclusion_set,
     check_implication,
     check_same_event_reworded,
@@ -17,6 +18,7 @@ def run_consistency_checks(snapshot: GraphSnapshot) -> list[ConsistencyViolation
         for check in (
             check_implication,
             check_subset,
+            check_complement,
             check_same_event_reworded,
             check_ambiguous_wording,
         ):
