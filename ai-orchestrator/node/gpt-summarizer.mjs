@@ -27,8 +27,7 @@ async function callOpenAI(apiKey, model, input) {
     },
     body: JSON.stringify({
       model,
-      input: `Summarize this log tail compactly. Preserve errors, paths, exit codes, and next actions. Do not invent success.\n\n${input}`,
-      temperature: 0.1
+      input: `Summarize this log tail compactly. Preserve errors, paths, exit codes, and next actions. Do not invent success.\n\n${input}`
     })
   });
 

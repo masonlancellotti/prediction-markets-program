@@ -117,6 +117,9 @@ Write-Host "Checking marker contract..."
 $schemaText = Read-TextIfExists -Path (Join-Path $Global:ContextRoot "OUTPUT_SCHEMAS.md")
 $prompterText = Read-TextIfExists -Path (Join-Path $Global:NodeRoot "gpt-prompter.mjs")
 $psPrompterText = Read-TextIfExists -Path (Join-Path $Global:OrchestratorRoot "scripts\run-gpt-prompter-lane.ps1")
+$psPrompterOncePath = Join-Path $Global:OrchestratorRoot "scripts\run-gpt-prompter-once.ps1"
+Assert-File -Path $psPrompterOncePath
+$psPrompterOnceText = Read-TextIfExists -Path $psPrompterOncePath
 $markers = @(
     "UPDATED_PROGRAM_STATUS",
     "UPDATED_ACTIVE_GOALS",
@@ -138,6 +141,85 @@ foreach ($marker in $markers) {
     if ($schemaText -notmatch [regex]::Escape("${marker}_START")) { Add-Failure "OUTPUT_SCHEMAS missing ${marker}_START" }
     if ($prompterText -notmatch [regex]::Escape($marker)) { Add-Failure "gpt-prompter missing marker $marker" }
     if ($psPrompterText -notmatch [regex]::Escape($marker)) { Add-Failure "run-gpt-prompter-lane.ps1 does not handle marker $marker" }
+    if ($psPrompterOnceText -notmatch [regex]::Escape($marker)) { Add-Failure "run-gpt-prompter-once.ps1 does not handle marker $marker" }
+}
+if ($psPrompterText -notmatch '\[switch\]\s*\$Once') {
+    Add-Failure "run-gpt-prompter-lane.ps1 must expose a -Once switch"
+}
+if ($psPrompterText -notmatch '\[int\]\s*\$TimeoutSeconds') {
+    Add-Failure "run-gpt-prompter-lane.ps1 must expose a -TimeoutSeconds parameter"
+}
+if ($psPrompterText -notmatch "Node GPT prompter timed out") {
+    Add-Failure "run-gpt-prompter-lane.ps1 must hard-timeout the one-shot Node child process"
+}
+if ($psPrompterText -notmatch "Invoke-GptPrompterCycle") {
+    Add-Failure "run-gpt-prompter-lane.ps1 must have a one-cycle prompter function"
+}
+if ($psPrompterOnceText -notmatch '\[int\]\s*\$TimeoutSeconds') {
+    Add-Failure "run-gpt-prompter-once.ps1 must expose a -TimeoutSeconds parameter"
+}
+if ($psPrompterOnceText -notmatch "Start-Process" -and $psPrompterOnceText -notmatch "System.Diagnostics.Process") {
+    Add-Failure "run-gpt-prompter-once.ps1 must use Start-Process -PassThru or equivalent child-process control"
+}
+if ($psPrompterOnceText -notmatch "Stop-ProcessTree" -or $psPrompterOnceText -notmatch "timed out after") {
+    Add-Failure "run-gpt-prompter-once.ps1 must kill timed-out node process trees"
+}
+if ($psPrompterOnceText -match "ConvertTo-Json") {
+    Add-Failure "run-gpt-prompter-once.ps1 must not use ConvertTo-Json for one-shot packet serialization"
+}
+if ($psPrompterOnceText -notmatch "--packet-text") {
+    Add-Failure "run-gpt-prompter-once.ps1 must pass a plain text packet via --packet-text"
+}
+if ($psPrompterOnceText -notmatch "NoApiSmoke" -or $psPrompterOnceText -notmatch "DebugTrace") {
+    Add-Failure "run-gpt-prompter-once.ps1 must expose -NoApiSmoke and -DebugTrace"
+}
+if ($prompterText -notmatch "AbortController" -or $prompterText -notmatch "GPT_PROMPTER_API_TIMEOUT_SECONDS") {
+    Add-Failure "gpt-prompter.mjs must use AbortController with GPT_PROMPTER_API_TIMEOUT_SECONDS"
+}
+if ($prompterText -notmatch "--packet-text") {
+    Add-Failure "gpt-prompter.mjs must accept --packet-text"
+}
+if ($prompterText -notmatch "fileURLToPath" -or $prompterText -notmatch "path.resolve") {
+    Add-Failure "gpt-prompter.mjs must use a Windows-safe ESM entrypoint check"
+}
+if ($prompterText -notmatch "no-api-smoke") {
+    Add-Failure "gpt-prompter.mjs must expose a direct --no-api-smoke CLI path"
+}
+if ($node) {
+    Write-Host "Checking gpt-prompter direct no-api smoke..."
+    $smokeRoot = Join-Path $Global:LogsRoot "setup-smoke"
+    Ensure-Directory -Path $smokeRoot
+    $smokeId = Get-FileSafeStamp
+    $smokePacket = Join-Path $smokeRoot "gpt_prompter_packet_$smokeId.txt"
+    $smokeOutput = Join-Path $smokeRoot "gpt_prompter_output_$smokeId.md"
+    $smokeErr = Join-Path $smokeRoot "gpt_prompter_stderr_$smokeId.log"
+    Set-Text -Path $smokePacket -Text "setup smoke packet: verify CLI main writes marker-complete output without API"
+    $prompterPath = Join-Path $Global:NodeRoot "gpt-prompter.mjs"
+    & $node $prompterPath --packet-text $smokePacket --lane-name setup_smoke --lane-path $Global:RepoRoot --output $smokeOutput --no-api-smoke 2> $smokeErr
+    if ($LASTEXITCODE -ne 0) {
+        $errText = Read-TextIfExists -Path $smokeErr -TailChars 1000
+        Add-Failure "gpt-prompter.mjs direct --no-api-smoke exited $LASTEXITCODE. stderr: $errText"
+    }
+    elseif (-not (Test-Path -LiteralPath $smokeOutput -PathType Leaf)) {
+        Add-Failure "gpt-prompter.mjs direct --no-api-smoke did not write output"
+    }
+    else {
+        $smokeText = Read-TextIfExists -Path $smokeOutput
+        foreach ($marker in @("NEXT_CODEX_PROMPT", "NEXT_ACTION_PACKET", "MODEL_USED", "REASONING_SUMMARY")) {
+            if ($smokeText -notmatch [regex]::Escape("${marker}_START") -or $smokeText -notmatch [regex]::Escape("${marker}_END")) {
+                Add-Failure "gpt-prompter.mjs direct --no-api-smoke output missing marker $marker"
+            }
+        }
+    }
+}
+
+foreach ($nodeFile in @("gpt-prompter.mjs", "gpt-summarizer.mjs")) {
+    $nodeText = Read-TextIfExists -Path (Join-Path $Global:NodeRoot $nodeFile)
+    foreach ($samplingParam in @("temperature", "top_p", "presence_penalty", "frequency_penalty")) {
+        if ($nodeText -match "${samplingParam}\s*:") {
+            Add-Failure "$nodeFile must omit unsupported Responses API sampling parameter: $samplingParam"
+        }
+    }
 }
 
 Write-Host "Checking command schema consistency..."
@@ -177,6 +259,10 @@ if ($schemaText -notmatch "ROADMAP_BACKLOG_UPDATES" -or $schemaText -notmatch "U
 }
 
 Write-Host "Checking ignore/safety setup..."
+Ensure-Directory -Path $Global:LogsRoot
+if (-not (Test-Path -LiteralPath $Global:LogsRoot -PathType Container)) {
+    Add-Failure "logs directory could not be created: $Global:LogsRoot"
+}
 $gitignore = Read-TextIfExists -Path (Join-Path $Global:RepoRoot ".gitignore")
 foreach ($pattern in @("node_modules/", ".env", "*.pem", "*.key", "*.db", "ai-orchestrator/logs/")) {
     if ($gitignore -notmatch [regex]::Escape($pattern)) { Add-Failure ".gitignore missing $pattern" }

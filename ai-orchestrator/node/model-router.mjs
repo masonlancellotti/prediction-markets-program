@@ -6,6 +6,7 @@ export function chooseModel(packet = {}, env = process.env) {
   const strategic = packet.gptStrategicModel || env.GPT_STRATEGIC_MODEL || "gpt-5.5";
 
   const text = [
+    packet.text,
     packet.laneStatus,
     packet.failureLogTail,
     packet.gitDiffNames,

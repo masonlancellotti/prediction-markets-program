@@ -76,7 +76,70 @@ powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\init-ai-loop.
 
 This creates missing `.ai_loop/` files inside existing lane folders and creates `ai-orchestrator/logs/`. It only writes lane-local `.ai_loop` files.
 
+## One-shot GPT prompter test
+
+One-shot GPT prompter API test for a single lane:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-gpt-prompter-once.ps1 -LaneName relative_value -TimeoutSeconds 60
+```
+
+Run this before the persistent visible loop. It builds one plain UTF-8 text context packet, starts one child Node process, calls `gpt-prompter.mjs` once with `--packet-text`, validates markers in PowerShell, writes handoff files, logs the run under `ai-orchestrator\logs\relative_value\gpt-prompter\`, and exits. It refuses to run if `ai-orchestrator\STOP.txt` exists.
+
+No-API smoke test:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-gpt-prompter-once.ps1 -LaneName relative_value -TimeoutSeconds 30 -DebugTrace -NoApiSmoke
+```
+
+This skips Node/OpenAI, writes a plain text packet file, validates a marker-complete local output, and exits quickly. Use it when checking that the one-shot wrapper itself is not wedged.
+
+Success looks like:
+
+- console prints the raw output path and run log path
+- exit code is `0`
+- `LATEST_GPT_PROMPTER_OUTPUT.md`, `NEXT_CODEX_PROMPT.md`, and `NEXT_ACTION_PACKET.md` update after marker validation
+
+Failure looks like:
+
+- exit code is `1`
+- `NEXT_CODEX_PROMPT.md` is not overwritten
+- `FAILURE_LOG.md` and the timestamped run log explain timeout, API failure, marker failure, or write failure
+
+Timeout behavior:
+
+- PowerShell kills the one-shot Node child process tree after `-TimeoutSeconds` seconds. Default: `120`.
+- Node aborts the OpenAI fetch with `AbortController`. Default: `120` seconds.
+- Override Node's API timeout with `GPT_PROMPTER_API_TIMEOUT_SECONDS`.
+- On timeout, `NEXT_CODEX_PROMPT.md` is not overwritten, the lane `FAILURE_LOG.md` is appended, and the command exits nonzero.
+
+If a one-shot test looks stuck, inspect the latest `.log` file under `ai-orchestrator\logs\relative_value\gpt-prompter\`. The log records start/end time, timeout seconds, node command line without secrets, API start/end/timeout/failure, model used when available, marker validation, output paths, and stderr/stdout paths.
+
+`run-gpt-prompter-lane.ps1 -Once` is deprecated and delegates to `run-gpt-prompter-once.ps1`.
+
 ## Launch Visible Loop
+
+Persistent GPT prompter loop for a single lane:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\scripts\run-gpt-prompter-lane.ps1 -LaneName relative_value
+```
+
+Use the persistent loop only when you want it to keep polling for new Codex summaries, command results, Claude reviews, or `GPT_REVIEW_NEEDED.txt`.
+
+After a one-shot pass, inspect:
+
+```text
+relative-value-scanner\.ai_loop\LATEST_GPT_PROMPTER_OUTPUT.md
+relative-value-scanner\.ai_loop\NEXT_CODEX_PROMPT.md
+relative-value-scanner\.ai_loop\NEXT_ACTION_PACKET.md
+relative-value-scanner\.ai_loop\COMMANDS_SHORT_PENDING.jsonl
+relative-value-scanner\.ai_loop\COMMANDS_LONG_REVIEW.md
+relative-value-scanner\.ai_loop\FAILURE_LOG.md
+ai-orchestrator\logs\relative_value\gpt-prompter\
+```
+
+## Launch All Visible Loops
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ai-orchestrator\open-visible-loop.ps1

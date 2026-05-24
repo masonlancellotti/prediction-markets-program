@@ -21,3 +21,21 @@ Why needed: Venue expansion may require eligibility/account/API decisions that a
 Blocked task: venue-sxbet-research-only-inventory
 Exact user action: Decide whether to keep SX Bet as research-only for now.
 Safe to continue without it: yes
+
+## 2026-05-24T08:11:18Z GPT user action request
+## rv-live-readonly-scope-hygiene
+Lane: relative_value
+Request: Resolve or explicitly isolate the existing working-tree changes outside the selected task scope before running Codex on `rv-live-readonly-universe-snapshots`.
+Why needed: The selected task allows relative-value lane files only, but current status includes modified/untracked `../ai-orchestrator/**` and repo-root files. The lane must fail closed rather than mixing unrelated changes into relative-value work.
+Blocked task: rv-live-readonly-universe-snapshots
+Exact user action: Decide whether those unrelated files should be committed, reverted, stashed, or handled in a separate orchestrator task before relative-value Codex work starts.
+Safe to continue without it: no
+
+## orchestrator-api-config
+Lane: orchestrator
+Request: Fix GPT prompter API setup through the approved local secret/config mechanism.
+Why needed: Recent failures show missing, placeholder, or invalid OpenAI API configuration, which prevents real GPT prompter runs. Do not paste secrets into chat or repo files.
+Blocked task: orchestrator-gpt-api-config-preflight
+Exact user action: Configure a valid API key locally using the approved mechanism, or continue using no-API smoke mode until ready.
+Safe to continue without it: yes for no-API smoke tests, no for real GPT prompter runs
+

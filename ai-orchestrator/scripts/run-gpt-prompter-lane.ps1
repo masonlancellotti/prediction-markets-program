@@ -1,6 +1,11 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$LaneName
+    [string]$LaneName,
+
+    [switch]$Once,
+
+    [ValidateRange(1, 3600)]
+    [int]$TimeoutSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"
@@ -288,10 +293,26 @@ $fullDiff
     }
 }
 
+function Join-ProcessArguments {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+
+    $escaped = foreach ($arg in $Arguments) {
+        if ($arg -match '[\s"]') {
+            '"' + ($arg -replace '"', '\"') + '"'
+        }
+        else {
+            $arg
+        }
+    }
+    return ($escaped -join " ")
+}
+
 function Invoke-GptPrompterNode {
     param(
         [Parameter(Mandatory = $true)][string]$PacketPath,
-        [Parameter(Mandatory = $true)][string]$OutputPath
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [int]$TimeoutSeconds = 0,
+        [string]$RunLogPath = ""
     )
 
     $nodePath = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
@@ -304,15 +325,208 @@ function Invoke-GptPrompterNode {
     }
 
     $script = Join-Path $Global:NodeRoot "gpt-prompter.mjs"
+    if ($TimeoutSeconds -gt 0) {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $nodePath
+        $startInfo.Arguments = Join-ProcessArguments -Arguments @($script, "--input", $PacketPath, "--output", $OutputPath)
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        if ([string]::IsNullOrWhiteSpace($startInfo.EnvironmentVariables["GPT_PROMPTER_API_TIMEOUT_SECONDS"])) {
+            $startInfo.EnvironmentVariables["GPT_PROMPTER_API_TIMEOUT_SECONDS"] = [string]([Math]::Min(120, [Math]::Max(1, $TimeoutSeconds - 15)))
+        }
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+
+        if (-not [string]::IsNullOrWhiteSpace($RunLogPath)) {
+            Write-PrompterRunLog -Path $RunLogPath -Text "[$(Get-UtcStamp)] Node timeout: $TimeoutSeconds seconds."
+            Write-PrompterRunLog -Path $RunLogPath -Text "[$(Get-UtcStamp)] Node API timeout env: $($startInfo.EnvironmentVariables["GPT_PROMPTER_API_TIMEOUT_SECONDS"]) seconds."
+        }
+
+        [void]$process.Start()
+        $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $finished) {
+            try {
+                $process.Kill()
+                $process.WaitForExit(5000) | Out-Null
+            }
+            catch {
+                if (-not [string]::IsNullOrWhiteSpace($RunLogPath)) {
+                    Write-PrompterRunLog -Path $RunLogPath -Text "[$(Get-UtcStamp)] Failed to kill timed-out node process: $($_.Exception.Message)"
+                }
+            }
+            return [pscustomobject]@{
+                ExitCode = -1
+                Output = "Node GPT prompter timed out after $TimeoutSeconds seconds and was killed."
+                TimedOut = $true
+            }
+        }
+
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $combinedOutput = (($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`r`n"
+
+        return [pscustomobject]@{
+            ExitCode = [int]$process.ExitCode
+            Output = $combinedOutput
+            TimedOut = $false
+        }
+    }
+
     $output = & $nodePath $script --input $PacketPath --output $OutputPath 2>&1
     return [pscustomobject]@{
         ExitCode = $LASTEXITCODE
         Output = ($output -join "`r`n")
+        TimedOut = $false
+    }
+}
+
+function Write-PrompterRunLog {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Text
+    )
+
+    Add-Content -LiteralPath $Path -Value $Text -Encoding UTF8
+}
+
+function Apply-GptPrompterOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$Output,
+        [Parameter(Mandatory = $true)][string]$RunLogPath
+    )
+
+    Set-Text -Path $latestGptPath -Text $Output
+    Assert-RequiredMarkers -Text $Output
+    Write-PrompterRunLog -Path $RunLogPath -Text "[$(Get-UtcStamp)] Marker validation: passed."
+
+    $roadmapUpdate = Get-DelimitedSection -Text $Output -StartMarker "ROADMAP_BACKLOG_UPDATES_START" -EndMarker "ROADMAP_BACKLOG_UPDATES_END"
+    $taskQueueUpdate = Get-DelimitedSection -Text $Output -StartMarker "TASK_QUEUE_UPDATES_START" -EndMarker "TASK_QUEUE_UPDATES_END"
+    Assert-JsonReplacementSection -SectionName "ROADMAP_BACKLOG_UPDATES" -Text $roadmapUpdate
+    Assert-JsonReplacementSection -SectionName "TASK_QUEUE_UPDATES" -Text $taskQueueUpdate
+
+    Set-SectionIfChanged -Path $programStatusPath -Text (Get-DelimitedSection -Text $Output -StartMarker "UPDATED_PROGRAM_STATUS_START" -EndMarker "UPDATED_PROGRAM_STATUS_END")
+    Set-SectionIfChanged -Path $activeGoalsPath -Text (Get-DelimitedSection -Text $Output -StartMarker "UPDATED_ACTIVE_GOALS_START" -EndMarker "UPDATED_ACTIVE_GOALS_END")
+    Set-SectionIfChanged -Path $nextStepsPath -Text (Get-DelimitedSection -Text $Output -StartMarker "UPDATED_NEXT_STEPS_START" -EndMarker "UPDATED_NEXT_STEPS_END")
+    Set-SectionIfChanged -Path $laneStatusPath -Text (Get-DelimitedSection -Text $Output -StartMarker "UPDATED_LANE_STATUS_START" -EndMarker "UPDATED_LANE_STATUS_END")
+    Set-SectionIfChanged -Path $nextPromptPath -Text (Get-DelimitedSection -Text $Output -StartMarker "NEXT_CODEX_PROMPT_START" -EndMarker "NEXT_CODEX_PROMPT_END")
+    Set-SectionIfChanged -Path $nextActionPath -Text (Get-DelimitedSection -Text $Output -StartMarker "NEXT_ACTION_PACKET_START" -EndMarker "NEXT_ACTION_PACKET_END")
+    Set-JsonReplacementIfChanged -Path $roadmapBacklogPath -SectionName "ROADMAP_BACKLOG_UPDATES" -Text $roadmapUpdate
+    Set-JsonReplacementIfChanged -Path $taskQueuePath -SectionName "TASK_QUEUE_UPDATES" -Text $taskQueueUpdate
+
+    Add-JsonlLines -Path $shortPendingPath -Text (Get-DelimitedSection -Text $Output -StartMarker "SHORT_COMMANDS_JSONL_START" -EndMarker "SHORT_COMMANDS_JSONL_END")
+
+    $longCommands = Get-DelimitedSection -Text $Output -StartMarker "LONG_COMMANDS_MD_START" -EndMarker "LONG_COMMANDS_MD_END"
+    if (-not (Test-UnchangedSection -Text $longCommands)) {
+        Append-Text -Path $longReviewPath -Text "`r`n## $(Get-UtcStamp) GPT long/manual requests`r`n$longCommands`r`n"
+    }
+
+    $claudeNeeded = Get-DelimitedSection -Text $Output -StartMarker "CLAUDE_REVIEW_NEEDED_START" -EndMarker "CLAUDE_REVIEW_NEEDED_END"
+    if ($claudeNeeded -match "^\s*YES\b") {
+        Set-Text -Path $reviewMarkerPath -Text "GPT requested Claude review at $(Get-UtcStamp).`r`n$claudeNeeded"
+    }
+
+    $blockedReason = Get-DelimitedSection -Text $Output -StartMarker "BLOCKED_REASON_START" -EndMarker "BLOCKED_REASON_END"
+    if (-not (Test-UnchangedSection -Text $blockedReason)) {
+        Append-Text -Path $failureLogPath -Text "`r`n## $(Get-UtcStamp) GPT blocked lane`r`n$blockedReason`r`n"
+        Set-Text -Path $gptReviewNeededPath -Text "GPT blocked lane at $(Get-UtcStamp): $blockedReason"
+    }
+
+    Append-UserActionIfChanged -Text (Get-DelimitedSection -Text $Output -StartMarker "USER_ACTION_REQUIRED_START" -EndMarker "USER_ACTION_REQUIRED_END")
+
+    $modelUsed = Get-DelimitedSection -Text $Output -StartMarker "MODEL_USED_START" -EndMarker "MODEL_USED_END"
+    $reasoningSummary = Get-DelimitedSection -Text $Output -StartMarker "REASONING_SUMMARY_START" -EndMarker "REASONING_SUMMARY_END"
+    Write-PrompterRunLog -Path $RunLogPath -Text "[$(Get-UtcStamp)] Model used: $modelUsed"
+    if (-not (Test-UnchangedSection -Text $reasoningSummary)) {
+        Append-Text -Path $decisionLogPath -Text "`r`n## $(Get-UtcStamp) GPT planner decision ($LaneName)`r`nModel: $modelUsed`r`n$reasoningSummary`r`n"
+    }
+
+    if (Test-Path -LiteralPath $gptReviewNeededPath -PathType Leaf -and (Test-UnchangedSection -Text $blockedReason)) {
+        Remove-Item -LiteralPath $gptReviewNeededPath -Force
+    }
+
+    return [pscustomobject]@{
+        ModelUsed = $modelUsed
+        ClaudeNeeded = $claudeNeeded
+        BlockedReason = $blockedReason
+    }
+}
+
+function Invoke-GptPrompterCycle {
+    param(
+        [Parameter(Mandatory = $true)][string]$TriggerReason,
+        [switch]$IsOnce,
+        [int]$NodeTimeoutSeconds = 0
+    )
+
+    if ([string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) {
+        throw "OPENAI_API_KEY is not set."
+    }
+
+    $packetPreview = New-PrompterPacket -TriggerReason $TriggerReason
+    $hash = Get-ContentHash -Text ($packetPreview | ConvertTo-Json -Depth 8)
+    $runCount = Get-AndIncrementRunCounter -Lane $lane -CounterName "gpt_prompter"
+    $stamp = Get-FileSafeStamp
+    $packetPath = Join-Path $logRoot "gpt_packet_${stamp}_run${runCount}.json"
+    $outputPath = Join-Path $logRoot "gpt_prompter_${stamp}_run${runCount}.md"
+    $runLogPath = Join-Path $logRoot "gpt_prompter_${stamp}_run${runCount}.log"
+
+    Set-Text -Path $packetPath -Text ($packetPreview | ConvertTo-Json -Depth 10)
+    Set-Text -Path $runLogPath -Text @"
+[$(Get-UtcStamp)] GPT prompter cycle started.
+Lane: $LaneName
+Mode: $(if ($IsOnce) { "once" } else { "loop" })
+Packet: $packetPath
+Output: $outputPath
+"@
+
+    Write-Host "[$(Get-UtcStamp)] Calling GPT prompter for '$LaneName'. Packet: $packetPath"
+    Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] API call start."
+    Set-LaneHeartbeat -Lane $lane -Role "gpt_prompter" -Status "running" -Detail "Run $runCount"
+
+    $nodeResult = Invoke-GptPrompterNode -PacketPath $packetPath -OutputPath $outputPath -TimeoutSeconds $NodeTimeoutSeconds -RunLogPath $runLogPath
+    if ($nodeResult.TimedOut) {
+        Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] API call timeout/failure: $($nodeResult.Output)"
+        throw $nodeResult.Output
+    }
+    if ($nodeResult.ExitCode -ne 0) {
+        Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] API call failed: $($nodeResult.Output)"
+        throw "gpt-prompter.mjs exited with code $($nodeResult.ExitCode): $($nodeResult.Output)"
+    }
+    Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] API call end."
+
+    $output = Read-TextIfExists -Path $outputPath
+    $applied = Apply-GptPrompterOutput -Output $output -RunLogPath $runLogPath
+
+    Set-Text -Path $lastHashPath -Text $hash
+    Set-LaneHeartbeat -Lane $lane -Role "gpt_prompter" -Status "sleeping" -Detail "Completed run $runCount"
+    Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] Output files written."
+    Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] Latest GPT: $latestGptPath"
+    Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] Next prompt: $nextPromptPath"
+    Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] Next action: $nextActionPath"
+    Write-PrompterRunLog -Path $runLogPath -Text "[$(Get-UtcStamp)] GPT prompter cycle completed."
+
+    return [pscustomobject]@{
+        Hash = $hash
+        RunCount = $runCount
+        PacketPath = $packetPath
+        OutputPath = $outputPath
+        RunLogPath = $runLogPath
+        ModelUsed = $applied.ModelUsed
     }
 }
 
 $lastHash = (Read-TextIfExists -Path $lastHashPath).Trim()
 $warnedNoKey = $false
+
+if ($Once) {
+    Write-Warning "-Once on run-gpt-prompter-lane.ps1 is deprecated. Delegating to run-gpt-prompter-once.ps1."
+    & (Join-Path $PSScriptRoot "run-gpt-prompter-once.ps1") -LaneName $LaneName -TimeoutSeconds $TimeoutSeconds
+    exit $LASTEXITCODE
+}
+
 Write-Host "GPT prompter supervisor loop started for '$LaneName'. Stop file: $Global:StopFile"
 
 while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
@@ -322,7 +536,8 @@ while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
     if (Test-Path -LiteralPath $gptReviewNeededPath -PathType Leaf) { $triggerReasons += "GPT_REVIEW_NEEDED.txt exists" }
     if ((Read-TextIfExists -Path $laneStatusPath) -match "Status:\s*BLOCKED") { $triggerReasons += "lane is BLOCKED" }
 
-    $packetPreview = New-PrompterPacket -TriggerReason (($triggerReasons + @("content poll")) -join "; ")
+    $triggerReason = (($triggerReasons + @("content poll")) -join "; ")
+    $packetPreview = New-PrompterPacket -TriggerReason $triggerReason
     $hash = Get-ContentHash -Text ($packetPreview | ConvertTo-Json -Depth 8)
 
     $currentPrompt = Read-TextIfExists -Path $nextPromptPath
@@ -350,72 +565,9 @@ while (-not (Test-Path -LiteralPath $Global:StopFile -PathType Leaf)) {
         continue
     }
 
-    $runCount = Get-AndIncrementRunCounter -Lane $lane -CounterName "gpt_prompter"
-    $stamp = Get-FileSafeStamp
-    $packetPath = Join-Path $logRoot "gpt_packet_${stamp}_run${runCount}.json"
-    $outputPath = Join-Path $logRoot "gpt_prompter_${stamp}_run${runCount}.md"
-    Set-Text -Path $packetPath -Text ($packetPreview | ConvertTo-Json -Depth 10)
-
-    Write-Host "[$(Get-UtcStamp)] Calling GPT prompter for '$LaneName'. Packet: $packetPath"
-    Set-LaneHeartbeat -Lane $lane -Role "gpt_prompter" -Status "running" -Detail "Run $runCount"
-
     try {
-        $nodeResult = Invoke-GptPrompterNode -PacketPath $packetPath -OutputPath $outputPath
-        if ($nodeResult.ExitCode -ne 0) {
-            throw "gpt-prompter.mjs exited with code $($nodeResult.ExitCode): $($nodeResult.Output)"
-        }
-
-        $output = Read-TextIfExists -Path $outputPath
-        Set-Text -Path $latestGptPath -Text $output
-        Assert-RequiredMarkers -Text $output
-
-        $roadmapUpdate = Get-DelimitedSection -Text $output -StartMarker "ROADMAP_BACKLOG_UPDATES_START" -EndMarker "ROADMAP_BACKLOG_UPDATES_END"
-        $taskQueueUpdate = Get-DelimitedSection -Text $output -StartMarker "TASK_QUEUE_UPDATES_START" -EndMarker "TASK_QUEUE_UPDATES_END"
-        Assert-JsonReplacementSection -SectionName "ROADMAP_BACKLOG_UPDATES" -Text $roadmapUpdate
-        Assert-JsonReplacementSection -SectionName "TASK_QUEUE_UPDATES" -Text $taskQueueUpdate
-
-        Set-SectionIfChanged -Path $programStatusPath -Text (Get-DelimitedSection -Text $output -StartMarker "UPDATED_PROGRAM_STATUS_START" -EndMarker "UPDATED_PROGRAM_STATUS_END")
-        Set-SectionIfChanged -Path $activeGoalsPath -Text (Get-DelimitedSection -Text $output -StartMarker "UPDATED_ACTIVE_GOALS_START" -EndMarker "UPDATED_ACTIVE_GOALS_END")
-        Set-SectionIfChanged -Path $nextStepsPath -Text (Get-DelimitedSection -Text $output -StartMarker "UPDATED_NEXT_STEPS_START" -EndMarker "UPDATED_NEXT_STEPS_END")
-        Set-SectionIfChanged -Path $laneStatusPath -Text (Get-DelimitedSection -Text $output -StartMarker "UPDATED_LANE_STATUS_START" -EndMarker "UPDATED_LANE_STATUS_END")
-        Set-SectionIfChanged -Path $nextPromptPath -Text (Get-DelimitedSection -Text $output -StartMarker "NEXT_CODEX_PROMPT_START" -EndMarker "NEXT_CODEX_PROMPT_END")
-        Set-SectionIfChanged -Path $nextActionPath -Text (Get-DelimitedSection -Text $output -StartMarker "NEXT_ACTION_PACKET_START" -EndMarker "NEXT_ACTION_PACKET_END")
-        Set-JsonReplacementIfChanged -Path $roadmapBacklogPath -SectionName "ROADMAP_BACKLOG_UPDATES" -Text $roadmapUpdate
-        Set-JsonReplacementIfChanged -Path $taskQueuePath -SectionName "TASK_QUEUE_UPDATES" -Text $taskQueueUpdate
-
-        Add-JsonlLines -Path $shortPendingPath -Text (Get-DelimitedSection -Text $output -StartMarker "SHORT_COMMANDS_JSONL_START" -EndMarker "SHORT_COMMANDS_JSONL_END")
-
-        $longCommands = Get-DelimitedSection -Text $output -StartMarker "LONG_COMMANDS_MD_START" -EndMarker "LONG_COMMANDS_MD_END"
-        if (-not (Test-UnchangedSection -Text $longCommands)) {
-            Append-Text -Path $longReviewPath -Text "`r`n## $(Get-UtcStamp) GPT long/manual requests`r`n$longCommands`r`n"
-        }
-
-        $claudeNeeded = Get-DelimitedSection -Text $output -StartMarker "CLAUDE_REVIEW_NEEDED_START" -EndMarker "CLAUDE_REVIEW_NEEDED_END"
-        if ($claudeNeeded -match "^\s*YES\b") {
-            Set-Text -Path $reviewMarkerPath -Text "GPT requested Claude review at $(Get-UtcStamp).`r`n$claudeNeeded"
-        }
-
-        $blockedReason = Get-DelimitedSection -Text $output -StartMarker "BLOCKED_REASON_START" -EndMarker "BLOCKED_REASON_END"
-        if (-not (Test-UnchangedSection -Text $blockedReason)) {
-            Append-Text -Path $failureLogPath -Text "`r`n## $(Get-UtcStamp) GPT blocked lane`r`n$blockedReason`r`n"
-            Set-Text -Path $gptReviewNeededPath -Text "GPT blocked lane at $(Get-UtcStamp): $blockedReason"
-        }
-
-        Append-UserActionIfChanged -Text (Get-DelimitedSection -Text $output -StartMarker "USER_ACTION_REQUIRED_START" -EndMarker "USER_ACTION_REQUIRED_END")
-
-        $modelUsed = Get-DelimitedSection -Text $output -StartMarker "MODEL_USED_START" -EndMarker "MODEL_USED_END"
-        $reasoningSummary = Get-DelimitedSection -Text $output -StartMarker "REASONING_SUMMARY_START" -EndMarker "REASONING_SUMMARY_END"
-        if (-not (Test-UnchangedSection -Text $reasoningSummary)) {
-            Append-Text -Path $decisionLogPath -Text "`r`n## $(Get-UtcStamp) GPT planner decision ($LaneName)`r`nModel: $modelUsed`r`n$reasoningSummary`r`n"
-        }
-
-        if (Test-Path -LiteralPath $gptReviewNeededPath -PathType Leaf) {
-            Remove-Item -LiteralPath $gptReviewNeededPath -Force
-        }
-
-        $lastHash = $hash
-        Set-Text -Path $lastHashPath -Text $hash
-        Set-LaneHeartbeat -Lane $lane -Role "gpt_prompter" -Status "sleeping" -Detail "Completed run $runCount"
+        $result = Invoke-GptPrompterCycle -TriggerReason $triggerReason
+        $lastHash = $result.Hash
     }
     catch {
         $message = "[$(Get-UtcStamp)] GPT prompter failed for '$LaneName': $($_.Exception.Message)"

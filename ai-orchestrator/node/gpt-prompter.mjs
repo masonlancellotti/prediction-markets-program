@@ -1,4 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { chooseModel } from "./model-router.mjs";
 
 export const MARKER_SECTIONS = [
@@ -41,6 +43,19 @@ function parseArgs(argv) {
     }
   }
   return args;
+}
+
+function getApiTimeoutMs(env = process.env) {
+  const raw = env.GPT_PROMPTER_API_TIMEOUT_SECONDS;
+  if (!raw) {
+    return 120_000;
+  }
+
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`Invalid GPT_PROMPTER_API_TIMEOUT_SECONDS: ${raw}`);
+  }
+  return Math.round(seconds * 1000);
 }
 
 function buildSystemPrompt(packet, modelInfo) {
@@ -138,60 +153,163 @@ Packet follows:
 ${packet.text}`;
 }
 
-async function callOpenAI({ apiKey, model, input }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({ model, input, temperature: 0.2 })
-  });
+async function callOpenAI({ apiKey, model, input, timeoutMs = getApiTimeoutMs() }) {
+  // The AbortController must stay armed across BOTH fetch (headers) and
+  // response.text() (body streaming). Clearing the timeout in finally before
+  // body.text() runs would let a stalled body hang forever.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutSeconds = Math.round(timeoutMs / 1000);
 
-  const body = await response.text();
-  if (!response.ok) {
-    throw new Error(`OpenAI API error ${response.status}: ${body.slice(0, 2000)}`);
-  }
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({ model, input }),
+      signal: controller.signal
+    });
 
-  const json = JSON.parse(body);
-  if (typeof json.output_text === "string") {
-    return json.output_text;
-  }
+    const body = await response.text();
+    if (!response.ok) {
+      throw new Error(`OpenAI API error ${response.status}: ${body.slice(0, 2000)}`);
+    }
 
-  const parts = [];
-  for (const item of json.output || []) {
-    for (const content of item.content || []) {
-      if (typeof content.text === "string") {
-        parts.push(content.text);
+    const json = JSON.parse(body);
+    if (typeof json.output_text === "string") {
+      return json.output_text;
+    }
+
+    const parts = [];
+    for (const item of json.output || []) {
+      for (const content of item.content || []) {
+        if (typeof content.text === "string") {
+          parts.push(content.text);
+        }
       }
     }
+    const output = parts.join("\n");
+    if (!output.trim()) {
+      throw new Error("OpenAI API response did not contain output text.");
+    }
+    return output;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`OpenAI API timeout after ${timeoutSeconds} seconds.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return parts.join("\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const args = parseArgs(process.argv);
+async function callOpenAiSmoke({ apiKey, model, timeoutMs = getApiTimeoutMs() }) {
+  // Minimal end-to-end probe: tiny prompt, same timeout/abort semantics. Used
+  // by run-gpt-prompter-once.ps1 -ApiSmoke to distinguish API/network failures
+  // from packet-build or marker-validation failures.
+  return callOpenAI({
+    apiKey,
+    model,
+    input: "Reply with exactly: API_SMOKE_OK",
+    timeoutMs
+  });
+}
+
+function buildNoApiSmokeOutput(model = "no-api-smoke") {
+  return `UPDATED_PROGRAM_STATUS_START
+UNCHANGED
+UPDATED_PROGRAM_STATUS_END
+UPDATED_ACTIVE_GOALS_START
+UNCHANGED
+UPDATED_ACTIVE_GOALS_END
+UPDATED_NEXT_STEPS_START
+UNCHANGED
+UPDATED_NEXT_STEPS_END
+UPDATED_LANE_STATUS_START
+UNCHANGED
+UPDATED_LANE_STATUS_END
+NEXT_CODEX_PROMPT_START
+UNCHANGED
+NEXT_CODEX_PROMPT_END
+SHORT_COMMANDS_JSONL_START
+SHORT_COMMANDS_JSONL_END
+LONG_COMMANDS_MD_START
+LONG_COMMANDS_MD_END
+NEXT_ACTION_PACKET_START
+No-API smoke test completed. The Node CLI entrypoint ran and wrote marker-complete output.
+NEXT_ACTION_PACKET_END
+CLAUDE_REVIEW_NEEDED_START
+NO - no-api smoke test only.
+CLAUDE_REVIEW_NEEDED_END
+BLOCKED_REASON_START
+UNCHANGED
+BLOCKED_REASON_END
+ROADMAP_BACKLOG_UPDATES_START
+UNCHANGED
+ROADMAP_BACKLOG_UPDATES_END
+USER_ACTION_REQUIRED_START
+UNCHANGED
+USER_ACTION_REQUIRED_END
+TASK_QUEUE_UPDATES_START
+UNCHANGED
+TASK_QUEUE_UPDATES_END
+MODEL_USED_START
+${model}
+MODEL_USED_END
+REASONING_SUMMARY_START
+Node no-api smoke path wrote deterministic marker-complete output without calling OpenAI.
+REASONING_SUMMARY_END
+`;
+}
+
+export async function main(argv = process.argv) {
+  const args = parseArgs(argv);
   const inputPath = args.input;
+  const packetTextPath = args["packet-text"];
   const outputPath = args.output;
 
-  if (!inputPath) {
-    throw new Error("Missing --input packet path.");
+  if (!inputPath && !packetTextPath) {
+    throw new Error("Missing --input JSON packet path or --packet-text plain text packet path.");
   }
 
-  const packetJson = JSON.parse(readFileSync(inputPath, "utf8"));
+  const packetJson = packetTextPath
+    ? {
+        laneName: args["lane-name"] || "",
+        lanePath: args["lane-path"] || "",
+        triggerReason: args["trigger-reason"] || "one-shot plain text packet",
+        gptCheapModel: process.env.GPT_CHEAP_MODEL || "gpt-5.4-nano",
+        gptDefaultModel: process.env.GPT_DEFAULT_MODEL || "gpt-5.4-mini",
+        gptStrategicModel: process.env.GPT_STRATEGIC_MODEL || "gpt-5.5",
+        text: readFileSync(packetTextPath, "utf8")
+      }
+    : JSON.parse(readFileSync(inputPath, "utf8"));
   const modelInfo = chooseModel(packetJson);
   const model = args.model || modelInfo.model;
-  const apiKey = process.env.OPENAI_API_KEY;
 
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set.");
-  }
-
-  const prompt = buildSystemPrompt(packetJson, { ...modelInfo, model });
-  const output = await callOpenAI({ apiKey, model, input: prompt });
-  const missing = findMissingMarkers(output);
-  if (missing.length > 0) {
-    throw new Error(`GPT output missing required markers: ${missing.join(", ")}`);
+  let output;
+  if (args["no-api-smoke"]) {
+    output = buildNoApiSmokeOutput(model);
+  } else if (args["api-smoke"]) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY is not set.");
+    }
+    output = await callOpenAiSmoke({ apiKey, model });
+  } else {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY is not set.");
+    }
+    const prompt = buildSystemPrompt(packetJson, { ...modelInfo, model });
+    output = await callOpenAI({ apiKey, model, input: prompt });
+    if (!args["skip-marker-validation"]) {
+      const missing = findMissingMarkers(output);
+      if (missing.length > 0) {
+        throw new Error(`GPT output missing required markers: ${missing.join(", ")}`);
+      }
+    }
   }
 
   if (outputPath) {
@@ -199,4 +317,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } else {
     process.stdout.write(output);
   }
+}
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  main().catch((error) => {
+    const message = error?.stack || error?.message || String(error);
+    console.error(message);
+    process.exitCode = 1;
+  });
 }

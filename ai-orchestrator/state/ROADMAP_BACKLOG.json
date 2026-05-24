@@ -1,6 +1,6 @@
-{
+﻿{
   "version": 1,
-  "updated_by": "manual_seed",
+  "updated_by": "gpt-5.5",
   "scoring_note": "priority = 3*profit_proximity - 2*fake_edge_risk - implementation_effort + prerequisite_bonus",
   "items": [
     {
@@ -149,6 +149,89 @@
       ],
       "status": "idea",
       "created_from": "manual_seed"
+    },
+    {
+      "id": "orchestrator-gpt-api-config-preflight",
+      "lane": "orchestrator",
+      "category": "orchestration_reliability",
+      "title": "GPT prompter API configuration preflight",
+      "why_it_matters": "Repeated prompter failures from missing or placeholder API credentials prevent safe lane handoff and create noisy recovery loops.",
+      "profit_proximity": 2,
+      "fake_edge_risk": 1,
+      "implementation_effort": 2,
+      "review_required": false,
+      "requires_user_help": true,
+      "user_help_needed": "Confirm a valid OpenAI API key is configured through the approved local secret mechanism, without pasting the key into chat or repo files.",
+      "prerequisites": [],
+      "allowed_files": [
+        "ai-orchestrator/README_AI_ORCHESTRATOR.md",
+        "ai-orchestrator/scripts/**",
+        "ai-orchestrator/node/**",
+        "ai-orchestrator/state/USER_ACTION_REQUIRED.md"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*secret*",
+        "**/*key*",
+        "**/*wallet*",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "success_criteria": [
+        "Prompter fails fast with clear non-secret diagnostics when API config is missing or placeholder-like.",
+        "No secrets are read, printed, committed, or requested in chat.",
+        "No live trading, account, order, or auth integration is added."
+      ],
+      "stop_conditions": [
+        "Would require reading or editing .env.",
+        "Would expose or ask for an API key value.",
+        "Would add credential-handling beyond local preflight checks."
+      ],
+      "status": "idea",
+      "created_from": "failure_log_2026-05-24"
+    },
+    {
+      "id": "orchestrator-model-parameter-compatibility",
+      "lane": "orchestrator",
+      "category": "orchestration_reliability",
+      "title": "Model parameter compatibility for GPT prompter",
+      "why_it_matters": "Repeated unsupported-parameter failures block GPT handoff even when routing selects a valid model.",
+      "profit_proximity": 2,
+      "fake_edge_risk": 1,
+      "implementation_effort": 2,
+      "review_required": false,
+      "requires_user_help": false,
+      "user_help_needed": "",
+      "prerequisites": [],
+      "allowed_files": [
+        "ai-orchestrator/node/gpt-prompter.mjs",
+        "ai-orchestrator/node/model-router.mjs",
+        "ai-orchestrator/node/gpt-summarizer.mjs",
+        "ai-orchestrator/scripts/test-orchestrator-setup.ps1",
+        "ai-orchestrator/README_AI_ORCHESTRATOR.md"
+      ],
+      "forbidden_files": [
+        ".env",
+        "**/*secret*",
+        "**/*key*",
+        "**/*wallet*",
+        "**/*auth*",
+        "**/*order*",
+        "**/*execution*"
+      ],
+      "success_criteria": [
+        "Model-specific request parameters are handled conservatively.",
+        "Unsupported optional parameters do not cause repeated lane handoff failures.",
+        "No secrets, account reads, live trading, or execution behavior is introduced."
+      ],
+      "stop_conditions": [
+        "Would require credential changes.",
+        "Would add live trading, auth, account, order, or signing logic.",
+        "Would mask real API failures as successful handoffs."
+      ],
+      "status": "idea",
+      "created_from": "failure_log_2026-05-24"
     }
   ]
 }
