@@ -8,6 +8,15 @@ from relative_value.exact_paper_candidate_universes import (
     build_exact_paper_candidate_universe_report,
     build_exact_paper_candidate_universe_report_files,
     default_exact_paper_candidate_universe_specs,
+    render_exact_paper_candidate_universe_markdown,
+)
+from relative_value.btc_fed_exact_contracts import (
+    BTCThresholdContract,
+    FedFomcMeetingContract,
+    broad_title_overlap_diagnostic,
+    btc_threshold_contract_diagnostic,
+    default_btc_fed_contract_diagnostics,
+    fed_fomc_contract_diagnostic,
 )
 
 
@@ -127,6 +136,41 @@ def test_mlb_universe_with_trusted_relationship_and_fee_gap_blocker(tmp_path: Pa
     assert row["evaluator_counts"]["WATCH"] == 1
     assert "fee_adjusted_gap_below_minimum" in row["blockers"]
     assert report["summary"]["closest_universe_id"] == "mlb"
+
+
+def test_closest_universe_ranking_contract_is_conservative_and_fail_closed(tmp_path: Path) -> None:
+    inventory_only = UniverseSpec(
+        universe_id="inventory_only",
+        label="Inventory only",
+        category="sports",
+        polymarket_snapshot=_write(tmp_path / "inventory_poly.json", _snapshot(3, "polymarket")),
+    )
+    blocked_same_scope = UniverseSpec(
+        universe_id="blocked_same_scope",
+        label="Blocked same scope",
+        category="sports",
+        polymarket_snapshot=_write(tmp_path / "blocked_poly.json", _snapshot(2, "polymarket")),
+        kalshi_snapshot=_write(tmp_path / "blocked_kalshi.json", _snapshot(2, "kalshi")),
+        pairs=_write(tmp_path / "blocked_pairs.json", _pairs(2)),
+        board=_write(tmp_path / "blocked_board.json", _board(["settlement_source_mismatch"], strict_passes=0)),
+        evaluator=_write(tmp_path / "blocked_eval.json", _evaluator("MANUAL_REVIEW", "relationship_same_payoff_not_proven")),
+    )
+
+    report = build_exact_paper_candidate_universe_report(specs=[inventory_only, blocked_same_scope], generated_at=NOW)
+    rows = report["universes"]
+
+    assert report["summary"]["closest_universe_id"] == "blocked_same_scope"
+    assert report["summary"]["closest_readiness"] == "SAME_SCOPE_PAIRS_AVAILABLE"
+    blocked_row = next(row for row in rows if row["universe_id"] == "blocked_same_scope")
+    inventory_row = next(row for row in rows if row["universe_id"] == "inventory_only")
+
+    assert blocked_row["readiness"] == "SAME_SCOPE_PAIRS_AVAILABLE"
+    assert blocked_row["evaluator_counts"]["MANUAL_REVIEW"] == 1
+    assert blocked_row["evaluator_counts"]["PAPER_CANDIDATE"] == 0
+    assert blocked_row["trusted_relationship_count"] == 0
+    assert "same_payoff_board_blockers" in blocked_row["blockers"]
+    assert inventory_row["readiness"] == "INVENTORY_ONLY"
+    assert report["summary"]["paper_candidate_count"] == 0
 
 
 def test_mlb_execution_data_with_stale_orderbooks_recommends_paper_check_refresh(tmp_path: Path) -> None:
@@ -289,3 +333,137 @@ def test_default_recommended_commands_use_universe_specific_live_readonly_dirs(t
     assert "reports/live_readonly/btc" in commands
     assert "reports/live_readonly/fed" in commands
     assert "--output-dir reports/live_readonly --report-dir reports/live_readonly" not in commands
+
+
+def test_btc_and_fed_default_inventory_exposes_exact_scope_fields(tmp_path: Path) -> None:
+    report = build_exact_paper_candidate_universe_report(
+        specs=default_exact_paper_candidate_universe_specs(tmp_path),
+        generated_at=NOW,
+    )
+    rows = {row["universe_id"]: row for row in report["universes"]}
+
+    for universe_id in ("btc_thresholds", "fed_fomc_decisions"):
+        scope = rows[universe_id]["exact_scope"]
+        assert scope["status"] in {"WATCH", "MANUAL_REVIEW"}
+        assert scope["source_basis"]
+        assert scope["date_or_deadline"]
+        assert scope["fed_meeting_or_fomc_event"]
+        assert scope["threshold_or_numeric_condition"]
+        assert scope["unresolved_ambiguity"]
+        assert scope["allowed_actions"] == ["WATCH", "MANUAL_REVIEW"]
+        assert scope["title_similarity_settlement_equivalence"] is False
+        assert scope["paper_candidate_emitted"] is False
+
+    assert rows["btc_thresholds"]["exact_scope"]["threshold_or_numeric_condition"] == "UNRESOLVED_FROM_INVENTORY"
+    assert rows["fed_fomc_decisions"]["exact_scope"]["fed_meeting_or_fomc_event"] == "UNRESOLVED_FROM_INVENTORY"
+    assert report["summary"]["paper_candidate_count"] == 0
+    assert report["summary"]["exact_scope_status_counts"] == {"MANUAL_REVIEW": 2, "WATCH": 4}
+    assert report["summary"]["exact_scope_unresolved_count"] == 2
+    assert report["safety"]["title_similarity_used_as_settlement_equivalence"] is False
+
+
+def test_btc_fed_exact_scope_markdown_stays_inventory_only(tmp_path: Path) -> None:
+    report = build_exact_paper_candidate_universe_report(
+        specs=default_exact_paper_candidate_universe_specs(tmp_path),
+        generated_at=NOW,
+    )
+    markdown = render_exact_paper_candidate_universe_markdown(report)
+
+    assert "BTC / Fed Exact Scope Inventory" in markdown
+    assert "Exact-scope status counts" in markdown
+    assert "Exact-scope unresolved inventories" in markdown
+    assert "UNRESOLVED_FROM_INVENTORY" in markdown
+    assert "Broad Fed/FOMC title overlap is inventory evidence only, not settlement equivalence." in markdown
+    assert '"PAPER_CANDIDATE"' not in json.dumps([row["exact_scope"] for row in report["universes"]])
+    assert "POSSIBLE_ARB" not in markdown
+
+
+def test_incomplete_btc_contract_stays_fail_closed_and_non_paper() -> None:
+    diagnostic = btc_threshold_contract_diagnostic(
+        BTCThresholdContract(
+            date_or_deadline="2026-12-31 23:59 America/New_York",
+            comparator="above",
+            observation_window="close at deadline",
+        )
+    )
+
+    assert diagnostic["status"] in {"WATCH", "MANUAL_REVIEW"}
+    assert set(diagnostic["missing_required_fields"]) == {"source_basis", "threshold", "reference_price_index"}
+    assert diagnostic["paper_candidate_emitted"] is False
+    assert diagnostic["possible_arbitrage_claim"] is False
+    assert diagnostic["executable_leg_claim"] is False
+    assert diagnostic["tradable_result_claim"] is False
+
+
+def test_incomplete_fed_fomc_contract_stays_fail_closed_and_non_paper() -> None:
+    diagnostic = fed_fomc_contract_diagnostic(
+        FedFomcMeetingContract(decision_date_or_deadline="2026-06-17 14:00 America/New_York")
+    )
+
+    assert diagnostic["status"] in {"WATCH", "MANUAL_REVIEW"}
+    assert set(diagnostic["missing_required_fields"]) == {
+        "fomc_meeting_identity",
+        "source_basis",
+        "rate_or_bp_condition",
+        "settlement_wording",
+    }
+    assert diagnostic["paper_candidate_emitted"] is False
+    assert diagnostic["possible_arbitrage_claim"] is False
+    assert diagnostic["executable_leg_claim"] is False
+    assert diagnostic["tradable_result_claim"] is False
+
+
+def test_broad_title_overlap_alone_cannot_promote_contracts() -> None:
+    diagnostic = broad_title_overlap_diagnostic(
+        "Bitcoin price by year-end",
+        "BTC above X by date Y",
+    )
+
+    assert diagnostic["status"] == "MANUAL_REVIEW"
+    assert diagnostic["title_similarity_settlement_equivalence"] is False
+    assert diagnostic["paper_candidate_emitted"] is False
+    assert diagnostic["possible_arbitrage_claim"] is False
+
+
+def test_reference_only_or_sportsbook_source_never_claims_executable_leg() -> None:
+    btc = btc_threshold_contract_diagnostic(
+        BTCThresholdContract(
+            source_basis="Sportsbook reference odds",
+            date_or_deadline="2026-12-31 23:59 UTC",
+            threshold="100000",
+            comparator="above",
+            observation_window="deadline print",
+            reference_price_index="reference feed",
+            source_kind="sportsbook",
+        )
+    )
+    fed = fed_fomc_contract_diagnostic(
+        FedFomcMeetingContract(
+            fomc_meeting_identity="June 2026 FOMC",
+            decision_date_or_deadline="2026-06-17 14:00 America/New_York",
+            source_basis="Reference-only macro calendar",
+            rate_or_bp_condition="25 bp cut",
+            settlement_wording="reference text only",
+            source_kind="reference_only",
+        )
+    )
+
+    for diagnostic in (btc, fed):
+        assert diagnostic["status"] == "MANUAL_REVIEW"
+        assert "reference_only_source" in diagnostic["blockers"]
+        assert diagnostic["paper_candidate_emitted"] is False
+        assert diagnostic["executable_leg_claim"] is False
+
+
+def test_default_btc_fed_diagnostics_do_not_claim_candidates_or_tradable_results() -> None:
+    payload = default_btc_fed_contract_diagnostics()
+    encoded = json.dumps(payload).lower()
+
+    assert payload["paper_candidate_count"] == 0
+    assert payload["safety"]["paper_candidate_emitted"] is False
+    assert payload["safety"]["possible_arbitrage_claim"] is False
+    assert payload["safety"]["executable_signal_claim"] is False
+    assert payload["safety"]["tradable_result_claim"] is False
+    assert "possible arbitrage" not in encoded
+    assert "executable signal" not in encoded
+    assert "tradable result" not in encoded

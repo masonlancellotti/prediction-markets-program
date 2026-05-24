@@ -52,6 +52,7 @@ class UniverseSpec:
     overlap_report: Path | None = None
     recommended_fetch_command: str | None = None
     recommended_pair_command: str | None = None
+    exact_scope: dict[str, Any] | None = None
 
 
 def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[UniverseSpec]:
@@ -145,6 +146,21 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
                 "python scan.py fetch-live-overlap-universe --category crypto --query BTC "
                 "--output-dir reports/live_readonly/btc --report-dir reports/live_readonly/btc --label btc"
             ),
+            exact_scope={
+                "status": "MANUAL_REVIEW",
+                "source_basis": "Polymarket and Kalshi executable venue inventory only; no reference-only leg is executable.",
+                "date_or_deadline": "UNRESOLVED_FROM_INVENTORY",
+                "fed_meeting_or_fomc_event": "NOT_APPLICABLE",
+                "threshold_or_numeric_condition": "UNRESOLVED_FROM_INVENTORY",
+                "unresolved_ambiguity": [
+                    "BTC threshold level must be parsed from explicit contract terms, not broad title similarity.",
+                    "Deadline, observation window, timezone, and reference price/index must match exactly before same-payoff review.",
+                    "Inventory report cannot assert settlement equivalence or emit a paper candidate.",
+                ],
+                "allowed_actions": ["WATCH", "MANUAL_REVIEW"],
+                "title_similarity_settlement_equivalence": False,
+                "paper_candidate_emitted": False,
+            },
         ),
         UniverseSpec(
             universe_id="fed_fomc_decisions",
@@ -157,6 +173,21 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
                 "python scan.py fetch-live-overlap-universe --category macro --query Fed "
                 "--output-dir reports/live_readonly/fed --report-dir reports/live_readonly/fed --label fed"
             ),
+            exact_scope={
+                "status": "MANUAL_REVIEW",
+                "source_basis": "Polymarket and Kalshi executable venue inventory only; no sportsbook/reference source is executable.",
+                "date_or_deadline": "UNRESOLVED_FROM_INVENTORY",
+                "fed_meeting_or_fomc_event": "UNRESOLVED_FROM_INVENTORY",
+                "threshold_or_numeric_condition": "UNRESOLVED_FROM_INVENTORY",
+                "unresolved_ambiguity": [
+                    "FOMC meeting identity and decision date must match explicitly before same-payoff review.",
+                    "Rate-change direction, target range, basis-point threshold, and settlement wording must be exact.",
+                    "Broad Fed/FOMC title overlap is inventory evidence only, not settlement equivalence.",
+                ],
+                "allowed_actions": ["WATCH", "MANUAL_REVIEW"],
+                "title_similarity_settlement_equivalence": False,
+                "paper_candidate_emitted": False,
+            },
         ),
     ]
 
@@ -189,6 +220,7 @@ def build_exact_paper_candidate_universe_report(
     _require_tz_aware(generated, "generated_at")
     rows = [_universe_row(spec) for spec in specs]
     readiness_counts = Counter(row["readiness"] for row in rows)
+    exact_scope_counts = Counter(row["exact_scope"]["status"] for row in rows if row.get("exact_scope"))
     closest = _closest_universe(rows)
     return {
         "schema_version": SCHEMA_VERSION,
@@ -200,6 +232,14 @@ def build_exact_paper_candidate_universe_report(
             "closest_universe_id": closest["universe_id"] if closest else None,
             "closest_readiness": closest["readiness"] if closest else None,
             "paper_candidate_count": sum(row["evaluator_counts"].get("PAPER_CANDIDATE", 0) for row in rows),
+            "exact_scope_status_counts": dict(sorted(exact_scope_counts.items())),
+            "exact_scope_unresolved_count": sum(
+                1
+                for row in rows
+                if row.get("exact_scope")
+                and row["exact_scope"].get("status") in {"WATCH", "MANUAL_REVIEW"}
+                and row["exact_scope"].get("unresolved_ambiguity")
+            ),
         },
         "universes": rows,
         "recommended_next_commands": _recommended_next_commands(rows),
@@ -209,6 +249,7 @@ def build_exact_paper_candidate_universe_report(
             "original_inputs_mutated": False,
             "thresholds_or_relationship_gates_lowered": False,
             "subset_superset_promoted_to_same_payoff": False,
+            "title_similarity_used_as_settlement_equivalence": False,
             "execution_logic_added": False,
         },
         "disclaimer": DISCLAIMER,
@@ -227,6 +268,8 @@ def render_exact_paper_candidate_universe_markdown(payload: dict[str, Any]) -> s
         f"- Universes: `{summary['universe_count']}`",
         f"- Closest universe: `{summary.get('closest_universe_id')}` (`{summary.get('closest_readiness')}`)",
         f"- Existing PAPER_CANDIDATE rows: `{summary.get('paper_candidate_count', 0)}`",
+        f"- Exact-scope status counts: `{summary.get('exact_scope_status_counts', {})}`",
+        f"- Exact-scope unresolved inventories: `{summary.get('exact_scope_unresolved_count', 0)}`",
         "",
         "## Universes",
         "",
@@ -253,6 +296,34 @@ def render_exact_paper_candidate_universe_markdown(payload: dict[str, Any]) -> s
             )
             + " |"
         )
+    exact_scope_rows = [row for row in payload["universes"] if row.get("exact_scope") and row["universe_id"] in {"btc_thresholds", "fed_fomc_decisions"}]
+    if exact_scope_rows:
+        lines.extend(
+            [
+                "",
+                "## BTC / Fed Exact Scope Inventory",
+                "",
+                "| Universe | Status | Source basis | Date/deadline | FOMC event | Threshold/condition | Unresolved ambiguity |",
+                "|---|---|---|---|---|---|---|",
+            ]
+        )
+        for row in exact_scope_rows:
+            scope = row["exact_scope"]
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _md(row["label"]),
+                        _md(scope["status"]),
+                        _md(scope["source_basis"]),
+                        _md(scope["date_or_deadline"]),
+                        _md(scope["fed_meeting_or_fomc_event"]),
+                        _md(scope["threshold_or_numeric_condition"]),
+                        _md("; ".join(scope["unresolved_ambiguity"])),
+                    ]
+                )
+                + " |"
+            )
     lines.extend(["", "## Recommended Next Commands", ""])
     for command in payload.get("recommended_next_commands") or []:
         lines.extend(["```powershell", command, "```", ""])
@@ -330,7 +401,22 @@ def _universe_row(spec: UniverseSpec) -> dict[str, Any]:
             "kalshi_enriched": str(spec.kalshi_enriched) if spec.kalshi_enriched else None,
             "overlap_report": str(spec.overlap_report) if spec.overlap_report else None,
         },
+        "exact_scope": spec.exact_scope or _empty_exact_scope(),
         "recommended_next_commands": commands,
+    }
+
+
+def _empty_exact_scope() -> dict[str, Any]:
+    return {
+        "status": "WATCH",
+        "source_basis": None,
+        "date_or_deadline": None,
+        "fed_meeting_or_fomc_event": None,
+        "threshold_or_numeric_condition": None,
+        "unresolved_ambiguity": [],
+        "allowed_actions": ["WATCH", "MANUAL_REVIEW"],
+        "title_similarity_settlement_equivalence": False,
+        "paper_candidate_emitted": False,
     }
 
 

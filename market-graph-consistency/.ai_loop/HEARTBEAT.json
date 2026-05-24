@@ -1,7 +1,0 @@
-{
-  "lane": "market-graph-consistency",
-  "status": "initialized",
-  "updated_at": null,
-  "active_worker": null,
-  "notes": "Heartbeat is updated by supervisors."
-}
