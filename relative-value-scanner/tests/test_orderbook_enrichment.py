@@ -328,6 +328,15 @@ def _paper_check_pairs() -> dict:
     }
 
 
+def _paper_check_pairs_with_inputs(polymarket_snapshot: Path, kalshi_snapshot: Path) -> dict:
+    payload = _paper_check_pairs()
+    payload["inputs"] = {
+        "polymarket_snapshot": str(polymarket_snapshot),
+        "kalshi_snapshot": str(kalshi_snapshot),
+    }
+    return payload
+
+
 def _paper_check_snapshot(venue: str) -> dict:
     market_id = "poly-ws" if venue == "polymarket" else "KXMLB-TEAM"
     row = {
@@ -395,6 +404,11 @@ def _install_paper_check_fakes(monkeypatch, *, action: str = ACTION_WATCH, misse
             "row_count": 1,
             "rows": [],
             "counts_by_recommended_next_action": {},
+            "inputs": {
+                "pairs": str(kwargs["pairs_path"]),
+                "polymarket_enriched": str(kwargs["polymarket_enriched_path"]),
+                "kalshi_enriched": str(kwargs["kalshi_enriched_path"]),
+            },
         }
         kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
         kwargs["markdown_output_path"].write_text("# board\n", encoding="utf-8")
@@ -409,6 +423,7 @@ def _install_paper_check_fakes(monkeypatch, *, action: str = ACTION_WATCH, misse
             "diagnostic_evidence_attached_count": 0,
             "ambiguous_identity_count": 0,
             "unmatched_pair_count": 0,
+            "inputs": {"pairs": str(pairs_path), "board": str(board_path)},
         }
         output_path.write_text(json.dumps(payload), encoding="utf-8")
         return payload
@@ -424,6 +439,11 @@ def _install_paper_check_fakes(monkeypatch, *, action: str = ACTION_WATCH, misse
             "generated_at": "2026-05-20T12:00:00+00:00",
             "ledger_count": 1,
             "counts_by_action": counts,
+            "inputs": {
+                "pairs": str(kwargs["pairs_path"]),
+                "polymarket_enriched": str(kwargs["polymarket_enriched_path"]),
+                "kalshi_enriched": str(kwargs["kalshi_enriched_path"]),
+            },
             "ledger": [
                 {
                     "candidate_id": "poly-ws__KXMLB-TEAM",
@@ -566,7 +586,7 @@ def test_mlb_world_series_paper_check_composes_steps_without_mutating_inputs(mon
     pairs_path = tmp_path / "pairs.json"
     poly_path.write_text(json.dumps(_paper_check_snapshot("polymarket"), sort_keys=True), encoding="utf-8")
     kalshi_path.write_text(json.dumps(_paper_check_snapshot("kalshi"), sort_keys=True), encoding="utf-8")
-    pairs_path.write_text(json.dumps(_paper_check_pairs(), sort_keys=True), encoding="utf-8")
+    pairs_path.write_text(json.dumps(_paper_check_pairs_with_inputs(poly_path, kalshi_path), sort_keys=True), encoding="utf-8")
     before_hashes = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (poly_path, kalshi_path, pairs_path)}
 
     result = scan.main(
@@ -607,17 +627,238 @@ def test_mlb_world_series_paper_check_composes_steps_without_mutating_inputs(mon
     assert summary["evaluator_counts"] == {ACTION_PAPER_CANDIDATE: 0, ACTION_MANUAL_REVIEW: 1, ACTION_WATCH: 0}
     assert summary["strict_same_payoff_passes"] == 1
     assert summary["trusted_relationships"] == 1
+    assert summary["evaluated_paths"]["source_polymarket_snapshot"] == str(poly_path)
+    assert summary["evaluated_paths"]["source_kalshi_snapshot"] == str(kalshi_path)
+    assert summary["evaluated_paths"]["pairs_evaluated"] == str(pairs_path)
+    assert summary["evaluated_paths"]["same_payoff_board_used"] == str(tmp_path / "board.json")
+    assert summary["evaluated_paths"]["polymarket_enriched_orderbook_used"] == str(tmp_path / "poly_enriched.json")
+    assert summary["evaluated_paths"]["kalshi_enriched_orderbook_used"] == str(tmp_path / "kalshi_enriched.json")
+    assert summary["paper_count"] == 0
+    assert summary["watch_manual_review_count"] == 1
+    assert summary["killed_rejected_count"] == 0
+    assert summary["preflight"]["universe"] == "mlb_world_series_kxmlb"
+    assert summary["preflight"]["source_snapshot_paths"] == {
+        "polymarket_snapshot": str(poly_path),
+        "kalshi_snapshot": str(kalshi_path),
+    }
+    assert summary["preflight"]["pair_file_evaluated"] == str(pairs_path)
+    assert summary["preflight"]["same_payoff_board_evidence_file_evaluated"] == str(tmp_path / "board.json")
+    assert summary["preflight"]["enriched_orderbook_files_evaluated"] == {
+        "polymarket": str(tmp_path / "poly_enriched.json"),
+        "kalshi": str(tmp_path / "kalshi_enriched.json"),
+    }
+    assert summary["preflight"]["fee_model_names"] == {
+        "polymarket": "PolymarketConservativeFeeModel",
+        "kalshi": "KalshiTieredFeeModel",
+    }
+    assert summary["preflight"]["settlement_normalization_trust"]["status"] == "requested"
+    assert summary["preflight"]["quote_freshness_status"]["status"] == "stale_or_missing"
+    assert summary["preflight"]["top_of_book_depth_status"]["polymarket"]["status"] == "available"
     stdout = capsys.readouterr().out
     assert "manual_review=1" in stdout
     assert "watch=0" in stdout
     assert "paper=0" in stdout
+    assert "mlb_world_series_paper_check_preflight" in stdout
+    assert "fee_models=polymarket:PolymarketConservativeFeeModel,kalshi:KalshiTieredFeeModel" in stdout
+
+
+def test_mlb_world_series_paper_check_reports_strict_blocker_drilldown(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_WATCH, missed_fill_reason="relationship_same_payoff_not_proven")
+
+    def fake_board_with_strict_blocker(**kwargs):
+        calls.append("board")
+        payload = {
+            "schema_version": 1,
+            "strict_same_payoff_pass_count": 0,
+            "row_count": 1,
+            "rows": [
+                {
+                    "polymarket": {"market_id": "poly-ws", "question": "Will Team win the World Series?"},
+                    "kalshi": {"ticker": "KXMLB-TEAM", "question": "Will Team win the World Series?"},
+                    "same_payoff": False,
+                    "strict_pass_count": 10,
+                    "strict_comparator_count": 11,
+                    "strict_blockers": ["settlement_time_delta_exceeds_tolerance"],
+                    "blockers": ["settlement_time_delta_exceeds_tolerance"],
+                }
+            ],
+            "counts_by_recommended_next_action": {},
+            "inputs": {
+                "pairs": str(kwargs["pairs_path"]),
+                "polymarket_enriched": str(kwargs["polymarket_enriched_path"]),
+                "kalshi_enriched": str(kwargs["kalshi_enriched_path"]),
+            },
+        }
+        kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        kwargs["markdown_output_path"].write_text("# board\n", encoding="utf-8")
+        return payload
+
+    def fake_attach_no_trusted(pairs_path, board_path, output_path):
+        calls.append("attach")
+        payload = _paper_check_pairs()
+        payload["same_payoff_evidence_attachment"] = {
+            "trusted_relationship_attached_count": 0,
+            "pair_count": 1,
+            "diagnostic_evidence_attached_count": 0,
+            "unmatched_pair_count": 0,
+            "ambiguous_identity_count": 0,
+            "inputs": {"pairs": str(pairs_path), "board": str(board_path)},
+        }
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "build_same_payoff_board_files", fake_board_with_strict_blocker)
+    monkeypatch.setattr(scan, "attach_same_payoff_evidence_files", fake_attach_no_trusted)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs_with_inputs(poly_path, kalshi_path))
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+            "--settlement-audit-json-output",
+            str(tmp_path / "settlement_audit.json"),
+            "--settlement-audit-markdown-output",
+            str(tmp_path / "settlement_audit.md"),
+        ]
+    )
+
+    assert result == 0
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["paper_count"] == 0
+    assert summary["strict_same_payoff_passes"] == 0
+    assert summary["trusted_relationships"] == 0
+    assert summary["strict_same_payoff_blocker_counts"] == {"settlement_time_delta_exceeds_tolerance": 1}
+    assert summary["blocker_drilldown"]["phase_diagnosis"]["same_payoff_board_failed_before_evidence_attachment"] is True
+    assert summary["blocker_drilldown"]["phase_diagnosis"]["evidence_attachment_failed"] is False
+    assert summary["blocked_pair_examples"][0]["kalshi_ticker"] == "KXMLB-TEAM"
+    audit = json.loads((tmp_path / "settlement_audit.json").read_text(encoding="utf-8"))
+    assert audit["diagnostic_only"] is True
+    assert audit["safety"]["does_not_emit_trusted_evidence"] is True
+    assert audit["safety"]["does_not_emit_paper_candidate"] is True
+    assert audit["summary"]["audited_pairs"] == 1
+    assert audit["rows"][0]["classification"] == "real_time_mismatch"
+    stdout = capsys.readouterr().out
+    assert "mlb_world_series_paper_check_blocker_drilldown" in stdout
+    assert "board_failed_before_evidence=true" in stdout
+    assert "mlb_world_series_settlement_audit_status=OK" in stdout
+
+
+def test_mlb_world_series_settlement_audit_classifies_parser_missing_separately(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_WATCH, missed_fill_reason="relationship_same_payoff_not_proven")
+
+    def fake_board_missing_parser_data(**kwargs):
+        calls.append("board")
+        payload = {
+            "schema_version": 1,
+            "strict_same_payoff_pass_count": 0,
+            "row_count": 1,
+            "rows": [
+                {
+                    "polymarket": {"market_id": "poly-ws", "question": "Will Team win the World Series?"},
+                    "kalshi": {"ticker": "KXMLB-TEAM", "question": "Will Team win the World Series?"},
+                    "same_payoff": False,
+                    "strict_pass_count": 9,
+                    "strict_comparator_count": 11,
+                    "strict_blockers": [],
+                    "strict_missing_fields": ["polymarket_settlement_source_or_rule", "kalshi_end_date_or_close_time"],
+                    "blockers": [],
+                    "missing_fields": ["polymarket_settlement_source_or_rule", "kalshi_end_date_or_close_time"],
+                    "same_payoff_evidence": {
+                        "settlement_source": {
+                            "status": "MISSING",
+                            "missing_fields": ["polymarket_settlement_source_or_rule"],
+                            "values": {"polymarket": "", "kalshi": "MLB official result"},
+                        },
+                        "settlement_time": {
+                            "status": "MISSING",
+                            "missing_fields": ["kalshi_end_date_or_close_time"],
+                            "values": {"polymarket": "2026-11-01T00:00:00+00:00", "kalshi": None},
+                        },
+                    },
+                }
+            ],
+            "counts_by_recommended_next_action": {},
+            "inputs": {
+                "pairs": str(kwargs["pairs_path"]),
+                "polymarket_enriched": str(kwargs["polymarket_enriched_path"]),
+                "kalshi_enriched": str(kwargs["kalshi_enriched_path"]),
+            },
+        }
+        kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        kwargs["markdown_output_path"].write_text("# board\n", encoding="utf-8")
+        return payload
+
+    def fake_attach_no_trusted(pairs_path, board_path, output_path):
+        calls.append("attach")
+        payload = _paper_check_pairs()
+        payload["same_payoff_evidence_attachment"] = {
+            "trusted_relationship_attached_count": 0,
+            "pair_count": 1,
+            "diagnostic_evidence_attached_count": 0,
+            "unmatched_pair_count": 0,
+            "ambiguous_identity_count": 0,
+            "inputs": {"pairs": str(pairs_path), "board": str(board_path)},
+        }
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "build_same_payoff_board_files", fake_board_missing_parser_data)
+    monkeypatch.setattr(scan, "attach_same_payoff_evidence_files", fake_attach_no_trusted)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs_with_inputs(poly_path, kalshi_path))
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--summary-json-output",
+            str(tmp_path / "summary.json"),
+            "--summary-markdown-output",
+            str(tmp_path / "summary.md"),
+            "--settlement-audit-json-output",
+            str(tmp_path / "settlement_audit.json"),
+            "--settlement-audit-markdown-output",
+            str(tmp_path / "settlement_audit.md"),
+        ]
+    )
+
+    assert result == 0
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    audit = json.loads((tmp_path / "settlement_audit.json").read_text(encoding="utf-8"))
+    assert summary["strict_same_payoff_passes"] == 0
+    assert summary["paper_count"] == 0
+    assert audit["summary"]["parser_missing_count"] == 1
+    assert audit["summary"]["source_mismatch_count"] == 0
+    assert audit["rows"][0]["classification"] == "parser_missing_data"
+    assert audit["rows"][0]["normalization"]["accepted"] is False
+    assert audit["summary"].get("paper_candidate_count", 0) == 0
+    assert audit["safety"]["does_not_emit_paper_candidate"] is True
+    stdout = capsys.readouterr().out
+    assert "parser_missing_count=1" in stdout
 
 
 def test_mlb_world_series_paper_check_fails_on_pair_snapshot_mismatch(monkeypatch, tmp_path: Path, capsys) -> None:
     calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
     poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
     kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
-    pairs = _paper_check_pairs()
+    pairs = _paper_check_pairs_with_inputs(poly_path, kalshi_path)
     pairs["pairs"][0]["polymarket"]["market_id"] = "different-poly"
     pairs["pairs"][0]["kalshi"]["ticker"] = "KXMLB-DIFFERENT"
     pairs_path = _write(tmp_path / "pairs.json", pairs)
@@ -641,6 +882,276 @@ def test_mlb_world_series_paper_check_fails_on_pair_snapshot_mismatch(monkeypatc
     assert "matched_pairs=0" in stdout
     assert "missing_polymarket_enriched_market=1" in stdout
     assert "missing_kalshi_enriched_market=1" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_pairs_input_snapshot_mismatch(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs = _paper_check_pairs()
+    pairs["inputs"] = {
+        "polymarket_snapshot": str(tmp_path / "other_poly_snapshot.json"),
+        "kalshi_snapshot": str(kalshi_path),
+    }
+    pairs_path = _write(tmp_path / "pairs.json", pairs)
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi"]
+    stdout = capsys.readouterr().out
+    assert "snapshot_set_mismatch pairs" in stdout
+    assert "polymarket_snapshot" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_pairs_missing_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs())
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi"]
+    stdout = capsys.readouterr().out
+    assert "mlb_paper_check_report_inputs_missing" in stdout
+    assert "sub_step=pairs" in stdout
+    assert "missing_inputs=true" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_board_input_mismatch(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+
+    def fake_board_with_wrong_inputs(**kwargs):
+        calls.append("board")
+        payload = {
+            "schema_version": 1,
+            "strict_same_payoff_pass_count": 1,
+            "row_count": 1,
+            "rows": [],
+            "counts_by_recommended_next_action": {},
+            "inputs": {
+                "pairs": str(kwargs["pairs_path"]),
+                "polymarket_enriched": str(tmp_path / "other_poly_enriched.json"),
+                "kalshi_enriched": str(kwargs["kalshi_enriched_path"]),
+            },
+        }
+        kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        kwargs["markdown_output_path"].write_text("# board\n", encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "build_same_payoff_board_files", fake_board_with_wrong_inputs)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs_with_inputs(poly_path, kalshi_path))
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+            "--polymarket-enriched-output",
+            str(tmp_path / "poly_enriched.json"),
+            "--kalshi-enriched-output",
+            str(tmp_path / "kalshi_enriched.json"),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi", "board"]
+    stdout = capsys.readouterr().out
+    assert "snapshot_set_mismatch same_payoff_board" in stdout
+    assert "polymarket_enriched" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_board_missing_inputs(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+
+    def fake_board_missing_inputs(**kwargs):
+        calls.append("board")
+        payload = {
+            "schema_version": 1,
+            "strict_same_payoff_pass_count": 1,
+            "row_count": 1,
+            "rows": [],
+            "counts_by_recommended_next_action": {},
+        }
+        kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        kwargs["markdown_output_path"].write_text("# board\n", encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "build_same_payoff_board_files", fake_board_missing_inputs)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs = _paper_check_pairs()
+    pairs["inputs"] = {"polymarket_snapshot": str(poly_path), "kalshi_snapshot": str(kalshi_path)}
+    pairs_path = _write(tmp_path / "pairs.json", pairs)
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi", "board"]
+    stdout = capsys.readouterr().out
+    assert "mlb_paper_check_report_inputs_missing" in stdout
+    assert "sub_step=same_payoff_board" in stdout
+    assert "missing_inputs=true" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_evidence_input_mismatch(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+
+    def fake_attach_with_wrong_inputs(pairs_path, board_path, output_path):
+        calls.append("attach")
+        payload = _paper_check_pairs()
+        payload["same_payoff_evidence_attachment"] = {
+            "trusted_relationship_attached_count": 1,
+            "pair_count": 1,
+            "diagnostic_evidence_attached_count": 0,
+            "ambiguous_identity_count": 0,
+            "unmatched_pair_count": 0,
+            "inputs": {"pairs": str(pairs_path), "board": str(tmp_path / "other_board.json")},
+        }
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "attach_same_payoff_evidence_files", fake_attach_with_wrong_inputs)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs_with_inputs(poly_path, kalshi_path))
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi", "board", "attach"]
+    stdout = capsys.readouterr().out
+    assert "snapshot_set_mismatch same_payoff_evidence_attachment" in stdout
+    assert "board" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_evidence_missing_payload(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+
+    def fake_attach_missing_payload(pairs_path, board_path, output_path):
+        calls.append("attach")
+        payload = _paper_check_pairs()
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "attach_same_payoff_evidence_files", fake_attach_missing_payload)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs = _paper_check_pairs()
+    pairs["inputs"] = {"polymarket_snapshot": str(poly_path), "kalshi_snapshot": str(kalshi_path)}
+    pairs_path = _write(tmp_path / "pairs.json", pairs)
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi", "board", "attach"]
+    stdout = capsys.readouterr().out
+    assert "mlb_paper_check_report_inputs_missing" in stdout
+    assert "sub_step=same_payoff_evidence_attachment" in stdout
+    assert "missing_payload=true" in stdout
+
+
+def test_mlb_world_series_paper_check_fails_on_evaluator_input_mismatch(monkeypatch, tmp_path: Path, capsys) -> None:
+    calls = _install_paper_check_fakes(monkeypatch, action=ACTION_MANUAL_REVIEW)
+
+    def fake_evaluator_with_wrong_inputs(**kwargs):
+        calls.append("evaluate")
+        payload = {
+            "schema_version": 1,
+            "source": "paper_candidate_evaluator",
+            "generated_at": "2026-05-20T12:00:00+00:00",
+            "ledger_count": 0,
+            "counts_by_action": {ACTION_PAPER_CANDIDATE: 0, ACTION_MANUAL_REVIEW: 0, ACTION_WATCH: 0},
+            "ledger": [],
+            "inputs": {
+                "pairs": str(tmp_path / "other_derived_pairs.json"),
+                "polymarket_enriched": str(kwargs["polymarket_enriched_path"]),
+                "kalshi_enriched": str(kwargs["kalshi_enriched_path"]),
+            },
+        }
+        kwargs["output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "evaluate_paper_candidate_files", fake_evaluator_with_wrong_inputs)
+    poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
+    kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs_with_inputs(poly_path, kalshi_path))
+
+    result = scan.main(
+        [
+            "run-mlb-world-series-paper-check",
+            "--polymarket-snapshot",
+            str(poly_path),
+            "--kalshi-snapshot",
+            str(kalshi_path),
+            "--pairs",
+            str(pairs_path),
+        ]
+    )
+
+    assert result == 1
+    assert calls == ["enrich:polymarket", "enrich:kalshi", "board", "attach", "evaluate"]
+    stdout = capsys.readouterr().out
+    assert "snapshot_set_mismatch paper_candidate_evaluator" in stdout
+    assert "pairs" in stdout
 
 
 @pytest.mark.parametrize(
@@ -696,6 +1207,10 @@ def test_mlb_world_series_paper_check_can_rebuild_pairs_from_snapshots(monkeypat
     def fake_build_mlb_world_series_pairs_files(**kwargs):
         calls.append("build_pairs")
         payload = _paper_check_pairs()
+        payload["inputs"] = {
+            "polymarket_snapshot": str(kwargs["polymarket_snapshot_path"]),
+            "kalshi_snapshot": str(kwargs["kalshi_snapshot_path"]),
+        }
         kwargs["json_output_path"].write_text(json.dumps(payload), encoding="utf-8")
         kwargs["markdown_output_path"].write_text("# pairs\n", encoding="utf-8")
         return payload
@@ -750,7 +1265,7 @@ def test_mlb_world_series_paper_check_stop_and_review_for_paper_candidate(monkey
     _install_paper_check_fakes(monkeypatch, action=ACTION_PAPER_CANDIDATE)
     poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
     kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
-    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs())
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs_with_inputs(poly_path, kalshi_path))
 
     result = scan.main(
         [
@@ -771,6 +1286,7 @@ def test_mlb_world_series_paper_check_stop_and_review_for_paper_candidate(monkey
     assert result == 0
     stdout = capsys.readouterr().out
     assert "paper=1" in stdout
+    assert "STOP_FOR_REVIEW" in stdout
     assert "STOP_AND_REVIEW" in stdout
     assert "no_trading_or_execution_performed=true" in stdout
     assert "poly-ws__KXMLB-TEAM" in stdout
@@ -780,7 +1296,7 @@ def test_mlb_world_series_paper_check_reports_stale_quote_warning(monkeypatch, t
     _install_paper_check_fakes(monkeypatch, action=ACTION_WATCH, missed_fill_reason="stale_or_missing_quote_time")
     poly_path = _write(tmp_path / "poly_snapshot.json", _paper_check_snapshot("polymarket"))
     kalshi_path = _write(tmp_path / "kalshi_snapshot.json", _paper_check_snapshot("kalshi"))
-    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs())
+    pairs_path = _write(tmp_path / "pairs.json", _paper_check_pairs_with_inputs(poly_path, kalshi_path))
 
     result = scan.main(
         [

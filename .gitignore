@@ -49,3 +49,6 @@ laptop_directory_listing.txt
 
 # Old nested git histories, kept locally only
 .git.old-*
+
+# Local generated live/read-only snapshots
+relative-value-scanner/reports/live_readonly/

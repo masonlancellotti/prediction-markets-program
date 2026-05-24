@@ -10,6 +10,8 @@ from typing import Any
 SCHEMA_VERSION = 1
 ALLOWED_HINT_ACTIONS = {"WATCH", "MANUAL_REVIEW"}
 PROHIBITED_FIELD_TERMS = ("paper", "possible_arb", "pnl", "profit", "trade", "execution")
+PROHIBITED_EXACT_RELATION_VALUES = {"EXACT_SAME_PAYOFF", "SAME_PAYOFF", "EQUIVALENT"}
+PROHIBITED_TRUSTED_SOURCE_VALUES = {"same_payoff_board_v1"}
 BANNER = "INFO ONLY: market graph hints are not paper-trade permission."
 
 
@@ -61,10 +63,15 @@ def build_market_graph_relative_value_hints(
         "hint_count": len(hints),
         "hints": hints,
         "safety": {
+            "diagnostic_only": True,
             "info_only": True,
             "sets_same_payoff_true": False,
+            "sets_contract_relationship_equivalent": False,
+            "sets_same_payoff_board_v1_source": False,
+            "emits_paper_candidate": False,
             "mutates_matcher_or_evaluator_output": False,
             "affects_evaluator_gates": False,
+            "evaluator_trusted_relationship_source_added": False,
             "live_fetch_attempted": False,
             "execution_or_trading_logic_added": False,
         },
@@ -125,6 +132,9 @@ def _validate_graph_report(payload: dict[str, Any]) -> None:
         action = str(edge.get("action") or "")
         if action not in ALLOWED_HINT_ACTIONS:
             raise ValueError("graph edge action may only be WATCH or MANUAL_REVIEW")
+        max_action_cap = edge.get("max_action_cap")
+        if max_action_cap is not None and str(max_action_cap) not in ALLOWED_HINT_ACTIONS:
+            raise ValueError("graph edge max_action_cap may only be WATCH or MANUAL_REVIEW")
 
 
 def _reject_prohibited_fields(value: Any, path: str = "$") -> None:
@@ -137,25 +147,44 @@ def _reject_prohibited_fields(value: Any, path: str = "$") -> None:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             _reject_prohibited_fields(child, f"{path}[{index}]")
+    elif isinstance(value, str):
+        normalized = value.strip()
+        if normalized in PROHIBITED_TRUSTED_SOURCE_VALUES:
+            raise ValueError(f"graph report contains prohibited trusted source value: {path}")
 
 
 def _hint_from_edge(index: int, edge: dict[str, Any]) -> dict[str, Any]:
     action = str(edge.get("action") or "WATCH")
     max_action_cap = str(edge.get("max_action_cap") or action)
     max_action_cap_reason = str(edge.get("max_action_cap_reason") or "graph_diagnostic_info_only")
+    relation_type = str(edge.get("relation_type") or "")
+    normalized_relation_type = relation_type.strip().upper()
+    exact_like_relation = (
+        normalized_relation_type in PROHIBITED_EXACT_RELATION_VALUES
+        or "SAME_PAYOFF" in normalized_relation_type
+    )
+    blockers = [str(blocker) for blocker in edge.get("blockers") or []]
+    if exact_like_relation and "graph_exact_same_payoff_not_trusted" not in blockers:
+        blockers.append("graph_exact_same_payoff_not_trusted")
     return {
         "finding_id": str(edge.get("finding_id") or f"graph_hint_{index:04d}"),
-        "relation_type": edge.get("relation_type"),
+        "relation_type": relation_type or None,
+        "relation_type_trusted_for_same_payoff": False,
+        "downgraded_from_exact_same_payoff_label": exact_like_relation,
+        "relationship_promotion_allowed": False,
         "source_market_id": edge.get("source_market_id"),
         "target_market_id": edge.get("target_market_id"),
         "magnitude_probability": _probability_or_none(edge.get("magnitude_probability", edge.get("confidence"))),
         "max_action_cap": max_action_cap,
         "max_action_cap_reason": max_action_cap_reason,
-        "blockers": [str(blocker) for blocker in edge.get("blockers") or []],
+        "blockers": blockers,
         "diagnostic_only": True,
         "allowed_actions": sorted(ALLOWED_HINT_ACTIONS),
         "info_only_hint": True,
         "sets_same_payoff_true": False,
+        "sets_contract_relationship_equivalent": False,
+        "sets_same_payoff_board_v1_source": False,
+        "affects_evaluator_gates": False,
     }
 
 

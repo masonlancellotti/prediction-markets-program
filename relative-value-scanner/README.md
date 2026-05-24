@@ -49,6 +49,8 @@ python scan.py diagnose-live-matching
 
 `fetch-live-overlap-universe` is an explicit Kalshi/Polymarket-only helper for reducing unrelated live sample comparisons. It fetches read-only market discovery, locally retains a requested category or query, writes updated Kalshi/Polymarket snapshots under `reports\live_readonly\`, and writes overlap diagnostics under `reports\live_overlap_universe_*`. It does not use The Odds API as an executable leg, change matching thresholds, assert same-payoff, or emit candidate actions.
 
+For MLB World Series / KXMLB work, prefer universe-specific saved paths such as `reports\live_readonly\mlb\...` over generic `reports\live_readonly\...` paths so pairs, enriched orderbooks, and summaries are not mixed with another universe's latest fetch.
+
 `sweep-live-overlap-universe` is an explicit non-sports diagnostic loop over macro/economics, politics, crypto, companies, AI, and weather queries. For each query it fetches the overlap universe, inspects saved snapshots, runs saved-snapshot matching, runs diagnostics, and writes `reports\live_overlap_sweep.json` plus `reports\live_overlap_sweep.md`. It is for deciding where to investigate next, not for paper/live readiness.
 
 `inspect-live-snapshots` summarizes saved snapshot shape, safety status, reference-only status, and blockers before any future live matching. Its match-shape readiness fields mean required saved-snapshot identifiers/text/deadlines exist; they do not mean paper-simulation readiness. It writes `reports\live_snapshot_inspection.json` and `reports\live_snapshot_inspection.md` without scoring or action promotion.

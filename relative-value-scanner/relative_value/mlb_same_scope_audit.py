@@ -976,8 +976,8 @@ def _world_series_pair_next_commands(outputs: dict[str, Any], inputs: dict[str, 
     if pair_count == 0:
         return ["no pairs generated — fix snapshot inputs and rerun build-mlb-world-series-pairs"]
     pairs_path = outputs.get("json") or "reports\\mlb_world_series_pairs.json"
-    polymarket_path = _preferred_enriched_path(inputs.get("polymarket_snapshot") or "reports\\live_readonly\\polymarket_live_readonly_snapshot.json")
-    kalshi_path = _preferred_enriched_path(inputs.get("kalshi_snapshot") or "reports\\live_readonly\\kalshi_live_readonly_snapshot.json")
+    polymarket_path = _preferred_enriched_path(inputs.get("polymarket_snapshot") or "reports\\live_readonly\\mlb\\polymarket_live_readonly_snapshot.json")
+    kalshi_path = _preferred_enriched_path(inputs.get("kalshi_snapshot") or "reports\\live_readonly\\mlb\\kalshi_live_readonly_snapshot.json")
     return [
         f"python scan.py same-payoff-board --pairs {pairs_path} --polymarket-enriched {polymarket_path} --kalshi-enriched {kalshi_path} --json-output reports\\mlb_world_series_same_payoff_board.json --markdown-output reports\\mlb_world_series_same_payoff_board.md",
         f"python scan.py attach-same-payoff-evidence --pairs {pairs_path} --board reports\\mlb_world_series_same_payoff_board.json --output reports\\mlb_world_series_pairs_with_evidence.json",
@@ -1220,12 +1220,12 @@ def _normalize_scope_filter(scope: str) -> str:
 
 def _same_scope_targeting_recommended_commands(overlap_scopes: list[str]) -> list[str]:
     commands = [
-        "python scan.py fetch-live-overlap-universe --category sports --query MLB --max-markets 500 --output-dir reports\\live_readonly --report-dir reports --label mlb_same_scope",
-        "python scan.py diagnose-mlb-same-scope-targeting --polymarket-snapshot reports\\live_readonly\\polymarket_live_readonly_snapshot.json --kalshi-snapshot reports\\live_readonly\\kalshi_live_readonly_snapshot.json --scope world_series",
+        "python scan.py fetch-live-overlap-universe --category sports --query MLB --max-markets 500 --output-dir reports\\live_readonly\\mlb --report-dir reports --label mlb_same_scope",
+        "python scan.py diagnose-mlb-same-scope-targeting --polymarket-snapshot reports\\live_readonly\\mlb\\polymarket_live_readonly_snapshot.json --kalshi-snapshot reports\\live_readonly\\mlb\\kalshi_live_readonly_snapshot.json --scope world_series",
     ]
     if "WORLD_SERIES" in overlap_scopes:
         commands.append(
-            "python scan.py match-live-readonly-snapshots --snapshot-dir reports\\live_readonly --json-output reports\\live_readonly_match_report.json --markdown-output reports\\live_readonly_match_report.md"
+            "python scan.py match-live-readonly-snapshots --snapshot-dir reports\\live_readonly\\mlb --json-output reports\\live_readonly\\mlb\\live_readonly_match_report.json --markdown-output reports\\live_readonly\\mlb\\live_readonly_match_report.md"
         )
     else:
         commands.append("rerun inventory discovery and confirm which venue is missing WORLD_SERIES inventory before matching")
@@ -1296,9 +1296,9 @@ def _pair_id_from_ledger(row: dict[str, Any]) -> str:
 
 def _recommended_next_commands() -> list[str]:
     return [
-        "python scan.py fetch-live-overlap-universe --category sports --query MLB --max-markets 500 --output-dir reports\\live_readonly --report-dir reports --label mlb_same_scope",
-        "python scan.py match-live-readonly-snapshots --snapshot-dir reports\\live_readonly --json-output reports\\live_readonly_match_report.json --markdown-output reports\\live_readonly_match_report.md",
-        "python scan.py enrich-live-match-candidates --match-report reports\\live_readonly_match_report.json --snapshot-dir reports\\live_readonly --json-output reports\\live_match_candidate_enrichment.json --markdown-output reports\\live_match_candidate_enrichment.md",
+        "python scan.py fetch-live-overlap-universe --category sports --query MLB --max-markets 500 --output-dir reports\\live_readonly\\mlb --report-dir reports --label mlb_same_scope",
+        "python scan.py match-live-readonly-snapshots --snapshot-dir reports\\live_readonly\\mlb --json-output reports\\live_readonly\\mlb\\live_readonly_match_report.json --markdown-output reports\\live_readonly\\mlb\\live_readonly_match_report.md",
+        "python scan.py enrich-live-match-candidates --match-report reports\\live_readonly\\mlb\\live_readonly_match_report.json --snapshot-dir reports\\live_readonly\\mlb --json-output reports\\live_readonly\\mlb\\live_match_candidate_enrichment.json --markdown-output reports\\live_readonly\\mlb\\live_match_candidate_enrichment.md",
     ]
 
 

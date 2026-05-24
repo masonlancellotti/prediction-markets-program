@@ -430,8 +430,8 @@ def main(argv: list[str] | None = None) -> int:
     mlb_ws_pairs_parser.add_argument(
         "--match-report",
         type=Path,
-        default=PROJECT_ROOT / "reports" / "live_readonly_match_report.json",
-        help="Optional saved prior matcher report used only to explain old ranking behavior.",
+        default=PROJECT_ROOT / "reports" / "live_readonly" / "mlb" / "live_readonly_match_report.json",
+        help="Optional saved prior MLB-targeted matcher report used only to explain old ranking behavior.",
     )
 
     nhl_sc_pairs_parser = subparsers.add_parser(
@@ -492,6 +492,8 @@ def main(argv: list[str] | None = None) -> int:
     mlb_ws_paper_check_parser.add_argument("--evaluator-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_fresh_trust_settlement.json", help="Output path for evaluator ledger.")
     mlb_ws_paper_check_parser.add_argument("--summary-json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.json", help="Output path for compact paper-check summary JSON.")
     mlb_ws_paper_check_parser.add_argument("--summary-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.md", help="Output path for compact paper-check summary Markdown.")
+    mlb_ws_paper_check_parser.add_argument("--settlement-audit-json-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_settlement_audit.json", help="Output path for reporting-only MLB settlement/source blocker audit JSON.")
+    mlb_ws_paper_check_parser.add_argument("--settlement-audit-markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "mlb_world_series_settlement_audit.md", help="Output path for reporting-only MLB settlement/source blocker audit Markdown.")
 
     nba_championship_paper_check_parser = subparsers.add_parser(
         "run-nba-championship-paper-check",
@@ -1121,6 +1123,8 @@ def main(argv: list[str] | None = None) -> int:
             evaluator_output=args.evaluator_output,
             summary_json_output=args.summary_json_output,
             summary_markdown_output=args.summary_markdown_output,
+            settlement_audit_json_output=args.settlement_audit_json_output,
+            settlement_audit_markdown_output=args.settlement_audit_markdown_output,
         )
     if args.command == "run-nba-championship-paper-check":
         return run_nba_championship_paper_check(
@@ -7943,6 +7947,8 @@ def run_mlb_world_series_paper_check(
     evaluator_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_evaluator_fresh_trust_settlement.json",
     summary_json_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.json",
     summary_markdown_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_paper_check_summary.md",
+    settlement_audit_json_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_settlement_audit.json",
+    settlement_audit_markdown_output: Path = PROJECT_ROOT / "reports" / "mlb_world_series_settlement_audit.md",
 ) -> int:
     generated_at = datetime.now(timezone.utc)
     if rebuild_pairs_from_snapshots:
@@ -7991,6 +7997,14 @@ def run_mlb_world_series_paper_check(
             effective_pairs = rebuilt_pairs_json_output
         if effective_pairs is None:
             raise ValueError("effective pairs path was not resolved")
+        _validate_mlb_paper_check_report_inputs(
+            label="pairs",
+            payload=_load_json_report(effective_pairs, "pairs"),
+            expected={
+                "polymarket_snapshot": polymarket_enriched_output if rebuild_pairs_from_snapshots else polymarket_snapshot,
+                "kalshi_snapshot": kalshi_enriched_output if rebuild_pairs_from_snapshots else kalshi_snapshot,
+            },
+        )
         join_validation = _validate_pairs_join_enriched_markets(
             pairs_path=effective_pairs,
             polymarket_enriched=polymarket_enriched,
@@ -8005,7 +8019,24 @@ def run_mlb_world_series_paper_check(
             now=generated_at,
             max_quote_age_seconds=max_quote_age_seconds,
         )
+        _validate_mlb_paper_check_report_inputs(
+            label="same_payoff_board",
+            payload=board,
+            expected={
+                "pairs": effective_pairs,
+                "polymarket_enriched": polymarket_enriched_output,
+                "kalshi_enriched": kalshi_enriched_output,
+            },
+        )
         derived_pairs = attach_same_payoff_evidence_files(effective_pairs, board_json_output, derived_pairs_output)
+        _validate_mlb_paper_check_report_inputs(
+            label="same_payoff_evidence_attachment",
+            payload=derived_pairs.get("same_payoff_evidence_attachment"),
+            expected={
+                "pairs": effective_pairs,
+                "board": board_json_output,
+            },
+        )
         evaluator = evaluate_paper_candidate_files(
             pairs_path=derived_pairs_output,
             polymarket_enriched_path=polymarket_enriched_output,
@@ -8020,6 +8051,15 @@ def run_mlb_world_series_paper_check(
                 trusted_settlement_normalizations=trusted_settlement_normalizations,
             ),
             now=generated_at,
+        )
+        _validate_mlb_paper_check_report_inputs(
+            label="paper_candidate_evaluator",
+            payload=evaluator,
+            expected={
+                "pairs": derived_pairs_output,
+                "polymarket_enriched": polymarket_enriched_output,
+                "kalshi_enriched": kalshi_enriched_output,
+            },
         )
     except ValueError as exc:
         print(f"mlb_world_series_paper_check_status=FAILED message={exc}")
@@ -8040,6 +8080,8 @@ def run_mlb_world_series_paper_check(
         evaluator_output=evaluator_output,
         summary_json_output=summary_json_output,
         summary_markdown_output=summary_markdown_output,
+        settlement_audit_json_output=settlement_audit_json_output,
+        settlement_audit_markdown_output=settlement_audit_markdown_output,
         polymarket_enriched=polymarket_enriched,
         kalshi_enriched=kalshi_enriched,
         rebuilt_pairs=rebuilt_pairs,
@@ -8060,11 +8102,18 @@ def run_mlb_world_series_paper_check(
     summary_markdown_output.parent.mkdir(parents=True, exist_ok=True)
     summary_json_output.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     summary_markdown_output.write_text(_mlb_world_series_paper_check_markdown(summary), encoding="utf-8")
+    settlement_audit = summary["settlement_source_audit"]
+    settlement_audit_json_output.parent.mkdir(parents=True, exist_ok=True)
+    settlement_audit_markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    settlement_audit_json_output.write_text(json.dumps(settlement_audit, indent=2, sort_keys=True), encoding="utf-8")
+    settlement_audit_markdown_output.write_text(_mlb_world_series_settlement_audit_markdown(settlement_audit), encoding="utf-8")
 
     counts = summary["evaluator_counts"]
     paper_candidate_ids = summary["paper_candidate_ids"]
     print(
         "mlb_world_series_paper_check_status=OK "
+        f"universe={summary['preflight']['universe']} "
+        f"universe_specific_paths={str(summary['preflight']['paths_are_universe_specific']).lower()} "
         f"polymarket_enriched={summary['polymarket_enrichment']['enriched_count']}/{summary['polymarket_enrichment']['market_count']} "
         f"kalshi_enriched={summary['kalshi_enrichment']['enriched_count']}/{summary['kalshi_enrichment']['market_count']} "
         f"matched_pairs={summary['pair_join_validation']['matched_pairs']} "
@@ -8076,12 +8125,64 @@ def run_mlb_world_series_paper_check(
         f"manual_review={counts.get('MANUAL_REVIEW', 0)} "
         f"watch={counts.get('WATCH', 0)} "
         f"dominant_blocker={summary['dominant_blocker'] or 'none'} "
+        f"strict_blockers={_format_count_map(summary['strict_same_payoff_blocker_counts'])} "
+        f"trusted_blockers={_format_count_map(summary['trusted_relationship_blocker_counts'])} "
+        f"evaluator_blockers={_format_count_map(summary['evaluator_blocker_counts'])} "
+        f"settlement_delta_min={summary['settlement_delta_seconds']['min'] if summary['settlement_delta_seconds']['min'] is not None else 'none'} "
+        f"settlement_delta_max={summary['settlement_delta_seconds']['max'] if summary['settlement_delta_seconds']['max'] is not None else 'none'} "
         f"paper_candidate_ids={','.join(paper_candidate_ids) if paper_candidate_ids else 'none'} "
         f"max_quote_age_seconds={summary['quote_freshness']['max_quote_age_seconds'] if summary['quote_freshness']['max_quote_age_seconds'] is not None else 'unknown'} "
         f"stale_quote_warning={str(summary['quote_freshness']['stale_quote_warning']).lower()} "
         f"summary={summary_json_output}"
     )
+    print(
+        "mlb_world_series_paper_check_preflight "
+        f"source_polymarket_snapshot={summary['evaluated_paths']['source_polymarket_snapshot']} "
+        f"source_kalshi_snapshot={summary['evaluated_paths']['source_kalshi_snapshot']} "
+        f"pairs_evaluated={summary['evaluated_paths']['pairs_evaluated']} "
+        f"same_payoff_board={summary['evaluated_paths']['same_payoff_board_used']} "
+        f"polymarket_enriched_orderbook={summary['evaluated_paths']['polymarket_enriched_orderbook_used']} "
+        f"kalshi_enriched_orderbook={summary['evaluated_paths']['kalshi_enriched_orderbook_used']} "
+        f"quote_freshness={summary['preflight']['quote_freshness_status']['status']} "
+        f"fee_models=polymarket:{summary['preflight']['fee_model_names']['polymarket']},kalshi:{summary['preflight']['fee_model_names']['kalshi']} "
+        f"settlement_normalization_trust={summary['preflight']['settlement_normalization_trust']['status']} "
+        f"depth_top_of_book=polymarket:{summary['preflight']['top_of_book_depth_status']['polymarket']['status']},kalshi:{summary['preflight']['top_of_book_depth_status']['kalshi']['status']} "
+        f"generic_live_readonly_warning={summary['preflight']['generic_live_readonly_warning'] or 'none'}"
+    )
+    phase = summary["blocker_drilldown"]["phase_diagnosis"]
+    print(
+        "mlb_world_series_paper_check_blocker_drilldown "
+        f"board_failed_before_evidence={str(phase['same_payoff_board_failed_before_evidence_attachment']).lower()} "
+        f"evidence_attachment_failed={str(phase['evidence_attachment_failed']).lower()} "
+        f"evaluator_rejected_trusted_relationships={str(phase['evaluator_rejected_trusted_relationships']).lower()} "
+        f"orderbook_execution_failed={str(phase['orderbook_execution_failed']).lower()} "
+        f"settlement_normalization_requested={','.join(summary['settlement_normalization_counts']['requested']) or 'none'} "
+        f"settlement_normalization_evidence={summary['settlement_normalization_counts']['evidence_normalization_count']} "
+        f"settlement_normalization_accepted={summary['settlement_normalization_counts']['accepted_by_evaluator_count']} "
+        f"settlement_normalization_rejected={summary['settlement_normalization_counts']['rejected_by_evaluator_count']}"
+    )
+    audit_summary = settlement_audit["summary"]
+    print(
+        "mlb_world_series_settlement_audit_status=OK "
+        f"audited_pairs={audit_summary['audited_pairs']} "
+        f"source_mismatch_count={audit_summary['source_mismatch_count']} "
+        f"time_mismatch_count={audit_summary['time_mismatch_count']} "
+        f"parser_missing_count={audit_summary['parser_missing_count']} "
+        f"unknown_count={audit_summary['unknown_count']} "
+        f"top_blocked_examples={settlement_audit_json_output}"
+    )
+    if summary["preflight"]["generic_live_readonly_warning"]:
+        print(
+            "GENERIC_LIVE_READONLY_WARNING "
+            f"{summary['preflight']['generic_live_readonly_warning']} "
+            "prefer=reports/live_readonly/mlb"
+        )
     if counts.get("PAPER_CANDIDATE", 0):
+        print(
+            "STOP_FOR_REVIEW paper_candidates_detected="
+            f"{counts.get('PAPER_CANDIDATE', 0)} ids={','.join(paper_candidate_ids)} "
+            "diagnostics_only=true no_trading_or_execution_performed=true"
+        )
         print(
             "STOP_AND_REVIEW paper_candidates_detected="
             f"{counts.get('PAPER_CANDIDATE', 0)} ids={','.join(paper_candidate_ids)} "
@@ -8223,6 +8324,11 @@ def run_nba_championship_paper_check(
     )
     if counts.get("PAPER_CANDIDATE", 0):
         print(
+            "STOP_FOR_REVIEW paper_candidates_detected="
+            f"{counts.get('PAPER_CANDIDATE', 0)} ids={','.join(paper_candidate_ids)} "
+            "diagnostics_only=true no_trading_or_execution_performed=true"
+        )
+        print(
             "STOP_AND_REVIEW paper_candidates_detected="
             f"{counts.get('PAPER_CANDIDATE', 0)} ids={','.join(paper_candidate_ids)} "
             "diagnostics_only=true no_trading_or_execution_performed=true"
@@ -8297,6 +8403,41 @@ def _empty_pair_join_validation() -> dict[str, int]:
         "missing_polymarket_enriched_market": 0,
         "missing_kalshi_enriched_market": 0,
     }
+
+
+def _validate_mlb_paper_check_report_inputs(
+    *,
+    label: str,
+    payload: Any,
+    expected: dict[str, Path],
+) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError(f"mlb_paper_check_report_inputs_missing sub_step={label} missing_payload=true")
+    inputs = payload.get("inputs")
+    if not isinstance(inputs, dict):
+        raise ValueError(f"mlb_paper_check_report_inputs_missing sub_step={label} missing_inputs=true")
+    missing_keys = []
+    mismatches = []
+    for key, expected_path in expected.items():
+        actual = inputs.get(key)
+        if actual is None:
+            missing_keys.append(key)
+            continue
+        if not _same_report_path(actual, expected_path):
+            mismatches.append(f"{key}:expected={expected_path}:actual={actual}")
+    if missing_keys:
+        raise ValueError(f"mlb_paper_check_report_inputs_missing sub_step={label} missing_inputs={','.join(missing_keys)}")
+    if mismatches:
+        raise ValueError(f"snapshot_set_mismatch {label} " + " ".join(mismatches))
+
+
+def _same_report_path(actual: Any, expected: Path) -> bool:
+    try:
+        actual_path = Path(str(actual)).expanduser()
+        expected_path = Path(expected).expanduser()
+        return actual_path.resolve(strict=False) == expected_path.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return str(actual) == str(expected)
 
 
 def _validate_mlb_world_series_snapshot_universe(
@@ -8410,6 +8551,8 @@ def _mlb_world_series_paper_check_summary(
     evaluator_output: Path,
     summary_json_output: Path,
     summary_markdown_output: Path,
+    settlement_audit_json_output: Path | None = None,
+    settlement_audit_markdown_output: Path | None = None,
     polymarket_enriched: dict[str, Any],
     kalshi_enriched: dict[str, Any],
     rebuilt_pairs: dict[str, Any] | None = None,
@@ -8432,11 +8575,31 @@ def _mlb_world_series_paper_check_summary(
     evaluator_counts = evaluator.get("counts_by_action") if isinstance(evaluator.get("counts_by_action"), dict) else {}
     top_reasons = _top_rejection_reasons(evaluator)
     quote_freshness = _paper_check_quote_freshness(evaluator, generated_at, max_quote_age_seconds)
+    depth_status = _paper_check_depth_status(evaluator, polymarket_enriched, kalshi_enriched)
+    blocker_drilldown = _paper_check_blocker_drilldown(
+        board=board,
+        derived_pairs=derived_pairs,
+        evaluator=evaluator,
+        trusted_settlement_normalizations=trusted_settlement_normalizations,
+    )
+    settlement_source_audit = _mlb_world_series_settlement_audit(
+        generated_at=generated_at,
+        board=board,
+        evaluator=evaluator,
+        trusted_settlement_normalizations=trusted_settlement_normalizations,
+        json_output=settlement_audit_json_output,
+        markdown_output=settlement_audit_markdown_output,
+    )
     paper_candidate_ids = [
         str(row.get("candidate_id"))
         for row in evaluator.get("ledger", [])
         if isinstance(row, dict) and row.get("action") == "PAPER_CANDIDATE" and row.get("candidate_id")
     ]
+    counts = {
+        "PAPER_CANDIDATE": int(evaluator_counts.get("PAPER_CANDIDATE") or 0),
+        "MANUAL_REVIEW": int(evaluator_counts.get("MANUAL_REVIEW") or 0),
+        "WATCH": int(evaluator_counts.get("WATCH") or 0),
+    }
     return {
         "schema_version": 1,
         "source": source,
@@ -8446,6 +8609,16 @@ def _mlb_world_series_paper_check_summary(
             "polymarket_snapshot": str(polymarket_snapshot),
             "kalshi_snapshot": str(kalshi_snapshot),
             "pairs": str(pairs),
+        },
+        "evaluated_paths": {
+            "source_polymarket_snapshot": str(polymarket_snapshot),
+            "source_kalshi_snapshot": str(kalshi_snapshot),
+            "pairs_evaluated": str(pairs),
+            "same_payoff_board_used": str(board_json_output),
+            "same_payoff_evidence_pairs_used": str(derived_pairs_output),
+            "polymarket_enriched_orderbook_used": str(polymarket_enriched_output),
+            "kalshi_enriched_orderbook_used": str(kalshi_enriched_output),
+            "evaluator_used": str(evaluator_output),
         },
         "outputs": {
             "polymarket_enriched": str(polymarket_enriched_output),
@@ -8458,6 +8631,8 @@ def _mlb_world_series_paper_check_summary(
             "evaluator": str(evaluator_output),
             "summary_json": str(summary_json_output),
             "summary_markdown": str(summary_markdown_output),
+            "settlement_audit_json": str(settlement_audit_json_output) if settlement_audit_json_output else None,
+            "settlement_audit_markdown": str(settlement_audit_markdown_output) if settlement_audit_markdown_output else None,
         },
         "parameters": {
             "max_snapshot_age_hours": max_snapshot_age_hours,
@@ -8480,15 +8655,71 @@ def _mlb_world_series_paper_check_summary(
         "trusted_relationships": int(
             (derived_pairs.get("same_payoff_evidence_attachment") or {}).get("trusted_relationship_attached_count") or 0
         ),
-        "evaluator_counts": {
-            "PAPER_CANDIDATE": int(evaluator_counts.get("PAPER_CANDIDATE") or 0),
-            "MANUAL_REVIEW": int(evaluator_counts.get("MANUAL_REVIEW") or 0),
-            "WATCH": int(evaluator_counts.get("WATCH") or 0),
-        },
+        "evaluator_counts": counts,
+        "paper_count": counts["PAPER_CANDIDATE"],
+        "watch_manual_review_count": counts["WATCH"] + counts["MANUAL_REVIEW"],
+        "killed_rejected_count": counts["WATCH"],
         "dominant_blocker": top_reasons[0]["reason"] if top_reasons else None,
         "top_rejection_reasons": top_reasons,
+        "blocker_drilldown": blocker_drilldown,
+        "strict_same_payoff_blocker_counts": blocker_drilldown["strict_same_payoff_blocker_counts"],
+        "trusted_relationship_blocker_counts": blocker_drilldown["trusted_relationship_blocker_counts"],
+        "evaluator_blocker_counts": blocker_drilldown["evaluator_blocker_counts"],
+        "settlement_delta_seconds": blocker_drilldown["settlement_delta_seconds"],
+        "settlement_normalization_counts": blocker_drilldown["settlement_normalization_counts"],
+        "blocked_pair_examples": blocker_drilldown["blocked_pair_examples"],
+        "settlement_source_audit": settlement_source_audit,
         "paper_candidate_ids": paper_candidate_ids,
         "quote_freshness": quote_freshness,
+        "preflight": {
+            "universe": "mlb_world_series_kxmlb" if source == "mlb_world_series_paper_check_runner" else source,
+            "source_snapshot_paths": {
+                "polymarket_snapshot": str(polymarket_snapshot),
+                "kalshi_snapshot": str(kalshi_snapshot),
+            },
+            "paths_are_universe_specific": _paper_check_paths_are_universe_specific(
+                universe="mlb" if source == "mlb_world_series_paper_check_runner" else None,
+                paths=[
+                    polymarket_snapshot,
+                    kalshi_snapshot,
+                    pairs,
+                    board_json_output,
+                    derived_pairs_output,
+                    polymarket_enriched_output,
+                    kalshi_enriched_output,
+                    evaluator_output,
+                ],
+            ),
+            "generic_live_readonly_warning": _paper_check_generic_live_readonly_warning(
+                paths=[polymarket_snapshot, kalshi_snapshot, pairs, polymarket_enriched_output, kalshi_enriched_output],
+            ),
+            "pair_file_evaluated": str(pairs),
+            "same_payoff_board_evidence_file_evaluated": str(board_json_output),
+            "same_payoff_evidence_pairs_file_evaluated": str(derived_pairs_output),
+            "enriched_orderbook_files_evaluated": {
+                "polymarket": str(polymarket_enriched_output),
+                "kalshi": str(kalshi_enriched_output),
+            },
+            "quote_freshness_status": {
+                "status": "stale_or_missing" if quote_freshness["stale_quote_warning"] else "fresh_or_not_flagged",
+                **quote_freshness,
+            },
+            "fee_model_names": {
+                "polymarket": type(PolymarketConservativeFeeModel()).__name__,
+                "kalshi": type(KalshiTieredFeeModel()).__name__,
+            },
+            "settlement_normalization_trust": {
+                "requested": sorted(trusted_settlement_normalizations),
+                "status": "requested" if trusted_settlement_normalizations else "absent",
+                "mlb_only_allowed_value": "mlb_world_series_timezone_convention_drift",
+            },
+            "top_of_book_depth_status": depth_status,
+            "paper_count": counts["PAPER_CANDIDATE"],
+            "watch_manual_review_count": counts["WATCH"] + counts["MANUAL_REVIEW"],
+            "rejected_count": counts["WATCH"],
+            "top_blockers": [row["reason"] for row in top_reasons[:5]],
+            "phase_diagnosis": blocker_drilldown["phase_diagnosis"],
+        },
         "safety": {
             "explicit_saved_snapshot_inputs_required": True,
             "original_inputs_mutated": False,
@@ -8504,6 +8735,494 @@ def _mlb_world_series_paper_check_summary(
             "STOP_AND_REVIEW when PAPER_CANDIDATE appears. It does not trade or execute."
         ),
     }
+
+
+def _paper_check_blocker_drilldown(
+    *,
+    board: dict[str, Any],
+    derived_pairs: dict[str, Any],
+    evaluator: dict[str, Any],
+    trusted_settlement_normalizations: frozenset[str],
+) -> dict[str, Any]:
+    board_rows = [row for row in board.get("rows", []) if isinstance(row, dict)]
+    evaluator_rows = [row for row in evaluator.get("ledger", []) if isinstance(row, dict)]
+    strict_counts = Counter(
+        str(blocker)
+        for row in board_rows
+        for blocker in row.get("strict_blockers", [])
+        if blocker
+    )
+    trusted_counts = _trusted_relationship_blocker_counts(derived_pairs, board_rows)
+    evaluator_counts = Counter()
+    settlement_deltas: list[float] = []
+    for row in evaluator_rows:
+        missed = row.get("missed_fill_reason")
+        if missed:
+            evaluator_counts[f"missed_fill:{missed}"] += 1
+        reasons = row.get("ineligibility_reasons") if isinstance(row.get("ineligibility_reasons"), list) else []
+        for reason in reasons:
+            if reason:
+                evaluator_counts[str(reason)] += 1
+        gap = row.get("gap") if isinstance(row.get("gap"), dict) else {}
+        delta = float_or_none(gap.get("settlement_delta_seconds"))
+        if delta is not None:
+            settlement_deltas.append(float(delta))
+    normalization_counts = _settlement_normalization_counts(
+        derived_pairs=derived_pairs,
+        evaluator_rows=evaluator_rows,
+        trusted_settlement_normalizations=trusted_settlement_normalizations,
+    )
+    return {
+        "strict_same_payoff_blocker_counts": _counter_dict(strict_counts),
+        "trusted_relationship_blocker_counts": _counter_dict(trusted_counts),
+        "evaluator_blocker_counts": _counter_dict(evaluator_counts),
+        "settlement_delta_seconds": {
+            "count": len(settlement_deltas),
+            "min": round(min(settlement_deltas), 6) if settlement_deltas else None,
+            "max": round(max(settlement_deltas), 6) if settlement_deltas else None,
+        },
+        "settlement_normalization_counts": normalization_counts,
+        "phase_diagnosis": _paper_check_phase_diagnosis(
+            board=board,
+            derived_pairs=derived_pairs,
+            evaluator=evaluator,
+            strict_counts=strict_counts,
+            trusted_counts=trusted_counts,
+            evaluator_counts=evaluator_counts,
+        ),
+        "blocked_pair_examples": _blocked_pair_examples(board_rows, evaluator_rows),
+    }
+
+
+def _mlb_world_series_settlement_audit(
+    *,
+    generated_at: datetime,
+    board: dict[str, Any],
+    evaluator: dict[str, Any],
+    trusted_settlement_normalizations: frozenset[str],
+    json_output: Path | None,
+    markdown_output: Path | None,
+    limit: int = 5,
+) -> dict[str, Any]:
+    board_rows = [row for row in board.get("rows", []) if isinstance(row, dict)]
+    evaluator_by_id = {
+        _paper_check_ledger_identity(row): row
+        for row in evaluator.get("ledger", [])
+        if isinstance(row, dict) and _paper_check_ledger_identity(row)
+    }
+    audited_rows = []
+    for row in board_rows:
+        blockers = [str(blocker) for blocker in row.get("strict_blockers") or row.get("blockers") or []]
+        missing = [str(field) for field in row.get("strict_missing_fields") or row.get("missing_fields") or []]
+        if not any("settlement" in value for value in [*blockers, *missing]):
+            continue
+        evaluator_row = evaluator_by_id.get(_paper_check_board_identity(row), {})
+        audited_rows.append(_mlb_settlement_audit_row(row, evaluator_row, trusted_settlement_normalizations))
+    audited_rows = audited_rows[:limit]
+    counts = Counter(row["classification"] for row in audited_rows)
+    return {
+        "schema_version": 1,
+        "source": "mlb_world_series_settlement_source_audit_v1",
+        "generated_at": generated_at.isoformat(),
+        "diagnostic_only": True,
+        "outputs": {
+            "json": str(json_output) if json_output else None,
+            "markdown": str(markdown_output) if markdown_output else None,
+        },
+        "summary": {
+            "audited_pairs": len(audited_rows),
+            "source_mismatch_count": counts.get("real_source_mismatch", 0),
+            "time_mismatch_count": counts.get("real_time_mismatch", 0) + counts.get("unsupported_normalization_case", 0),
+            "parser_missing_count": counts.get("parser_missing_data", 0),
+            "unknown_count": counts.get("unknown", 0),
+            "classification_counts": dict(sorted(counts.items())),
+        },
+        "rows": audited_rows,
+        "safety": {
+            "reporting_only": True,
+            "does_not_emit_trusted_evidence": True,
+            "does_not_change_same_payoff_board": True,
+            "does_not_emit_paper_candidate": True,
+            "settlement_trust_expanded": False,
+            "trading_or_execution_performed": False,
+        },
+        "disclaimer": (
+            "Reporting-only MLB settlement/source audit. This does not alter same-payoff board decisions, "
+            "does not attach trusted evidence, and does not emit PAPER_CANDIDATE."
+        ),
+    }
+
+
+def _mlb_settlement_audit_row(
+    board_row: dict[str, Any],
+    evaluator_row: dict[str, Any],
+    trusted_settlement_normalizations: frozenset[str],
+) -> dict[str, Any]:
+    poly = board_row.get("polymarket") if isinstance(board_row.get("polymarket"), dict) else {}
+    kalshi = board_row.get("kalshi") if isinstance(board_row.get("kalshi"), dict) else {}
+    evidence = board_row.get("same_payoff_evidence") if isinstance(board_row.get("same_payoff_evidence"), dict) else {}
+    source_cmp = evidence.get("settlement_source") if isinstance(evidence.get("settlement_source"), dict) else {}
+    time_cmp = evidence.get("settlement_time") if isinstance(evidence.get("settlement_time"), dict) else {}
+    source_values = source_cmp.get("values") if isinstance(source_cmp.get("values"), dict) else {}
+    time_values = time_cmp.get("values") if isinstance(time_cmp.get("values"), dict) else {}
+    gap = evaluator_row.get("gap") if isinstance(evaluator_row.get("gap"), dict) else {}
+    settlement_delta = gap.get("settlement_delta_seconds")
+    if settlement_delta is None:
+        settlement_delta = time_values.get("delta_seconds")
+    normalization = time_values.get("normalization")
+    normalized_requested = normalization in trusted_settlement_normalizations if normalization else False
+    strict_blockers = [str(blocker) for blocker in board_row.get("strict_blockers") or []]
+    classification = _mlb_settlement_audit_classification(
+        strict_blockers=strict_blockers,
+        source_cmp=source_cmp,
+        time_cmp=time_cmp,
+        evaluator_row=evaluator_row,
+        normalization=normalization,
+        normalized_requested=normalized_requested,
+    )
+    return {
+        "candidate_id": f"{poly.get('market_id') or ''}__{kalshi.get('ticker') or kalshi.get('market_id') or ''}",
+        "polymarket": {
+            "market_id": poly.get("market_id"),
+            "question": poly.get("question"),
+            "title": poly.get("title") or poly.get("event_title"),
+        },
+        "kalshi": {
+            "ticker": kalshi.get("ticker") or kalshi.get("market_id"),
+            "title": kalshi.get("title") or kalshi.get("question") or kalshi.get("event_title"),
+        },
+        "parsed_team_entity": {
+            "polymarket": _audit_team_id(poly, evidence, "polymarket"),
+            "kalshi": _audit_team_id(kalshi, evidence, "kalshi"),
+        },
+        "parsed_settlement_source_fields": {
+            "polymarket": source_values.get("polymarket"),
+            "kalshi": source_values.get("kalshi"),
+            "source_status": source_cmp.get("status"),
+        },
+        "parsed_settlement_timestamps": {
+            "polymarket": _audit_time_value(time_values, "polymarket"),
+            "kalshi": _audit_time_value(time_values, "kalshi"),
+            "time_status": time_cmp.get("status"),
+        },
+        "settlement_delta_seconds": settlement_delta,
+        "normalization": {
+            "requested": sorted(trusted_settlement_normalizations),
+            "board_normalization": normalization,
+            "requested_for_pair": normalized_requested,
+            "accepted": _audit_normalization_accepted(evaluator_row, normalization, normalized_requested),
+            "rejected_reason": _audit_normalization_rejected_reason(evaluator_row, normalization, normalized_requested),
+        },
+        "strict_blockers": strict_blockers,
+        "classification": classification,
+    }
+
+
+def _mlb_settlement_audit_classification(
+    *,
+    strict_blockers: list[str],
+    source_cmp: dict[str, Any],
+    time_cmp: dict[str, Any],
+    evaluator_row: dict[str, Any],
+    normalization: Any,
+    normalized_requested: bool,
+) -> str:
+    if source_cmp.get("status") == "MISSING" or time_cmp.get("status") == "MISSING":
+        return "parser_missing_data"
+    if "settlement_source_mismatch" in strict_blockers or source_cmp.get("status") == "FAIL":
+        return "real_source_mismatch"
+    if evaluator_row.get("missed_fill_reason") == "settlement_delta_exceeds_limit":
+        if normalization and not normalized_requested:
+            return "unsupported_normalization_case"
+        return "real_time_mismatch"
+    if (
+        "settlement_date_drift" in strict_blockers
+        or any("settlement_time" in blocker or "settlement_delta" in blocker for blocker in strict_blockers)
+        or time_cmp.get("status") == "FAIL"
+    ):
+        return "real_time_mismatch"
+    return "unknown"
+
+
+def _audit_team_id(market: dict[str, Any], evidence: dict[str, Any], venue: str) -> Any:
+    for key in ("market_event_entity", "sports_league_team"):
+        comparator = evidence.get(key) if isinstance(evidence.get(key), dict) else {}
+        values = comparator.get("values") if isinstance(comparator.get("values"), dict) else {}
+        profile = values.get(venue) if isinstance(values.get(venue), dict) else {}
+        if profile.get("team_id"):
+            return profile.get("team_id")
+    text = " ".join(str(market.get(key) or "") for key in ("question", "title", "event_title", "market_id", "ticker"))
+    match = re.search(r"\b([A-Z]{2,3})\b", text)
+    return match.group(1) if match else None
+
+
+def _audit_time_value(values: dict[str, Any], venue: str) -> Any:
+    side = values.get(venue) if isinstance(values.get(venue), dict) else {}
+    return side.get("end_date") or side.get("close_time") or side.get("settlement_time") or values.get(venue)
+
+
+def _audit_normalization_accepted(evaluator_row: dict[str, Any], normalization: Any, requested: bool) -> bool:
+    return bool(normalization and requested and evaluator_row.get("missed_fill_reason") != "settlement_delta_exceeds_limit")
+
+
+def _audit_normalization_rejected_reason(evaluator_row: dict[str, Any], normalization: Any, requested: bool) -> str | None:
+    if not normalization:
+        return "no_board_settlement_time_normalization"
+    if not requested:
+        return "normalization_not_requested"
+    if evaluator_row.get("missed_fill_reason") == "settlement_delta_exceeds_limit":
+        return "evaluator_settlement_delta_exceeds_limit"
+    return None
+
+
+def _paper_check_board_identity(row: dict[str, Any]) -> str:
+    poly = row.get("polymarket") if isinstance(row.get("polymarket"), dict) else {}
+    kalshi = row.get("kalshi") if isinstance(row.get("kalshi"), dict) else {}
+    return f"{poly.get('market_id') or ''}__{kalshi.get('ticker') or kalshi.get('market_id') or ''}"
+
+
+def _paper_check_ledger_identity(row: dict[str, Any]) -> str:
+    poly = row.get("polymarket") if isinstance(row.get("polymarket"), dict) else {}
+    kalshi = row.get("kalshi") if isinstance(row.get("kalshi"), dict) else {}
+    return f"{poly.get('market_id') or ''}__{kalshi.get('ticker') or ''}"
+
+
+def _trusted_relationship_blocker_counts(derived_pairs: dict[str, Any], board_rows: list[dict[str, Any]]) -> Counter:
+    counts: Counter = Counter()
+    attachment = derived_pairs.get("same_payoff_evidence_attachment")
+    if isinstance(attachment, dict):
+        if int(attachment.get("unmatched_pair_count") or 0):
+            counts["evidence_unmatched_pair"] += int(attachment.get("unmatched_pair_count") or 0)
+        if int(attachment.get("ambiguous_identity_count") or 0):
+            counts["evidence_ambiguous_identity"] += int(attachment.get("ambiguous_identity_count") or 0)
+    if board_rows:
+        for row in board_rows:
+            if row.get("same_payoff") is True:
+                continue
+            for blocker in row.get("strict_blockers", []) or ["strict_same_payoff_not_passed"]:
+                counts[str(blocker)] += 1
+    pairs = derived_pairs.get("pairs") if isinstance(derived_pairs.get("pairs"), list) else []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        relationship = pair.get("contract_relationship")
+        if not isinstance(relationship, dict):
+            counts["missing_trusted_contract_relationship"] += 1
+            continue
+        if relationship.get("source") != "same_payoff_board_v1":
+            counts["relationship_source_not_same_payoff_board_v1"] += 1
+        if relationship.get("relationship") != "EQUIVALENT" or relationship.get("same_payoff") is not True:
+            counts["relationship_not_trusted_equivalent"] += 1
+        for blocker in relationship.get("blocking_reasons") or []:
+            counts[str(blocker)] += 1
+    return counts
+
+
+def _settlement_normalization_counts(
+    *,
+    derived_pairs: dict[str, Any],
+    evaluator_rows: list[dict[str, Any]],
+    trusted_settlement_normalizations: frozenset[str],
+) -> dict[str, Any]:
+    requested = sorted(trusted_settlement_normalizations)
+    evidence_normalization_count = 0
+    requested_evidence_count = 0
+    rejected_by_evaluator = 0
+    pairs = derived_pairs.get("pairs") if isinstance(derived_pairs.get("pairs"), list) else []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        relationship = pair.get("contract_relationship") if isinstance(pair.get("contract_relationship"), dict) else {}
+        evidence = relationship.get("same_payoff_board_evidence") if isinstance(relationship.get("same_payoff_board_evidence"), dict) else {}
+        normalization = evidence.get("settlement_time_normalization")
+        if normalization:
+            evidence_normalization_count += 1
+            if normalization in trusted_settlement_normalizations:
+                requested_evidence_count += 1
+    for row in evaluator_rows:
+        if row.get("missed_fill_reason") == "settlement_delta_exceeds_limit":
+            rejected_by_evaluator += 1
+    return {
+        "requested": requested,
+        "evidence_normalization_count": evidence_normalization_count,
+        "requested_evidence_count": requested_evidence_count,
+        "accepted_by_evaluator_count": max(requested_evidence_count - rejected_by_evaluator, 0),
+        "rejected_by_evaluator_count": rejected_by_evaluator,
+    }
+
+
+def _paper_check_phase_diagnosis(
+    *,
+    board: dict[str, Any],
+    derived_pairs: dict[str, Any],
+    evaluator: dict[str, Any],
+    strict_counts: Counter,
+    trusted_counts: Counter,
+    evaluator_counts: Counter,
+) -> dict[str, Any]:
+    strict_passes = int(board.get("strict_same_payoff_pass_count") or 0)
+    attachment = derived_pairs.get("same_payoff_evidence_attachment") if isinstance(derived_pairs.get("same_payoff_evidence_attachment"), dict) else {}
+    trusted = int(attachment.get("trusted_relationship_attached_count") or 0)
+    evaluator_rows = len([row for row in evaluator.get("ledger", []) if isinstance(row, dict)])
+    return {
+        "same_payoff_board_failed_before_evidence_attachment": strict_passes == 0 and bool(strict_counts),
+        "evidence_attachment_failed": strict_passes > 0 and trusted == 0 and bool(trusted_counts),
+        "evaluator_rejected_trusted_relationships": trusted > 0 and bool(evaluator_counts),
+        "orderbook_execution_failed": any(
+            key
+            for key in evaluator_counts
+            if "depth" in key or "quote" in key or "gap" in key or "settlement_delta" in key
+        ),
+        "evaluator_rows": evaluator_rows,
+    }
+
+
+def _blocked_pair_examples(board_rows: list[dict[str, Any]], evaluator_rows: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
+    board_by_id = {}
+    for row in board_rows:
+        poly = row.get("polymarket") if isinstance(row.get("polymarket"), dict) else {}
+        kalshi = row.get("kalshi") if isinstance(row.get("kalshi"), dict) else {}
+        key = (str(poly.get("market_id") or ""), str(kalshi.get("ticker") or ""))
+        board_by_id[key] = row
+    examples = []
+    for index, row in enumerate(evaluator_rows):
+        if not isinstance(row, dict):
+            continue
+        poly = row.get("polymarket") if isinstance(row.get("polymarket"), dict) else {}
+        kalshi = row.get("kalshi") if isinstance(row.get("kalshi"), dict) else {}
+        key = (str(poly.get("market_id") or ""), str(kalshi.get("ticker") or ""))
+        board_row = board_by_id.get(key, {})
+        if not board_row and index < len(board_rows):
+            board_row = board_rows[index]
+            board_poly = board_row.get("polymarket") if isinstance(board_row.get("polymarket"), dict) else {}
+            board_kalshi = board_row.get("kalshi") if isinstance(board_row.get("kalshi"), dict) else {}
+            poly = {**board_poly, **poly}
+            kalshi = {**board_kalshi, **kalshi}
+        blockers = []
+        blockers.extend(str(reason) for reason in row.get("ineligibility_reasons") or [] if reason)
+        if row.get("missed_fill_reason"):
+            blockers.append(f"missed_fill:{row.get('missed_fill_reason')}")
+        blockers.extend(str(blocker) for blocker in board_row.get("strict_blockers", []) if blocker)
+        examples.append(
+            {
+                "candidate_id": row.get("candidate_id"),
+                "polymarket_market_id": poly.get("market_id"),
+                "polymarket_question": poly.get("question"),
+                "kalshi_ticker": kalshi.get("ticker"),
+                "kalshi_question": kalshi.get("question"),
+                "settlement_delta_seconds": (row.get("gap") or {}).get("settlement_delta_seconds") if isinstance(row.get("gap"), dict) else None,
+                "blockers": sorted(set(blockers)),
+            }
+        )
+        if len(examples) >= limit:
+            break
+    if examples:
+        return examples
+    for row in board_rows[:limit]:
+        poly = row.get("polymarket") if isinstance(row.get("polymarket"), dict) else {}
+        kalshi = row.get("kalshi") if isinstance(row.get("kalshi"), dict) else {}
+        examples.append(
+            {
+                "candidate_id": f"{poly.get('market_id')}__{kalshi.get('ticker')}",
+                "polymarket_market_id": poly.get("market_id"),
+                "polymarket_question": poly.get("question"),
+                "kalshi_ticker": kalshi.get("ticker"),
+                "kalshi_question": kalshi.get("question"),
+                "settlement_delta_seconds": _board_settlement_delta(row),
+                "blockers": row.get("strict_blockers") or row.get("blockers") or [],
+            }
+        )
+    return examples
+
+
+def _board_settlement_delta(row: dict[str, Any]) -> Any:
+    evidence = row.get("same_payoff_evidence") if isinstance(row.get("same_payoff_evidence"), dict) else {}
+    settlement = evidence.get("settlement_time") if isinstance(evidence.get("settlement_time"), dict) else {}
+    values = settlement.get("values") if isinstance(settlement.get("values"), dict) else {}
+    return values.get("delta_seconds")
+
+
+def _counter_dict(counter: Counter) -> dict[str, int]:
+    return {str(key): int(value) for key, value in sorted(counter.items(), key=lambda item: (-item[1], str(item[0])))}
+
+
+def _paper_check_paths_are_universe_specific(*, universe: str | None, paths: list[Path]) -> bool:
+    warning = _paper_check_generic_live_readonly_warning(paths=paths)
+    if warning:
+        return False
+    if universe is None:
+        return True
+    expected = f"reports/live_readonly/{universe}"
+    for path in paths:
+        normalized = path.as_posix().lower()
+        if "reports/live_readonly/" in normalized and expected not in normalized:
+            return False
+    return True
+
+
+def _paper_check_generic_live_readonly_warning(*, paths: list[Path]) -> str | None:
+    generic = []
+    for path in paths:
+        normalized = path.as_posix().lower()
+        if "reports/live_readonly/" not in normalized:
+            continue
+        parts = [part.lower() for part in path.parts]
+        try:
+            index = parts.index("live_readonly")
+        except ValueError:
+            continue
+        child = parts[index + 1] if index + 1 < len(parts) else ""
+        if child.endswith(".json") or child.endswith(".md") or not child:
+            generic.append(str(path))
+    if not generic:
+        return None
+    return "GENERIC_LIVE_READONLY_PATH_USED:" + ",".join(generic)
+
+
+def _paper_check_depth_status(
+    evaluator: dict[str, Any],
+    polymarket_enriched: dict[str, Any],
+    kalshi_enriched: dict[str, Any],
+) -> dict[str, Any]:
+    ledger = evaluator.get("ledger") if isinstance(evaluator.get("ledger"), list) else []
+    ledger_status = {
+        "polymarket": _paper_check_ledger_depth_status(ledger, "polymarket"),
+        "kalshi": _paper_check_ledger_depth_status(ledger, "kalshi"),
+    }
+    return {
+        "polymarket": ledger_status["polymarket"] if ledger_status["polymarket"]["status"] != "missing" else _paper_check_snapshot_depth_status(polymarket_enriched),
+        "kalshi": ledger_status["kalshi"] if ledger_status["kalshi"]["status"] != "missing" else _paper_check_snapshot_depth_status(kalshi_enriched),
+    }
+
+
+def _paper_check_ledger_depth_status(ledger: list[Any], venue: str) -> dict[str, Any]:
+    rows_with_depth = 0
+    for row in ledger:
+        if not isinstance(row, dict):
+            continue
+        venue_row = row.get(venue) if isinstance(row.get(venue), dict) else {}
+        if venue_row.get("depth_at_best_bid") is not None and venue_row.get("depth_at_best_ask") is not None:
+            rows_with_depth += 1
+    if rows_with_depth:
+        return {"status": "available", "rows_with_top_of_book_depth": rows_with_depth}
+    return {"status": "missing", "rows_with_top_of_book_depth": 0}
+
+
+def _paper_check_snapshot_depth_status(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = payload.get("normalized_markets") if isinstance(payload.get("normalized_markets"), list) else []
+    rows_with_depth = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        enrichment = row.get("orderbook_enrichment") if isinstance(row.get("orderbook_enrichment"), dict) else row
+        if enrichment.get("depth_at_best_bid") is not None and enrichment.get("depth_at_best_ask") is not None:
+            rows_with_depth += 1
+    if rows_with_depth:
+        return {"status": "available", "rows_with_top_of_book_depth": rows_with_depth}
+    summary = payload.get("orderbook_enrichment") if isinstance(payload.get("orderbook_enrichment"), dict) else {}
+    if int(summary.get("enriched_count") or 0) > 0:
+        return {"status": "enriched_summary_available", "rows_with_top_of_book_depth": 0}
+    return {"status": "missing", "rows_with_top_of_book_depth": 0}
 
 
 def _paper_check_enrichment_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -8554,6 +9273,7 @@ def _paper_check_quote_freshness(
 def _mlb_world_series_paper_check_markdown(payload: dict[str, Any]) -> str:
     counts = payload["evaluator_counts"]
     freshness = payload["quote_freshness"]
+    preflight = payload.get("preflight") if isinstance(payload.get("preflight"), dict) else {}
     lines = [
         f"# {payload.get('title') or 'Paper Check'}",
         "",
@@ -8566,6 +9286,9 @@ def _mlb_world_series_paper_check_markdown(payload: dict[str, Any]) -> str:
         f"- Strict same-payoff passes: `{payload['strict_same_payoff_passes']}`",
         f"- Trusted relationships: `{payload['trusted_relationships']}`",
         f"- Evaluator counts: `PAPER_CANDIDATE={counts['PAPER_CANDIDATE']} MANUAL_REVIEW={counts['MANUAL_REVIEW']} WATCH={counts['WATCH']}`",
+        f"- Paper count: `{payload.get('paper_count', counts['PAPER_CANDIDATE'])}`",
+        f"- Watch/manual-review count: `{payload.get('watch_manual_review_count', counts['WATCH'] + counts['MANUAL_REVIEW'])}`",
+        f"- Killed/rejected count: `{payload.get('killed_rejected_count', counts['WATCH'])}`",
         f"- Dominant blocker: `{payload['dominant_blocker'] or 'none'}`",
         f"- Max quote age seconds: `{freshness['max_quote_age_seconds']}`",
         f"- Stale quote warning: `{freshness['stale_quote_warning']}`",
@@ -8575,9 +9298,119 @@ def _mlb_world_series_paper_check_markdown(payload: dict[str, Any]) -> str:
     ]
     ids = payload.get("paper_candidate_ids") or []
     lines.append(", ".join(ids) if ids else "none")
+    if counts["PAPER_CANDIDATE"] > 0:
+        lines.extend(["", "## STOP_FOR_REVIEW", "", "Paper candidates are present in the evaluated report. Review only; no trading or execution is performed."])
+    lines.extend(
+        [
+            "",
+            "## Operator Preflight",
+            "",
+            f"- Universe: `{preflight.get('universe')}`",
+            f"- Universe-specific paths: `{preflight.get('paths_are_universe_specific')}`",
+            f"- Generic live_readonly warning: `{preflight.get('generic_live_readonly_warning') or 'none'}`",
+            f"- Pair file evaluated: `{preflight.get('pair_file_evaluated')}`",
+            f"- Same-payoff board/evidence file evaluated: `{preflight.get('same_payoff_board_evidence_file_evaluated')}`",
+            f"- Polymarket enriched orderbook: `{(preflight.get('enriched_orderbook_files_evaluated') or {}).get('polymarket')}`",
+            f"- Kalshi enriched orderbook: `{(preflight.get('enriched_orderbook_files_evaluated') or {}).get('kalshi')}`",
+            f"- Quote freshness status: `{(preflight.get('quote_freshness_status') or {}).get('status')}`",
+            f"- Fee models: Polymarket `{(preflight.get('fee_model_names') or {}).get('polymarket')}`, Kalshi `{(preflight.get('fee_model_names') or {}).get('kalshi')}`",
+            f"- Settlement normalization trust: `{(preflight.get('settlement_normalization_trust') or {}).get('status')}`",
+            f"- Depth/top-of-book: Polymarket `{((preflight.get('top_of_book_depth_status') or {}).get('polymarket') or {}).get('status')}`, Kalshi `{((preflight.get('top_of_book_depth_status') or {}).get('kalshi') or {}).get('status')}`",
+            f"- Counts: paper `{preflight.get('paper_count')}`, watch/manual_review `{preflight.get('watch_manual_review_count')}`, rejected `{preflight.get('rejected_count')}`",
+            f"- Top blockers: `{','.join(preflight.get('top_blockers') or []) or 'none'}`",
+        ]
+    )
+    drilldown = payload.get("blocker_drilldown") if isinstance(payload.get("blocker_drilldown"), dict) else {}
+    phase = drilldown.get("phase_diagnosis") if isinstance(drilldown.get("phase_diagnosis"), dict) else {}
+    settlement = drilldown.get("settlement_delta_seconds") if isinstance(drilldown.get("settlement_delta_seconds"), dict) else {}
+    normalization = drilldown.get("settlement_normalization_counts") if isinstance(drilldown.get("settlement_normalization_counts"), dict) else {}
+    lines.extend(
+        [
+            "",
+            "## Blocker Drilldown",
+            "",
+            f"- Same-payoff board failed before evidence attachment: `{phase.get('same_payoff_board_failed_before_evidence_attachment')}`",
+            f"- Evidence attachment failed: `{phase.get('evidence_attachment_failed')}`",
+            f"- Evaluator rejected trusted relationships: `{phase.get('evaluator_rejected_trusted_relationships')}`",
+            f"- Orderbook execution failed: `{phase.get('orderbook_execution_failed')}`",
+            f"- Strict same-payoff blockers: `{payload.get('strict_same_payoff_blocker_counts')}`",
+            f"- Trusted relationship blockers: `{payload.get('trusted_relationship_blocker_counts')}`",
+            f"- Evaluator blockers: `{payload.get('evaluator_blocker_counts')}`",
+            f"- Settlement delta seconds: min `{settlement.get('min')}`, max `{settlement.get('max')}`",
+            f"- Settlement normalization: requested `{normalization.get('requested')}`, accepted `{normalization.get('accepted_by_evaluator_count')}`, rejected `{normalization.get('rejected_by_evaluator_count')}`",
+            "",
+            "### Blocked Pair Examples",
+            "",
+        ]
+    )
+    for example in payload.get("blocked_pair_examples") or []:
+        if not isinstance(example, dict):
+            continue
+        lines.append(
+            f"- `{example.get('candidate_id')}` poly=`{example.get('polymarket_market_id')}` "
+            f"kalshi=`{example.get('kalshi_ticker')}` settlement_delta=`{example.get('settlement_delta_seconds')}` "
+            f"blockers=`{','.join(example.get('blockers') or []) or 'none'}`"
+        )
+    audit = payload.get("settlement_source_audit") if isinstance(payload.get("settlement_source_audit"), dict) else {}
+    audit_summary = audit.get("summary") if isinstance(audit.get("summary"), dict) else {}
+    lines.extend(
+        [
+            "",
+            "## Settlement Source Audit",
+            "",
+            f"- Audited pairs: `{audit_summary.get('audited_pairs')}`",
+            f"- Source mismatch count: `{audit_summary.get('source_mismatch_count')}`",
+            f"- Time mismatch count: `{audit_summary.get('time_mismatch_count')}`",
+            f"- Parser missing count: `{audit_summary.get('parser_missing_count')}`",
+            f"- Unknown count: `{audit_summary.get('unknown_count')}`",
+        ]
+    )
+    lines.extend(["", "## Evaluated Paths", ""])
+    for key, value in payload.get("evaluated_paths", {}).items():
+        lines.append(f"- {key}: `{value}`")
     lines.extend(["", "## Outputs", ""])
     for key, value in payload["outputs"].items():
         lines.append(f"- {key}: `{value}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _mlb_world_series_settlement_audit_markdown(payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    lines = [
+        "# MLB World Series Settlement Audit",
+        "",
+        str(payload.get("disclaimer") or ""),
+        "",
+        "## Summary",
+        "",
+        f"- Audited pairs: `{summary.get('audited_pairs')}`",
+        f"- Source mismatch count: `{summary.get('source_mismatch_count')}`",
+        f"- Time mismatch count: `{summary.get('time_mismatch_count')}`",
+        f"- Parser missing count: `{summary.get('parser_missing_count')}`",
+        f"- Unknown count: `{summary.get('unknown_count')}`",
+        "",
+        "| Classification | Polymarket | Kalshi | Delta seconds | Normalization | Strict blockers |",
+        "|---|---|---|---:|---|---|",
+    ]
+    for row in payload.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        normalization = row.get("normalization") if isinstance(row.get("normalization"), dict) else {}
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row.get("classification")),
+                    _markdown_cell((row.get("polymarket") or {}).get("market_id")),
+                    _markdown_cell((row.get("kalshi") or {}).get("ticker")),
+                    _markdown_cell(row.get("settlement_delta_seconds")),
+                    _markdown_cell(normalization.get("board_normalization") or normalization.get("rejected_reason")),
+                    _markdown_cell(",".join(row.get("strict_blockers") or []) or "none"),
+                ]
+            )
+            + " |"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -8600,6 +9433,7 @@ def discover_exact_paper_candidate_universes(*, json_output: Path, markdown_outp
         "exact_paper_candidate_universes_status=OK "
         f"universes={summary['universe_count']} "
         f"closest={closest} "
+        f"next_strict={summary.get('next_universe_by_strict_criteria') or 'none'} "
         f"paper_candidates={summary['paper_candidate_count']} "
         f"execution_data={counts.get('EXECUTION_DATA_AVAILABLE', 0)} "
         f"trusted_relationships={counts.get('TRUSTED_RELATIONSHIPS_AVAILABLE', 0)} "
@@ -8608,7 +9442,38 @@ def discover_exact_paper_candidate_universes(*, json_output: Path, markdown_outp
         f"no_inventory={counts.get('NO_INVENTORY', 0)} "
         f"json={json_output} markdown={markdown_output}"
     )
+    print(_exact_universe_readiness_table(payload))
     return 0
+
+
+def _exact_universe_readiness_table(payload: dict[str, Any]) -> str:
+    rows = payload.get("universes") if isinstance(payload.get("universes"), list) else []
+    lines = [
+        "universe | inventory | universe_paths | pairs | strict | trusted | fresh_ob | evaluator | paper | review | top_fail_closed",
+        "--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---",
+    ]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        reasons = row.get("top_fail_closed_reasons") if isinstance(row.get("top_fail_closed_reasons"), list) else []
+        lines.append(
+            " | ".join(
+                [
+                    _safe_cli_text(str(row.get("universe_id") or "")),
+                    str(row.get("inventory_available") is True).lower(),
+                    str(((row.get("preflight") or {}).get("paths_are_universe_specific")) is True).lower(),
+                    str(row.get("same_scope_pair_count") or 0),
+                    str(row.get("strict_same_payoff_passes") or row.get("strict_same_payoff_pass_count") or 0),
+                    str(row.get("trusted_relationships_attached") or row.get("trusted_relationship_count") or 0),
+                    str(row.get("fresh_orderbook_enrichment_available") is True).lower(),
+                    str(row.get("evaluator_ready") is True).lower(),
+                    str(row.get("paper_candidates_count") or 0),
+                    _safe_cli_text(str(row.get("paper_review_notice") or "none")),
+                    _safe_cli_text(",".join(str(reason) for reason in reasons) or "none"),
+                ]
+            )
+        )
+    return "\n".join(lines)
 
 
 def market_graph_diagnostics(
@@ -9713,6 +10578,13 @@ def _format_top_reasons(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "none"
     return ",".join(f"{row['reason']}:{row['count']}" for row in rows)
+
+
+def _format_count_map(counts: dict[str, int], limit: int = 3) -> str:
+    if not counts:
+        return "none"
+    items = list(counts.items())[:limit]
+    return ",".join(f"{_safe_cli_text(str(key))}:{value}" for key, value in items)
 
 
 if __name__ == "__main__":

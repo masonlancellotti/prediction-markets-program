@@ -7,6 +7,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from relative_value.btc_threshold_pipeline import (
+    build_btc_threshold_readiness_report,
+    exact_scope_from_btc_report,
+)
+from relative_value.fed_fomc_range_pipeline import (
+    build_fed_fomc_range_readiness_report,
+    exact_scope_from_fed_report,
+)
+
 
 SCHEMA_VERSION = 1
 READINESS_ORDER = {
@@ -28,6 +37,14 @@ BLOCKER_LABELS = {
     "unit_mismatch",
     "settlement_mismatch",
     "reference_only_source",
+}
+UNIVERSE_LIVE_READONLY_DIRS = {
+    "mlb_world_series_kxmlb": "mlb",
+    "nba_champion_kxnba": "nba",
+    "nfl_super_bowl_kxnfl": "nfl",
+    "nhl_stanley_cup_kxnhl": "nhl",
+    "btc_thresholds": "btc",
+    "fed_fomc_decisions": "fed",
 }
 DISCLAIMER = (
     "Saved-file exact same-payoff paper-check universe diagnostics only. "
@@ -147,11 +164,13 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
                 "--output-dir reports/live_readonly/btc --report-dir reports/live_readonly/btc --label btc"
             ),
             exact_scope={
-                "status": "MANUAL_REVIEW",
+                "status": "NOT_EXACT_PIPELINE",
                 "source_basis": "Polymarket and Kalshi executable venue inventory only; no reference-only leg is executable.",
                 "date_or_deadline": "UNRESOLVED_FROM_INVENTORY",
                 "fed_meeting_or_fomc_event": "NOT_APPLICABLE",
                 "threshold_or_numeric_condition": "UNRESOLVED_FROM_INVENTORY",
+                "required_exact_keys_present": False,
+                "pipeline_classification": "NOT_EXACT_PIPELINE",
                 "unresolved_ambiguity": [
                     "BTC threshold level must be parsed from explicit contract terms, not broad title similarity.",
                     "Deadline, observation window, timezone, and reference price/index must match exactly before same-payoff review.",
@@ -174,11 +193,13 @@ def default_exact_paper_candidate_universe_specs(project_root: Path) -> list[Uni
                 "--output-dir reports/live_readonly/fed --report-dir reports/live_readonly/fed --label fed"
             ),
             exact_scope={
-                "status": "MANUAL_REVIEW",
+                "status": "NOT_EXACT_PIPELINE",
                 "source_basis": "Polymarket and Kalshi executable venue inventory only; no sportsbook/reference source is executable.",
                 "date_or_deadline": "UNRESOLVED_FROM_INVENTORY",
                 "fed_meeting_or_fomc_event": "UNRESOLVED_FROM_INVENTORY",
                 "threshold_or_numeric_condition": "UNRESOLVED_FROM_INVENTORY",
+                "required_exact_keys_present": False,
+                "pipeline_classification": "NOT_EXACT_PIPELINE",
                 "unresolved_ambiguity": [
                     "FOMC meeting identity and decision date must match explicitly before same-payoff review.",
                     "Rate-change direction, target range, basis-point threshold, and settlement wording must be exact.",
@@ -221,6 +242,7 @@ def build_exact_paper_candidate_universe_report(
     rows = [_universe_row(spec) for spec in specs]
     readiness_counts = Counter(row["readiness"] for row in rows)
     exact_scope_counts = Counter(row["exact_scope"]["status"] for row in rows if row.get("exact_scope"))
+    next_by_strict = _next_universe_by_strict_criteria(rows)
     closest = _closest_universe(rows)
     return {
         "schema_version": SCHEMA_VERSION,
@@ -231,13 +253,15 @@ def build_exact_paper_candidate_universe_report(
             "readiness_counts": {key: readiness_counts.get(key, 0) for key in READINESS_ORDER},
             "closest_universe_id": closest["universe_id"] if closest else None,
             "closest_readiness": closest["readiness"] if closest else None,
+            "next_universe_by_strict_criteria": next_by_strict["universe_id"] if next_by_strict else None,
+            "next_universe_readiness": next_by_strict["readiness"] if next_by_strict else None,
             "paper_candidate_count": sum(row["evaluator_counts"].get("PAPER_CANDIDATE", 0) for row in rows),
             "exact_scope_status_counts": dict(sorted(exact_scope_counts.items())),
             "exact_scope_unresolved_count": sum(
                 1
                 for row in rows
                 if row.get("exact_scope")
-                and row["exact_scope"].get("status") in {"WATCH", "MANUAL_REVIEW"}
+                and row["exact_scope"].get("status") in {"WATCH", "MANUAL_REVIEW", "NOT_EXACT_PIPELINE"}
                 and row["exact_scope"].get("unresolved_ambiguity")
             ),
         },
@@ -267,14 +291,15 @@ def render_exact_paper_candidate_universe_markdown(payload: dict[str, Any]) -> s
         "",
         f"- Universes: `{summary['universe_count']}`",
         f"- Closest universe: `{summary.get('closest_universe_id')}` (`{summary.get('closest_readiness')}`)",
+        f"- Next universe by strict criteria: `{summary.get('next_universe_by_strict_criteria')}` (`{summary.get('next_universe_readiness')}`)",
         f"- Existing PAPER_CANDIDATE rows: `{summary.get('paper_candidate_count', 0)}`",
         f"- Exact-scope status counts: `{summary.get('exact_scope_status_counts', {})}`",
         f"- Exact-scope unresolved inventories: `{summary.get('exact_scope_unresolved_count', 0)}`",
         "",
         "## Universes",
         "",
-        "| Universe | Readiness | PM Inv | Kalshi Inv | Pairs | Strict Passes | Trusted | Execution Rows | Paper | Dominant Blocker |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Universe | Readiness | Inventory | Universe Paths | Pairs | Strict Passes | Trusted | Fresh OB | Evaluator Ready | Paper | Top fail-closed reasons |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in payload["universes"]:
         counts = row["evaluator_counts"]
@@ -284,17 +309,44 @@ def render_exact_paper_candidate_universe_markdown(payload: dict[str, Any]) -> s
                 [
                     _md(row["label"]),
                     _md(row["readiness"]),
-                    _md(row["inventory"]["polymarket_count"]),
-                    _md(row["inventory"]["kalshi_count"]),
+                    _md(str(row["inventory_available"]).lower()),
+                    _md(str(row["preflight"]["paths_are_universe_specific"]).lower()),
                     _md(row["same_scope_pair_count"]),
                     _md(row["strict_same_payoff_pass_count"]),
                     _md(row["trusted_relationship_count"]),
-                    _md(row["execution_data_row_count"]),
-                    _md(counts.get("PAPER_CANDIDATE", 0)),
-                    _md(row["dominant_blocker"] or "none"),
+                    _md(str(row["fresh_orderbook_enrichment_available"]).lower()),
+                    _md(str(row["evaluator_ready"]).lower()),
+                    _md(row["paper_candidates_count"]),
+                    _md(",".join(row["top_fail_closed_reasons"]) or "none"),
                 ]
             )
             + " |"
+        )
+    lines.extend(["", "## Operator Preflight", ""])
+    for row in payload["universes"]:
+        preflight = row["preflight"]
+        notice = f" `{row['paper_review_notice']}`" if row.get("paper_review_notice") else ""
+        warning = preflight.get("generic_live_readonly_warning") or "none"
+        lines.extend(
+            [
+                f"### {row['label']}{notice}",
+                "",
+                f"- Source snapshots: Polymarket `{preflight['source_snapshot_paths']['polymarket_snapshot']}`, Kalshi `{preflight['source_snapshot_paths']['kalshi_snapshot']}`",
+                f"- Universe-specific paths: `{preflight['paths_are_universe_specific']}`",
+                f"- Generic live_readonly warning: `{warning}`",
+                f"- Legacy top-level report warning: `{preflight.get('legacy_top_level_report_warning') or 'none'}`",
+                f"- Authoritative fresh-run hint: `{preflight.get('authoritative_fresh_run_hint') or 'none'}`",
+                f"- Pair file evaluated: `{preflight['pair_file_evaluated']}`",
+                f"- Same-payoff board/evidence file evaluated: `{preflight['same_payoff_board_evidence_file_evaluated']}`",
+                f"- Enriched orderbooks: Polymarket `{preflight['enriched_orderbook_files_evaluated']['polymarket']}`, Kalshi `{preflight['enriched_orderbook_files_evaluated']['kalshi']}`",
+                f"- Quote freshness status: `{preflight['quote_freshness_status']['status']}`",
+                f"- Fee models: Polymarket `{preflight['fee_model_names']['polymarket']}`, Kalshi `{preflight['fee_model_names']['kalshi']}`",
+                f"- Settlement normalization trust: `{preflight['settlement_normalization_trust']['status']}`",
+                f"- Depth/top-of-book: Polymarket `{preflight['top_of_book_depth_status']['polymarket']['status']}`, Kalshi `{preflight['top_of_book_depth_status']['kalshi']['status']}`",
+                f"- Counts: paper `{preflight['paper_count']}`, watch/manual_review `{preflight['watch_manual_review_count']}`, rejected `{preflight['rejected_count']}`",
+                f"- Top blockers: `{','.join(preflight['top_blockers']) or 'none'}`",
+                "",
+            ]
         )
     exact_scope_rows = [row for row in payload["universes"] if row.get("exact_scope") and row["universe_id"] in {"btc_thresholds", "fed_fomc_decisions"}]
     if exact_scope_rows:
@@ -303,18 +355,30 @@ def render_exact_paper_candidate_universe_markdown(payload: dict[str, Any]) -> s
                 "",
                 "## BTC / Fed Exact Scope Inventory",
                 "",
-                "| Universe | Status | Source basis | Date/deadline | FOMC event | Threshold/condition | Unresolved ambiguity |",
-                "|---|---|---|---|---|---|---|",
+                "| Universe | Status | BTC inventory | Typed BTC formulas | BTC exact matches | Fed inventory | Typed Fed formulas | Fed exact matches | Fed overlaps | Missing meeting | Missing range | Not exact | Source basis | Date/deadline | FOMC event | Threshold/condition | Unresolved ambiguity |",
+                "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|---|",
             ]
         )
         for row in exact_scope_rows:
             scope = row["exact_scope"]
+            btc_counts = scope.get("btc_exact_threshold_counts") or {}
+            fed_counts = scope.get("fed_fomc_exact_range_counts") or {}
             lines.append(
                 "| "
                 + " | ".join(
                     [
                         _md(row["label"]),
                         _md(scope["status"]),
+                        _md(btc_counts.get("btc_inventory_count", "")),
+                        _md(btc_counts.get("typed_btc_formula_count", "")),
+                        _md(btc_counts.get("exact_key_match_count", "")),
+                        _md(fed_counts.get("fed_inventory_count", "")),
+                        _md(fed_counts.get("typed_fed_formula_count", "")),
+                        _md(fed_counts.get("exact_meeting_range_match_count", "")),
+                        _md(fed_counts.get("overlapping_range_count", "")),
+                        _md(fed_counts.get("missing_meeting_count", "")),
+                        _md(fed_counts.get("missing_range_count", "")),
+                        _md(btc_counts.get("not_exact_pipeline_count", fed_counts.get("not_exact_pipeline_count", ""))),
                         _md(scope["source_basis"]),
                         _md(scope["date_or_deadline"]),
                         _md(scope["fed_meeting_or_fomc_event"]),
@@ -353,6 +417,7 @@ def _universe_row(spec: UniverseSpec) -> dict[str, Any]:
     trusted_count = _trusted_relationship_count(derived_payload)
     evaluator_counts = _evaluator_counts(evaluator_payload)
     execution_rows = _execution_data_row_count(polymarket_enriched, kalshi_enriched, evaluator_payload)
+    fresh_orderbook_available = _fresh_orderbook_enrichment_available(polymarket_enriched, kalshi_enriched)
     blockers = _blockers(
         polymarket_count=polymarket_count,
         kalshi_count=kalshi_count,
@@ -373,11 +438,83 @@ def _universe_row(spec: UniverseSpec) -> dict[str, Any]:
         paper_count=evaluator_counts.get("PAPER_CANDIDATE", 0),
     )
     commands = _commands_for_row(spec, readiness, trusted_count, blockers)
+    inventory_available = polymarket_count > 0 and kalshi_count > 0
+    same_scope_pairs_available = pair_count > 0
+    evaluator_ready = trusted_count > 0 and execution_rows > 0
+    paper_candidates_count = evaluator_counts.get("PAPER_CANDIDATE", 0)
+    source_paths = {
+        "polymarket_snapshot": spec.polymarket_snapshot,
+        "kalshi_snapshot": spec.kalshi_snapshot,
+    }
+    evaluated_files = {
+        "pairs": spec.pairs,
+        "same_payoff_board": spec.board,
+        "same_payoff_evidence_pairs": spec.derived_pairs,
+        "polymarket_enriched_orderbook": spec.polymarket_enriched,
+        "kalshi_enriched_orderbook": spec.kalshi_enriched,
+        "evaluator": spec.evaluator,
+    }
+    path_safety = _path_safety(spec.universe_id, {**source_paths, **evaluated_files})
+    quote_status = _quote_freshness_status(evaluator_payload)
+    depth_status = _top_of_book_depth_status(polymarket_enriched, kalshi_enriched)
+    exact_scope = spec.exact_scope or _empty_exact_scope()
+    btc_threshold_report = None
+    fed_range_report = None
+    if spec.universe_id == "btc_thresholds":
+        btc_threshold_report = build_btc_threshold_readiness_report(
+            polymarket_snapshot=polymarket_snapshot,
+            kalshi_snapshot=kalshi_snapshot,
+        )
+        exact_scope = exact_scope_from_btc_report(exact_scope, btc_threshold_report)
+    if spec.universe_id == "fed_fomc_decisions":
+        fed_range_report = build_fed_fomc_range_readiness_report(
+            polymarket_snapshot=polymarket_snapshot,
+            kalshi_snapshot=kalshi_snapshot,
+        )
+        exact_scope = exact_scope_from_fed_report(exact_scope, fed_range_report)
     return {
         "universe_id": spec.universe_id,
         "label": spec.label,
         "category": spec.category,
         "readiness": readiness,
+        "inventory_available": inventory_available,
+        "same_scope_pairs_available": same_scope_pairs_available,
+        "strict_same_payoff_passes": strict_pass_count,
+        "trusted_relationships_attached": trusted_count,
+        "fresh_orderbook_enrichment_available": fresh_orderbook_available,
+        "evaluator_ready": evaluator_ready,
+        "paper_candidates_count": paper_candidates_count,
+        "top_fail_closed_reasons": blockers[:5],
+        "paper_review_notice": "STOP_FOR_REVIEW" if paper_candidates_count > 0 else None,
+        "preflight": {
+            "universe": spec.universe_id,
+            "source_snapshot_paths": {key: str(path) if path else None for key, path in source_paths.items()},
+            "paths_are_universe_specific": path_safety["all_universe_specific_or_not_live_readonly"],
+            "generic_live_readonly_warning": path_safety["generic_live_readonly_warning"],
+            "legacy_top_level_report_warning": path_safety["legacy_top_level_report_warning"],
+            "authoritative_fresh_run_hint": _authoritative_fresh_run_hint(spec.universe_id, path_safety),
+            "path_details": path_safety["path_details"],
+            "report_source_paths": _report_source_paths({**source_paths, **evaluated_files}),
+            "pair_file_evaluated": str(spec.pairs) if spec.pairs else None,
+            "same_payoff_board_evidence_file_evaluated": str(spec.board) if spec.board else None,
+            "same_payoff_evidence_pairs_file_evaluated": str(spec.derived_pairs) if spec.derived_pairs else None,
+            "enriched_orderbook_files_evaluated": {
+                "polymarket": str(spec.polymarket_enriched) if spec.polymarket_enriched else None,
+                "kalshi": str(spec.kalshi_enriched) if spec.kalshi_enriched else None,
+            },
+            "quote_freshness_status": quote_status,
+            "fee_model_names": _fee_model_names(),
+            "settlement_normalization_trust": {
+                "requested": [],
+                "status": "absent",
+                "mlb_only_allowed_value": "mlb_world_series_timezone_convention_drift",
+            },
+            "top_of_book_depth_status": depth_status,
+            "paper_count": paper_candidates_count,
+            "watch_manual_review_count": evaluator_counts.get("WATCH", 0) + evaluator_counts.get("MANUAL_REVIEW", 0),
+            "rejected_count": evaluator_counts.get("WATCH", 0),
+            "top_blockers": blockers[:5],
+        },
         "inventory": {
             "polymarket_count": polymarket_count,
             "kalshi_count": kalshi_count,
@@ -401,9 +538,157 @@ def _universe_row(spec: UniverseSpec) -> dict[str, Any]:
             "kalshi_enriched": str(spec.kalshi_enriched) if spec.kalshi_enriched else None,
             "overlap_report": str(spec.overlap_report) if spec.overlap_report else None,
         },
-        "exact_scope": spec.exact_scope or _empty_exact_scope(),
+        "exact_scope": exact_scope,
+        "btc_exact_threshold_readiness": btc_threshold_report,
+        "fed_fomc_exact_range_readiness": fed_range_report,
         "recommended_next_commands": commands,
     }
+
+
+def _path_safety(universe_id: str, paths: dict[str, Path | None]) -> dict[str, Any]:
+    details = {}
+    generic = []
+    wrong_specific = []
+    expected_dir = UNIVERSE_LIVE_READONLY_DIRS.get(universe_id)
+    for key, path in paths.items():
+        path_text = str(path) if path else None
+        info = {
+            "path": path_text,
+            "uses_live_readonly": False,
+            "universe_specific_live_readonly": False,
+            "generic_live_readonly": False,
+        }
+        if path is not None:
+            normalized = path.as_posix().lower()
+            marker = "reports/live_readonly"
+            info["uses_live_readonly"] = marker in normalized
+            if marker in normalized:
+                parts = [part.lower() for part in path.parts]
+                try:
+                    index = parts.index("live_readonly")
+                    child = parts[index + 1] if index + 1 < len(parts) else ""
+                except ValueError:
+                    child = ""
+                info["generic_live_readonly"] = child == "" or child.endswith(".json") or child.endswith(".md")
+                info["universe_specific_live_readonly"] = bool(expected_dir and child == expected_dir)
+                if info["generic_live_readonly"]:
+                    generic.append(key)
+                elif expected_dir and not info["universe_specific_live_readonly"]:
+                    wrong_specific.append(key)
+        details[key] = info
+    return {
+        "all_universe_specific_or_not_live_readonly": not generic and not wrong_specific,
+        "generic_live_readonly_warning": (
+            "GENERIC_LIVE_READONLY_PATH_USED:" + ",".join(generic)
+            if generic
+            else None
+        ),
+        "legacy_top_level_report_warning": _legacy_top_level_warning(universe_id, paths),
+        "wrong_universe_live_readonly_paths": wrong_specific,
+        "path_details": details,
+    }
+
+
+def _legacy_top_level_warning(universe_id: str, paths: dict[str, Path | None]) -> str | None:
+    prefix = _legacy_report_prefix(universe_id)
+    if not prefix:
+        return None
+    legacy = []
+    for key, path in paths.items():
+        if path is None:
+            continue
+        parts = [part.lower() for part in path.parts]
+        if len(parts) >= 2 and parts[-2] == "reports" and path.name.lower().startswith(prefix):
+            legacy.append(key)
+    if not legacy:
+        return None
+    return "LEGACY_TOP_LEVEL_REPORT_PATHS:" + ",".join(legacy)
+
+
+def _legacy_report_prefix(universe_id: str) -> str | None:
+    if universe_id == "mlb_world_series_kxmlb":
+        return "mlb_"
+    if universe_id == "nba_champion_kxnba":
+        return "nba_"
+    if universe_id == "nhl_stanley_cup_kxnhl":
+        return "nhl_"
+    return None
+
+
+def _authoritative_fresh_run_hint(universe_id: str, path_safety: dict[str, Any]) -> str | None:
+    if universe_id != "mlb_world_series_kxmlb":
+        return None
+    if path_safety.get("legacy_top_level_report_warning"):
+        return (
+            "discover_exact_readiness_is_reading_legacy_top_level_reports; "
+            "compare against the latest run-mlb-world-series-paper-check summary generated from reports/live_readonly/mlb"
+        )
+    return "current_paths_are_universe_specific_or_non_live_readonly"
+
+
+def _report_source_paths(paths: dict[str, Path | None]) -> dict[str, Any]:
+    result = {}
+    for key, path in paths.items():
+        if path is None:
+            result[key] = {"path": None, "exists": False, "modified_at": None}
+            continue
+        exists = path.exists()
+        result[key] = {
+            "path": str(path),
+            "exists": exists,
+            "modified_at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat() if exists else None,
+        }
+    return result
+
+
+def _fee_model_names() -> dict[str, str]:
+    return {
+        "polymarket": "PolymarketConservativeFeeModel",
+        "kalshi": "KalshiTieredFeeModel",
+    }
+
+
+def _quote_freshness_status(evaluator_payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not evaluator_payload:
+        return {"status": "missing", "stale_or_missing_rows": 0}
+    stale_or_missing = 0
+    ledger = evaluator_payload.get("ledger") if isinstance(evaluator_payload.get("ledger"), list) else []
+    for row in ledger:
+        if not isinstance(row, dict):
+            continue
+        missed = str(row.get("missed_fill_reason") or "")
+        reasons = row.get("ineligibility_reasons") if isinstance(row.get("ineligibility_reasons"), list) else []
+        if "stale" in missed or "quote" in missed or any("stale" in str(reason) or "quote" in str(reason) for reason in reasons):
+            stale_or_missing += 1
+    if stale_or_missing:
+        return {"status": "stale_or_missing", "stale_or_missing_rows": stale_or_missing}
+    return {"status": "available", "stale_or_missing_rows": 0}
+
+
+def _top_of_book_depth_status(polymarket: dict[str, Any] | None, kalshi: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "polymarket": _venue_depth_status(polymarket),
+        "kalshi": _venue_depth_status(kalshi),
+    }
+
+
+def _venue_depth_status(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"status": "missing", "rows_with_top_of_book_depth": 0}
+    rows = payload.get("normalized_markets") if isinstance(payload.get("normalized_markets"), list) else []
+    row_count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        enrichment = row.get("orderbook_enrichment") if isinstance(row.get("orderbook_enrichment"), dict) else row
+        if enrichment.get("depth_at_best_bid") is not None and enrichment.get("depth_at_best_ask") is not None:
+            row_count += 1
+    if row_count:
+        return {"status": "available", "rows_with_top_of_book_depth": row_count}
+    summary = payload.get("orderbook_enrichment") if isinstance(payload.get("orderbook_enrichment"), dict) else {}
+    if int(summary.get("enriched_count") or 0) > 0:
+        return {"status": "enriched_summary_available", "rows_with_top_of_book_depth": 0}
+    return {"status": "missing", "rows_with_top_of_book_depth": 0}
 
 
 def _empty_exact_scope() -> dict[str, Any]:
@@ -417,6 +702,8 @@ def _empty_exact_scope() -> dict[str, Any]:
         "allowed_actions": ["WATCH", "MANUAL_REVIEW"],
         "title_similarity_settlement_equivalence": False,
         "paper_candidate_emitted": False,
+        "required_exact_keys_present": False,
+        "pipeline_classification": "NOT_REVIEWED",
     }
 
 
@@ -596,6 +883,15 @@ def _stale_or_unenriched(payload: dict[str, Any] | None) -> bool:
     return False
 
 
+def _fresh_orderbook_enrichment_available(polymarket: dict[str, Any] | None, kalshi: dict[str, Any] | None) -> bool:
+    return (
+        _enriched_count(polymarket) > 0
+        and _enriched_count(kalshi) > 0
+        and not _stale_or_unenriched(polymarket)
+        and not _stale_or_unenriched(kalshi)
+    )
+
+
 def _evaluator_counts(payload: dict[str, Any] | None) -> dict[str, int]:
     counts = {"PAPER_CANDIDATE": 0, "MANUAL_REVIEW": 0, "WATCH": 0}
     if not payload:
@@ -634,6 +930,30 @@ def _closest_universe(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
             row["trusted_relationship_count"],
             row["same_scope_pair_count"],
             -len(row["blockers"]),
+            row["universe_id"],
+        ),
+    )
+
+
+def _next_universe_by_strict_criteria(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    strict_rows = [
+        row
+        for row in rows
+        if row.get("inventory_available")
+        and row.get("same_scope_pairs_available")
+        and int(row.get("strict_same_payoff_passes") or 0) > 0
+        and int(row.get("trusted_relationships_attached") or 0) > 0
+    ]
+    if not strict_rows:
+        return None
+    return max(
+        strict_rows,
+        key=lambda row: (
+            READINESS_ORDER.get(row["readiness"], -1),
+            row.get("fresh_orderbook_enrichment_available") is True,
+            int(row.get("trusted_relationships_attached") or 0),
+            int(row.get("strict_same_payoff_passes") or 0),
+            -len(row.get("top_fail_closed_reasons") or []),
             row["universe_id"],
         ),
     )
