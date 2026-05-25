@@ -8,6 +8,14 @@ from typing import Any
 
 from relative_value.exhaustive_evidence_trust import exhaustive_evidence_trust_blockers, has_reference_only_flag
 from relative_value.fees import FeeModel, KalshiTieredFeeModel, PolymarketConservativeFeeModel
+from relative_value.local_manifest_v1 import (
+    LOCAL_MANIFEST_SOURCE,
+    MANIFEST_BLOCKERS,
+    local_manifest_group_metadata,
+    manifest_outcome_list,
+    manifest_market_tickers,
+    validate_local_manifest_v1_group,
+)
 
 
 STATUS_NOT_EXHAUSTIVE_EVIDENCE = "NOT_EXHAUSTIVE_EVIDENCE"
@@ -158,7 +166,8 @@ def _evaluate_group(
     expected_ids = {str(value) for value in spec.get("outcome_market_ids") or [] if value is not None}
     if expected_count is not None and len(members) != expected_count:
         blockers.append("explicit_exhaustive_group_incomplete")
-    if expected_ids and {str(_market_id(row)) for row in members} != expected_ids:
+    member_ids = {_row_identifier for row in members for _row_identifier in _market_identifiers(row)}
+    if expected_ids and not expected_ids.issubset(member_ids):
         blockers.append("explicit_exhaustive_group_member_mismatch")
     if not spec.get("is_exhaustive") or not spec.get("evidence_source"):
         blockers.append("missing_explicit_exhaustive_evidence")
@@ -170,6 +179,7 @@ def _evaluate_group(
             trusted_local_manifest=spec.get("trusted_local_manifest") is True,
         )
     )
+    blockers.extend(spec.get("manifest_blockers") or [])
     settlement_audit = _settlement_resolution_audit(members, spec)
     blockers.extend(settlement_audit["settlement_audit_blockers"])
 
@@ -229,6 +239,7 @@ def _evaluate_group(
             "detail": spec.get("evidence_detail"),
             "trusted_local_manifest": spec.get("trusted_local_manifest", False),
             "venue_native": spec.get("venue_native", False),
+            "manifest": spec.get("manifest_metadata"),
         },
         "settlement_audit_status": settlement_audit["settlement_audit_status"],
         "settlement_audit_blockers": settlement_audit["settlement_audit_blockers"],
@@ -264,6 +275,7 @@ def _status_from_blockers(blockers: list[str]) -> str:
         "mixed_settlement_source",
         "missing_resolution_metadata",
         "mixed_event_group_metadata",
+        *MANIFEST_BLOCKERS,
     }:
         return STATUS_NOT_EXHAUSTIVE_EVIDENCE
     if blocker_set & {"missing_orderbook_enrichment", "missing_executable_ask"}:
@@ -281,17 +293,31 @@ def _explicit_group_specs(rows: list[dict[str, Any]], manifest: dict[str, Any] |
         for group in manifest.get("exhaustive_groups") or manifest.get("groups") or []:
             if not isinstance(group, dict):
                 continue
+            source = group.get("source") or group.get("evidence_source")
+            manifest_blockers: list[str] = []
+            manifest_metadata = None
+            outcome_market_ids = group.get("outcome_market_ids") or group.get("market_ids") or group.get("market_tickers") or []
+            outcome_list = manifest_outcome_list(group)
+            expected_count = group.get("expected_outcome_count")
+            if expected_count is None and outcome_list:
+                expected_count = len(outcome_list)
+            if isinstance(source, str) and source.strip().lower() == LOCAL_MANIFEST_SOURCE:
+                manifest_blockers = validate_local_manifest_v1_group(group)
+                manifest_metadata = local_manifest_group_metadata(group)
+                outcome_market_ids = group.get("outcome_market_ids") or group.get("market_ids") or manifest_market_tickers(group)
             specs.append(
                 {
                     "venue": group.get("venue"),
                     "group_id": group.get("group_id") or group.get("event_id"),
-                    "is_exhaustive": group.get("is_exhaustive") is True or group.get("exhaustive") is True,
-                    "evidence_source": group.get("source") or group.get("evidence_source"),
+                    "is_exhaustive": group.get("is_exhaustive") is True or group.get("exhaustive") is True or group.get("complete") is True,
+                    "evidence_source": source,
                     "evidence_detail": group.get("evidence") or group.get("evidence_detail"),
                     "trusted_local_manifest": group.get("trusted_local_manifest") is True,
                     "venue_native": False,
-                    "outcome_market_ids": group.get("outcome_market_ids") or group.get("market_ids") or [],
-                    "expected_outcome_count": group.get("expected_outcome_count"),
+                    "outcome_market_ids": outcome_market_ids,
+                    "expected_outcome_count": expected_count,
+                    "manifest_blockers": manifest_blockers,
+                    "manifest_metadata": manifest_metadata,
                 }
             )
     native_seen = set()
@@ -332,7 +358,7 @@ def _group_members(spec: dict[str, Any], rows: list[dict[str, Any]]) -> list[dic
     for row in rows:
         if str(row.get("venue") or "").lower() != venue:
             continue
-        if expected_ids and str(_market_id(row)) in expected_ids:
+        if expected_ids and _market_identifiers(row) & expected_ids:
             members.append(row)
             continue
         if row.get("group_id") == group_id or row.get("event_id") == group_id:
@@ -457,6 +483,10 @@ def _outcome_summary(row: dict[str, Any], ask: float | None, depth: float | None
 
 def _market_id(row: dict[str, Any]) -> Any:
     return row.get("market_id") or row.get("id") or row.get("ticker") or row.get("slug")
+
+
+def _market_identifiers(row: dict[str, Any]) -> set[str]:
+    return {str(value) for value in (row.get("market_id"), row.get("id"), row.get("ticker"), row.get("slug")) if value is not None}
 
 
 def _read_json(path: Path | None) -> dict[str, Any]:

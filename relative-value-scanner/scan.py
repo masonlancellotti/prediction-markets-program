@@ -57,7 +57,7 @@ from relative_value.exact_market_expansion_plan import write_exact_market_expans
 from relative_value.platform_expansion_matrix import write_platform_expansion_matrix_files
 from relative_value.structural_basket_detector import build_structural_basket_review_report_files
 from relative_value.paper_fill_simulator import simulate_paper_fill_journal_files
-from relative_value.kalshi_native_groups import audit_kalshi_native_groups_file
+from relative_value.kalshi_native_groups import audit_kalshi_native_groups_file, kalshi_native_group_audit_paths
 from venues.kalshi import (
     FixtureKalshiAdapter,
     KalshiMarketFilterOptions,
@@ -600,12 +600,12 @@ def main(argv: list[str] | None = None) -> int:
         "--json-output",
         dest="json_output",
         type=Path,
-        default=PROJECT_ROOT / "reports" / "kalshi_native_groups_audit.json",
+        default=None,
     )
     kalshi_native_parser.add_argument(
         "--markdown-output",
         type=Path,
-        default=PROJECT_ROOT / "reports" / "kalshi_native_groups_audit.md",
+        default=None,
     )
 
     graph_parser = subparsers.add_parser(
@@ -1266,10 +1266,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "audit-kalshi-native-groups":
+        outputs = kalshi_native_group_audit_paths(
+            args.snapshot,
+            output_dir=PROJECT_ROOT / "reports" / "native_group_audits",
+        )
+        json_output = args.json_output or outputs["json_output"]
+        markdown_output = args.markdown_output or outputs["markdown_output"]
         report = audit_kalshi_native_groups_file(
             snapshot_path=args.snapshot,
-            json_output=args.json_output,
-            markdown_output=args.markdown_output,
+            json_output=json_output,
+            markdown_output=markdown_output,
         )
         summary = report["summary"]
         print(
@@ -1278,7 +1284,7 @@ def main(argv: list[str] | None = None) -> int:
             f"complete={summary['complete_groups']} "
             f"blocked={summary['blocked_groups']} "
             f"candidate_input_rows={summary['candidate_input_row_count']} "
-            f"json={args.json_output} markdown={args.markdown_output}"
+            f"json={json_output} markdown={markdown_output}"
         )
         return 0
     if args.command == "market-graph-diagnostics":

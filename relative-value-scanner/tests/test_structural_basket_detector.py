@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from relative_value.fees import FlatFeeModel
 from relative_value.structural_basket_detector import (
@@ -61,10 +63,17 @@ def _manifest(
                 "group_id": "event-1",
                 "exhaustive": True,
                 "source": source,
-                "evidence": "venue event metadata states all outcomes included",
+                "evidence": "hand-reviewed venue event metadata states all outcomes included",
                 "trusted_local_manifest": trusted_local_manifest,
+                "reviewer": "unit-test-reviewer",
+                "reviewed_at": "2026-05-24T12:00:00+00:00",
+                "market_tickers": [value.upper() for value in ids],
+                "outcome_list": [value.upper() for value in ids],
                 "outcome_market_ids": ids,
                 "expected_outcome_count": expected_count if expected_count is not None else len(ids),
+                "complete": True,
+                "settlement_source_raw_evidence": "Official Kalshi event metadata resolves every listed outcome from the same source.",
+                "rules_evidence": "All outcomes resolve from the same official event result.",
             }
         ]
     }
@@ -280,6 +289,76 @@ def test_trusted_local_manifest_v1_requires_trusted_local_manifest_true() -> Non
 
     assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
     assert "trusted_local_manifest_required" in row["blockers"]
+
+
+def test_local_manifest_fixture_is_explicit_exhaustive_evidence() -> None:
+    fixture = Path("tests/fixtures/local_manifest_v1/kalshi_event_manifest.json")
+    manifest = json.loads(fixture.read_text(encoding="utf-8"))
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_STOP_FOR_REVIEW
+    assert row["evidence"]["source"] == "local_manifest_v1"
+    assert row["evidence"]["manifest"]["reviewer"] == "unit-test-reviewer"
+    assert row["paper_candidate_emitted"] is False
+    assert report["summary"]["paper_candidate_count"] == 0
+
+
+def test_local_manifest_missing_reviewer_and_reviewed_at_fails_closed() -> None:
+    manifest = _manifest(["a", "b"])
+    group = manifest["exhaustive_groups"][0]
+    group.pop("reviewer")
+    group.pop("reviewed_at")
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert "missing_manifest_reviewer" in row["blockers"]
+    assert "missing_manifest_reviewed_at" in row["blockers"]
+    assert report["summary"]["stop_for_review_count"] == 0
+
+
+def test_local_manifest_incomplete_outcome_list_fails_closed() -> None:
+    manifest = _manifest(["a", "b"])
+    manifest["exhaustive_groups"][0]["outcome_list"] = ["A"]
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert "incomplete_manifest_outcome_list" in row["blockers"]
+
+
+def test_local_manifest_title_only_evidence_fails_closed() -> None:
+    manifest = _manifest(["a", "b"])
+    group = manifest["exhaustive_groups"][0]
+    group["evidence"] = "title similarity says this is a complete group"
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert "title_only_manifest_evidence" in row["blockers"]
+
+
+def test_local_manifest_graph_hint_evidence_fails_closed() -> None:
+    manifest = _manifest(["a", "b"])
+    group = manifest["exhaustive_groups"][0]
+    group["rules_evidence"] = "market graph hint marks the outcomes exhaustive"
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert "graph_hint_manifest_evidence" in row["blockers"]
+
+
+def test_local_manifest_reference_only_source_fails_closed() -> None:
+    manifest = _manifest(["a", "b"])
+    manifest["exhaustive_groups"][0]["source_kind"] = "reference"
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert "reference_only_source" in row["blockers"]
+    assert report["summary"]["stop_for_review_count"] == 0
 
 
 def test_kalshi_event_metadata_requires_venue_native_true() -> None:
