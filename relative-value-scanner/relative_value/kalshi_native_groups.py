@@ -9,10 +9,20 @@ from pathlib import Path
 from typing import Any
 
 from relative_value.exhaustive_evidence_trust import exhaustive_evidence_trust_blockers, has_reference_only_flag
+from relative_value.local_manifest_v1 import (
+    LOCAL_MANIFEST_SOURCE,
+    manifest_outcome_list,
+    validate_local_manifest_v1_group,
+)
 
 
 SOURCE = "kalshi_event_metadata"
 KNOWN_AUDIT_LABELS = ("fed", "btc", "mlb", "nba", "nhl")
+CLASS_THRESHOLD_LADDER_NOT_EXHAUSTIVE = "THRESHOLD_LADDER_NOT_EXHAUSTIVE"
+CLASS_RANGE_LADDER_NOT_EXHAUSTIVE = "RANGE_LADDER_NOT_EXHAUSTIVE"
+CLASS_COMPLETE_EVENT_GROUP = "COMPLETE_EVENT_GROUP"
+CLASS_INCOMPLETE_GROUP = "INCOMPLETE_GROUP"
+CLASS_PARTIAL_EVENT_METADATA = "PARTIAL_EVENT_METADATA"
 
 
 def audit_kalshi_native_groups(snapshot_payload: dict[str, Any], *, generated_at: datetime | None = None) -> dict[str, Any]:
@@ -25,6 +35,7 @@ def audit_kalshi_native_groups(snapshot_payload: dict[str, Any], *, generated_at
     groups = [_audit_group(group_id, rows, manifest_groups.get(group_id)) for group_id, rows in sorted(grouped.items())]
     candidate_rows = [candidate for group in groups for candidate in group["structural_basket_input_rows"]]
     status_counts = Counter(group["status"] for group in groups)
+    classification_counts = Counter(group["group_classification"] for group in groups)
     return {
         "schema_version": 1,
         "source": "kalshi_native_group_saved_snapshot_audit_v1",
@@ -32,12 +43,21 @@ def audit_kalshi_native_groups(snapshot_payload: dict[str, Any], *, generated_at
         "summary": {
             "groups_discovered": len(groups),
             "complete_groups": sum(1 for group in groups if group["status"] == "COMPLETE_EXHAUSTIVE_GROUP"),
-            "incomplete_groups": sum(1 for group in groups if group["status"] == "INCOMPLETE_GROUP"),
+            "status_incomplete_groups": sum(1 for group in groups if group["status"] == "INCOMPLETE_GROUP"),
             "blocked_groups": sum(1 for group in groups if group["blockers"]),
             "candidate_input_row_count": len(candidate_rows),
+            "threshold_ladder_groups": classification_counts.get(CLASS_THRESHOLD_LADDER_NOT_EXHAUSTIVE, 0),
+            "range_ladder_groups": classification_counts.get(CLASS_RANGE_LADDER_NOT_EXHAUSTIVE, 0),
+            "complete_event_groups": classification_counts.get(CLASS_COMPLETE_EVENT_GROUP, 0),
+            "incomplete_groups": classification_counts.get(CLASS_INCOMPLETE_GROUP, 0),
+            "partial_event_metadata_groups": classification_counts.get(CLASS_PARTIAL_EVENT_METADATA, 0),
+            "groups_with_shared_rules": sum(1 for group in groups if group.get("shared_rules") is True),
+            "groups_with_shared_times": sum(1 for group in groups if group.get("shared_times") is True),
+            "groups_missing_completeness": sum(1 for group in groups if "missing_completeness_evidence" in group["blockers"]),
             "paper_candidate_count": 0,
             "stop_for_review_count": 0,
             "status_counts": dict(sorted(status_counts.items())),
+            "classification_counts": dict(sorted(classification_counts.items())),
         },
         "groups": groups,
         "structural_basket_detector_inputs": candidate_rows,
@@ -117,7 +137,7 @@ def render_kalshi_native_groups_markdown(report: dict[str, Any]) -> str:
         lines.append(
             "| {group_id} | {status} | {markets} | {outcomes} | {blockers} |".format(
                 group_id=str(group.get("venue_native_group_id") or "").replace("|", "/"),
-                status=group.get("status") or "",
+                status=group.get("group_classification") or group.get("status") or "",
                 markets=group.get("market_count") or 0,
                 outcomes=len(group.get("outcome_list") or []),
                 blockers="; ".join(group.get("blockers") or []).replace("|", "/"),
@@ -129,13 +149,14 @@ def render_kalshi_native_groups_markdown(report: dict[str, Any]) -> str:
 def _audit_group(group_id: str, rows: list[dict[str, Any]], manifest: dict[str, Any] | None = None) -> dict[str, Any]:
     first = rows[0] if rows else {}
     explicit_outcome_list = _first_list(*(row.get("outcome_list") for row in rows))
-    manifest_outcome_list = _list_from(manifest.get("outcome_list") or manifest.get("outcomes")) if isinstance(manifest, dict) else None
-    row_outcome_labels = [row["outcome"] for row in rows if row.get("outcome")]
-    outcome_list = explicit_outcome_list or manifest_outcome_list or row_outcome_labels
-    completeness = _first_bool(*(row.get("completeness") for row in rows))
-    trusted_manifest_complete = isinstance(manifest, dict) and manifest.get("trusted_local_manifest") is True and (
-        manifest.get("complete") is True or manifest.get("is_exhaustive") is True or manifest.get("all_outcomes_included") is True
+    manifest_blockers = validate_local_manifest_v1_group(manifest) if _is_local_manifest(manifest) else []
+    manifest_outcome_list = (
+        manifest_outcome_list_from(manifest) if isinstance(manifest, dict) and not manifest_blockers else None
     )
+    row_outcome_labels = [row["outcome"] for row in rows if row.get("outcome")]
+    outcome_list = explicit_outcome_list or manifest_outcome_list
+    completeness = _first_bool(*(row.get("completeness") for row in rows))
+    trusted_manifest_complete = bool(manifest_outcome_list and _is_local_manifest(manifest) and not manifest_blockers)
     if trusted_manifest_complete:
         completeness = True
     blockers: list[str] = []
@@ -145,13 +166,17 @@ def _audit_group(group_id: str, rows: list[dict[str, Any]], manifest: dict[str, 
         blockers.append("missing_venue_native_group_id")
     if explicit_outcome_list is None and manifest_outcome_list is None:
         blockers.extend(["missing_outcome_list", "partial_event_metadata"])
+    if any(row.get("per_market_binary_outcomes") for row in rows) and explicit_outcome_list is None and manifest_outcome_list is None:
+        blockers.append("per_market_binary_outcomes_not_event_outcome_list")
     if completeness is not True:
         blockers.extend(["missing_completeness_evidence", "partial_event_metadata"])
     if any(row.get("title_only_group") for row in rows):
         blockers.append("title_only_group_not_trusted")
     if any(row.get("reference_only") for row in rows):
         blockers.append("reference_only_source")
-    if any(row.get("threshold_ladder") for row in rows) and not trusted_manifest_complete:
+    if any(row.get("range_ladder") for row in rows) and not trusted_manifest_complete:
+        blockers.append("range_ladder_not_exhaustive")
+    elif any(row.get("threshold_ladder") for row in rows) and not trusted_manifest_complete:
         blockers.append("threshold_ladder_not_exhaustive")
     if outcome_list is not None and len(rows) != len(outcome_list):
         blockers.append("partial_event_metadata")
@@ -161,6 +186,9 @@ def _audit_group(group_id: str, rows: list[dict[str, Any]], manifest: dict[str, 
         blockers.append("missing_settlement_source")
     if _distinct_count(rows, "rules_key") > 1:
         blockers.append("mixed_resolution_criteria")
+    if _distinct_count(rows, "time_key") > 1:
+        blockers.append("mixed_time_metadata")
+    blockers.extend(manifest_blockers)
     blockers.extend(
         exhaustive_evidence_trust_blockers(
             source=SOURCE,
@@ -170,6 +198,9 @@ def _audit_group(group_id: str, rows: list[dict[str, Any]], manifest: dict[str, 
         )
     )
     blockers = sorted(set(blockers))
+    shared_rules = bool(rows) and _distinct_count(rows, "rules_key") == 1 and all(row.get("rules_key") for row in rows)
+    shared_times = bool(rows) and _distinct_count(rows, "time_key") == 1 and all(row.get("time_key") for row in rows)
+    group_classification = _group_classification(blockers, rows)
     group = {
         "venue": "kalshi",
         "venue_native_event_id": first.get("venue_native_event_id"),
@@ -177,11 +208,24 @@ def _audit_group(group_id: str, rows: list[dict[str, Any]], manifest: dict[str, 
         "source": SOURCE,
         "venue_native": bool(first.get("venue_native_event_id") and first.get("venue_native_group_id")),
         "status": "COMPLETE_EXHAUSTIVE_GROUP" if not blockers else "INCOMPLETE_GROUP",
+        "group_classification": group_classification,
         "blockers": blockers,
         "market_count": len(rows),
         "outcome_list": outcome_list or [],
-        "outcome_list_source": "explicit" if explicit_outcome_list else ("trusted_local_manifest" if manifest_outcome_list else "row_outcome_labels"),
+        "row_outcome_labels": row_outcome_labels,
+        "per_market_binary_outcomes": [row.get("per_market_binary_outcomes") for row in rows if row.get("per_market_binary_outcomes")],
+        "outcome_list_source": "explicit" if explicit_outcome_list else ("trusted_local_manifest" if manifest_outcome_list else None),
         "trusted_local_manifest_complete": trusted_manifest_complete,
+        "shared_rules": shared_rules,
+        "shared_times": shared_times,
+        "rules_primary": first.get("rules_primary") if shared_rules else None,
+        "rules_secondary": first.get("rules_secondary") if shared_rules else None,
+        "close_time": first.get("close_time") if shared_times else None,
+        "expected_expiration_time": first.get("expected_expiration_time") if shared_times else None,
+        "expiration_time": first.get("expiration_time") if shared_times else None,
+        "latest_expiration_time": first.get("latest_expiration_time") if shared_times else None,
+        "settlement_source_status": first.get("settlement_source_status") if shared_rules else "missing",
+        "settlement_source_raw_evidence": first.get("settlement_source_raw_evidence") if shared_rules else None,
         "markets": rows,
         "structural_basket_input_rows": [],
         "paper_candidate_emitted": False,
@@ -203,9 +247,14 @@ def _structural_input_row(row: dict[str, Any], rows: list[dict[str, Any]], outco
         "question": row.get("title") or row.get("rules") or row["market_ticker"],
         "outcome": row.get("outcome"),
         "close_time": row.get("close_time"),
+        "expected_expiration_time": row.get("expected_expiration_time"),
+        "expiration_time": row.get("expiration_time"),
+        "latest_expiration_time": row.get("latest_expiration_time"),
         "settlement_time": row.get("settlement_time"),
         "resolution_date": row.get("resolution_date"),
         "rules": row.get("rules"),
+        "rules_primary": row.get("rules_primary"),
+        "rules_secondary": row.get("rules_secondary"),
         "resolution_criteria": row.get("rules"),
         "settlement_source": row.get("settlement_source_raw_evidence"),
         "settlement_source_status": row.get("settlement_source_status"),
@@ -227,25 +276,38 @@ def _structural_input_row(row: dict[str, Any], rows: list[dict[str, Any]], outco
 
 def _extract_record(row: dict[str, Any], event_meta: dict[str, Any] | None) -> dict[str, Any]:
     raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
-    event = event_meta or row.get("event") if isinstance(row.get("event"), dict) else event_meta
+    event = event_meta or (row.get("event") if isinstance(row.get("event"), dict) else None)
     event = event or {}
     event_id = _first_string(row, raw, event, keys=("venue_native_event_id", "event_id", "event_ticker", "id"))
     group_id = _first_string(row, raw, event, keys=("venue_native_group_id", "group_id", "event_ticker", "series_ticker"))
     title = _first_string(row, raw, event, keys=("question", "title", "market_title", "event_title", "name"))
-    rules = _first_string(row, raw, event, keys=("rules", "rules_primary", "resolution_text", "description"))
+    rules_primary = _first_string(row, raw, event, keys=("rules_primary", "rules", "resolution_text", "description"))
+    rules_secondary = _first_string(row, raw, event, keys=("rules_secondary", "settlement_rules", "resolution_secondary"))
+    rules = _combined_rules(rules_primary, rules_secondary)
     settlement_source = _settlement_source_from_rules(row, raw, event, rules=rules)
+    close_time = _first_string(row, raw, event, keys=("close_time",))
+    expected_expiration_time = _first_string(row, raw, event, keys=("expected_expiration_time",))
+    expiration_time = _first_string(row, raw, event, keys=("expiration_time",))
+    latest_expiration_time = _first_string(row, raw, event, keys=("latest_expiration_time",))
+    floor_strike = _first_present(row, raw, keys=("floor_strike",))
+    cap_strike = _first_present(row, raw, keys=("cap_strike",))
+    strike_type = _first_string(row, raw, event, keys=("strike_type",))
+    range_ladder = _is_range_ladder(row, raw, floor_strike=floor_strike, cap_strike=cap_strike, strike_type=strike_type)
+    threshold_ladder = False if range_ladder else _is_threshold_ladder(row, raw, floor_strike=floor_strike, cap_strike=cap_strike, strike_type=strike_type)
     return {
         "venue": "kalshi",
         "venue_native_event_id": event_id,
         "venue_native_group_id": group_id,
+        "event_id": event_id,
+        "event_ticker": _first_string(row, raw, event, keys=("event_ticker",)),
+        "series_ticker": _first_string(row, raw, event, keys=("series_ticker",)),
         "market_ticker": _first_string(row, raw, keys=("market_ticker", "ticker")) or "",
+        "title": title,
+        "yes_sub_title": _first_string(row, raw, keys=("yes_sub_title",)),
+        "no_sub_title": _first_string(row, raw, keys=("no_sub_title",)),
         "outcome": _first_string(row, raw, keys=("outcome", "outcome_label", "yes_sub_title", "subtitle", "sub_title")),
-        "outcome_list": _first_list(
-            _list_from(row.get("outcome_list")),
-            _list_from(raw.get("outcome_list")),
-            _list_from(event.get("outcome_list")),
-            _list_from(event.get("outcomes")),
-        ),
+        "per_market_binary_outcomes": _per_market_binary_outcomes(row, raw),
+        "outcome_list": _explicit_event_outcome_list(row, raw, event),
         "completeness": _first_bool(
             row.get("is_exhaustive"),
             row.get("all_outcomes_included"),
@@ -260,16 +322,30 @@ def _extract_record(row: dict[str, Any], event_meta: dict[str, Any] | None) -> d
             _completeness_bool(raw.get("completeness")),
             _completeness_bool(event.get("completeness")),
         ),
+        "rules_primary": rules_primary,
+        "rules_secondary": rules_secondary,
         "rules": rules,
         "rules_key": _normalize_text_key(rules),
-        "title": title,
         "event_title": _first_string(row, raw, event, keys=("event_title", "title", "name")),
-        "close_time": _first_string(row, raw, keys=("close_time", "expected_expiration_time")),
+        "close_time": close_time,
+        "expected_expiration_time": expected_expiration_time,
+        "expiration_time": expiration_time,
+        "latest_expiration_time": latest_expiration_time,
         "settlement_time": _first_string(row, raw, event, keys=("settlement_time", "expected_settlement_time", "expected_expiration_time")),
         "resolution_date": _resolution_date(row, raw, event),
+        "time_key": _normalize_time_key(
+            close_time=close_time,
+            expected_expiration_time=expected_expiration_time,
+            expiration_time=expiration_time,
+            latest_expiration_time=latest_expiration_time,
+        ),
         "settlement_source_status": "explicit" if settlement_source else "missing",
         "settlement_source_raw_evidence": settlement_source,
-        "threshold_ladder": _is_threshold_ladder(row, raw),
+        "floor_strike": floor_strike,
+        "cap_strike": cap_strike,
+        "strike_type": strike_type,
+        "threshold_ladder": threshold_ladder,
+        "range_ladder": range_ladder,
         "orderbook_enrichment": row.get("orderbook_enrichment") if isinstance(row.get("orderbook_enrichment"), dict) else None,
         "reference_only": has_reference_only_flag(row) or has_reference_only_flag(raw) or has_reference_only_flag(event),
         "title_only_group": not event_id and not group_id and bool(title),
@@ -310,12 +386,34 @@ def _trusted_manifest_groups(payload: dict[str, Any]) -> dict[str, dict[str, Any
     if not isinstance(raw_groups, list):
         return groups
     for group in raw_groups:
-        if not isinstance(group, dict) or group.get("trusted_local_manifest") is not True:
+        if not isinstance(group, dict) or not _is_local_manifest(group):
+            continue
+        if validate_local_manifest_v1_group(group):
             continue
         group_id = group.get("group_id") or group.get("event_ticker") or group.get("event_id")
         if isinstance(group_id, str) and group_id:
             groups[group_id] = group
     return groups
+
+
+def manifest_outcome_list_from(manifest: dict[str, Any]) -> list[str] | None:
+    return manifest_outcome_list(manifest) or _list_from(manifest.get("outcome_list") or manifest.get("outcomes"))
+
+
+def _is_local_manifest(manifest: Any) -> bool:
+    return isinstance(manifest, dict) and manifest.get("source") == LOCAL_MANIFEST_SOURCE
+
+
+def _group_classification(blockers: list[str], rows: list[dict[str, Any]]) -> str:
+    if not blockers:
+        return CLASS_COMPLETE_EVENT_GROUP
+    if any(row.get("range_ladder") for row in rows):
+        return CLASS_RANGE_LADDER_NOT_EXHAUSTIVE
+    if any(row.get("threshold_ladder") for row in rows):
+        return CLASS_THRESHOLD_LADDER_NOT_EXHAUSTIVE
+    if "partial_event_metadata" in blockers:
+        return CLASS_PARTIAL_EVENT_METADATA
+    return CLASS_INCOMPLETE_GROUP
 
 
 def _first_string(*dicts: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -327,6 +425,24 @@ def _first_string(*dicts: dict[str, Any], keys: tuple[str, ...]) -> str | None:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return None
+
+
+def _first_present(*dicts: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for item in dicts:
+        if not isinstance(item, dict):
+            continue
+        for key in keys:
+            value = item.get(key)
+            if value is not None:
+                return value
+    return None
+
+
+def _combined_rules(primary: str | None, secondary: str | None) -> str | None:
+    parts = [part for part in (primary, secondary) if isinstance(part, str) and part.strip()]
+    if not parts:
+        return None
+    return "\n".join(parts)
 
 
 def _first_list(*values: list[str] | None) -> list[str] | None:
@@ -377,11 +493,82 @@ def _normalize_text_key(value: str | None) -> str | None:
     return " ".join(value.lower().split())
 
 
-def _is_threshold_ladder(row: dict[str, Any], raw: dict[str, Any]) -> bool:
-    text = " ".join(str(value or "") for value in (row.get("title"), row.get("question"), raw.get("title"), raw.get("yes_sub_title"), raw.get("subtitle"))).lower()
-    if raw.get("floor_strike") is not None or raw.get("cap_strike") is not None:
+def _per_market_binary_outcomes(row: dict[str, Any], raw: dict[str, Any]) -> list[str]:
+    values = []
+    for source in (row.get("outcomes"), raw.get("outcomes"), row.get("outcome_list"), raw.get("outcome_list")):
+        parsed = _list_from(source)
+        if parsed:
+            values.extend(parsed)
+    normalized = {_normalize_text_key(value) for value in values}
+    if {"yes", "no"}.issubset(normalized):
+        return ["Yes", "No"]
+    return []
+
+
+def _explicit_event_outcome_list(row: dict[str, Any], raw: dict[str, Any], event: dict[str, Any]) -> list[str] | None:
+    event_level = _first_list(_list_from(event.get("outcome_list")), _list_from(event.get("outcomes")))
+    if event_level:
+        return event_level
+    for source in (row.get("outcome_list"), raw.get("outcome_list")):
+        parsed = _list_from(source)
+        if parsed and not _is_binary_yes_no_list(parsed):
+            return parsed
+    return None
+
+
+def _is_binary_yes_no_list(values: list[str]) -> bool:
+    normalized = {_normalize_text_key(value) for value in values}
+    return normalized == {"yes", "no"}
+
+
+def _normalize_time_key(
+    *,
+    close_time: str | None,
+    expected_expiration_time: str | None,
+    expiration_time: str | None,
+    latest_expiration_time: str | None,
+) -> str | None:
+    values = [close_time, expected_expiration_time, expiration_time, latest_expiration_time]
+    if not any(values):
+        return None
+    return "|".join(_normalize_text_key(value) or "" for value in values)
+
+
+def _is_range_ladder(
+    row: dict[str, Any],
+    raw: dict[str, Any],
+    *,
+    floor_strike: Any,
+    cap_strike: Any,
+    strike_type: str | None,
+) -> bool:
+    text = _ladder_text(row, raw)
+    if floor_strike is not None and cap_strike is not None:
         return True
-    return any(term in text for term in ("above", "below", "between", " or above", " or below", "range"))
+    if isinstance(strike_type, str) and strike_type.strip().lower() in {"range", "between"}:
+        return True
+    return any(term in text for term in ("between", "range bucket"))
+
+
+def _is_threshold_ladder(
+    row: dict[str, Any],
+    raw: dict[str, Any],
+    *,
+    floor_strike: Any,
+    cap_strike: Any,
+    strike_type: str | None,
+) -> bool:
+    if floor_strike is not None or cap_strike is not None:
+        return True
+    if isinstance(strike_type, str) and strike_type.strip().lower() in {"greater", "less", "above", "below"}:
+        return True
+    text = _ladder_text(row, raw)
+    return any(term in text for term in ("above", "below", " or above", " or below", "greater than", "less than"))
+
+
+def _ladder_text(row: dict[str, Any], raw: dict[str, Any]) -> str:
+    text = " ".join(str(value or "") for value in (row.get("title"), row.get("question"), raw.get("title"), raw.get("yes_sub_title"), raw.get("subtitle"))).lower()
+    return text
 
 
 def _settlement_source_from_rules(*dicts: dict[str, Any], rules: str | None) -> str | None:

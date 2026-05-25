@@ -56,6 +56,7 @@ from relative_value.exact_paper_candidate_universes import build_exact_paper_can
 from relative_value.exact_market_expansion_plan import write_exact_market_expansion_plan_files
 from relative_value.platform_expansion_matrix import write_platform_expansion_matrix_files
 from relative_value.structural_basket_detector import build_structural_basket_review_report_files
+from relative_value.structural_manifest_scout import scout_structural_manifest_candidates_file
 from relative_value.paper_fill_simulator import simulate_paper_fill_journal_files
 from relative_value.kalshi_native_groups import audit_kalshi_native_groups_file, kalshi_native_group_audit_paths
 from venues.kalshi import (
@@ -568,6 +569,24 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=PROJECT_ROOT / "reports" / "structural_basket_review.md",
     )
+
+    scout_manifest_parser = subparsers.add_parser(
+        "scout-structural-manifest-candidates",
+        help="Saved-file-only diagnostic scout for groups worth human local_manifest_v1 review.",
+    )
+    scout_manifest_parser.add_argument("--snapshot", required=True, type=Path, help="Saved Kalshi snapshot/event/market JSON.")
+    scout_manifest_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_manifest_candidates.json",
+    )
+    scout_manifest_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_manifest_candidates.md",
+    )
+    scout_manifest_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    scout_manifest_parser.add_argument("--min-depth", type=float, default=1.0)
 
     paper_fill_parser = subparsers.add_parser(
         "simulate-paper-fills",
@@ -1246,6 +1265,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         if summary["stop_for_review_count"]:
             print("STOP_FOR_REVIEW structural basket review candidate detected; report only, no orders placed.")
+        return 0
+    if args.command == "scout-structural-manifest-candidates":
+        report = scout_structural_manifest_candidates_file(
+            snapshot_path=args.snapshot,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_depth=args.min_depth,
+        )
+        summary = report["summary"]
+        print(
+            "structural_manifest_candidate_scout_status=OK "
+            f"groups={summary['groups_discovered']} "
+            f"manifest_review_candidates={summary['manifest_review_candidate_count']} "
+            f"blocked={summary['blocked_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
         return 0
     if args.command == "simulate-paper-fills":
         journal = simulate_paper_fill_journal_files(

@@ -55,6 +55,23 @@ def _audit(payload: dict) -> dict:
     return audit_kalshi_native_groups(payload, generated_at=NOW)
 
 
+def _local_manifest_group(group_id: str, outcome_list: list[str]) -> dict:
+    return {
+        "source": "local_manifest_v1",
+        "trusted_local_manifest": True,
+        "reviewer": "unit-test-reviewer",
+        "reviewed_at": "2026-05-24T12:00:00+00:00",
+        "venue": "kalshi",
+        "group_id": group_id,
+        "market_tickers": [f"{group_id}-{index}" for index, _ in enumerate(outcome_list)],
+        "outcome_list": outcome_list,
+        "complete": True,
+        "evidence_text": "Hand-reviewed local manifest with exact market tickers and complete outcome list.",
+        "settlement_source_raw_evidence": "Hand-reviewed Kalshi rules evidence.",
+        "rules_evidence": "Hand-reviewed event-level outcome list and resolution rules.",
+    }
+
+
 def test_explicit_complete_event_group_becomes_trusted_source_candidate() -> None:
     report = _audit({"events": [_event()]})
     group = report["groups"][0]
@@ -71,8 +88,14 @@ def test_explicit_complete_event_group_becomes_trusted_source_candidate() -> Non
     assert candidate["exhaustive_group"]["all_outcomes_included"] is True
     assert candidate["exhaustive_group"]["expected_outcome_count"] == 3
     assert candidate["rules"] == "Resolution source is official Kalshi event metadata."
+    assert candidate["rules_primary"] == "Resolution source is official Kalshi event metadata."
+    assert candidate["expected_expiration_time"] == "2026-12-31T23:00:00Z"
     assert candidate["settlement_source_status"] == "explicit"
     assert candidate["settlement_source_raw_evidence"] == "official Kalshi event metadata"
+    assert group["group_classification"] == "COMPLETE_EVENT_GROUP"
+    assert report["summary"]["complete_event_groups"] == 1
+    assert report["summary"]["groups_with_shared_rules"] == 1
+    assert report["summary"]["groups_with_shared_times"] == 1
 
 
 def test_missing_outcome_list_blocks() -> None:
@@ -166,22 +189,19 @@ def test_fed_threshold_ladder_remains_blocked_without_manifest() -> None:
     group = report["groups"][0]
 
     assert group["status"] == "INCOMPLETE_GROUP"
+    assert group["group_classification"] == "THRESHOLD_LADDER_NOT_EXHAUSTIVE"
     assert "threshold_ladder_not_exhaustive" in group["blockers"]
     assert "missing_completeness_evidence" in group["blockers"]
     assert report["summary"]["candidate_input_row_count"] == 0
+    assert report["summary"]["threshold_ladder_groups"] == 1
 
 
 def test_threshold_ladder_can_pass_only_with_trusted_manifest() -> None:
+    manifest = _local_manifest_group("KXFED-27APR", ["Above 4.25%", "Above 4.00%"])
+    manifest["market_tickers"] = ["KXFED-27APR-T4.25", "KXFED-27APR-T4.00"]
     report = _audit(
         {
-            "trusted_exhaustive_groups": [
-                {
-                    "group_id": "KXFED-27APR",
-                    "trusted_local_manifest": True,
-                    "complete": True,
-                    "outcome_list": ["Above 4.25%", "Above 4.00%"],
-                }
-            ],
+            "trusted_exhaustive_groups": [manifest],
             "normalized_markets": [
                 _market(
                     "KXFED-27APR-T4.25",
@@ -200,7 +220,67 @@ def test_threshold_ladder_can_pass_only_with_trusted_manifest() -> None:
     )
 
     assert report["groups"][0]["status"] == "COMPLETE_EXHAUSTIVE_GROUP"
+    assert report["groups"][0]["group_classification"] == "COMPLETE_EVENT_GROUP"
     assert report["summary"]["candidate_input_row_count"] == 2
+
+
+def test_per_market_yes_no_outcomes_do_not_become_event_outcome_list() -> None:
+    report = _audit(
+        {
+            "normalized_markets": [
+                _market(
+                    "KXBTC-26MAY-T86000",
+                    "$86,000 or above",
+                    event_id="KXBTC-26MAY",
+                    raw={"event_ticker": "KXBTC-26MAY", "floor_strike": 86000},
+                    outcome_list=["Yes", "No"],
+                    outcomes=[{"name": "Yes"}, {"name": "No"}],
+                ),
+                _market(
+                    "KXBTC-26MAY-T87000",
+                    "$87,000 or above",
+                    event_id="KXBTC-26MAY",
+                    raw={"event_ticker": "KXBTC-26MAY", "floor_strike": 87000},
+                    outcome_list=["Yes", "No"],
+                    outcomes=[{"name": "Yes"}, {"name": "No"}],
+                ),
+            ]
+        }
+    )
+    group = report["groups"][0]
+
+    assert group["outcome_list"] == []
+    assert group["per_market_binary_outcomes"] == [["Yes", "No"], ["Yes", "No"]]
+    assert "per_market_binary_outcomes_not_event_outcome_list" in group["blockers"]
+    assert "missing_outcome_list" in group["blockers"]
+    assert group["group_classification"] == "THRESHOLD_LADDER_NOT_EXHAUSTIVE"
+    assert report["summary"]["candidate_input_row_count"] == 0
+
+
+def test_range_ladder_remains_not_exhaustive_without_manifest() -> None:
+    report = _audit(
+        {
+            "normalized_markets": [
+                _market(
+                    "KXBTC-RANGE-1",
+                    "$80,000 to $90,000",
+                    event_id="KXBTC-RANGE",
+                    raw={"event_ticker": "KXBTC-RANGE", "floor_strike": 80000, "cap_strike": 90000, "strike_type": "range"},
+                ),
+                _market(
+                    "KXBTC-RANGE-2",
+                    "$90,000 to $100,000",
+                    event_id="KXBTC-RANGE",
+                    raw={"event_ticker": "KXBTC-RANGE", "floor_strike": 90000, "cap_strike": 100000, "strike_type": "range"},
+                ),
+            ]
+        }
+    )
+    group = report["groups"][0]
+
+    assert group["group_classification"] == "RANGE_LADDER_NOT_EXHAUSTIVE"
+    assert "range_ladder_not_exhaustive" in group["blockers"]
+    assert report["summary"]["range_ladder_groups"] == 1
 
 
 def test_shared_explicit_rules_propagate_to_structural_input_rows() -> None:
@@ -209,6 +289,11 @@ def test_shared_explicit_rules_propagate_to_structural_input_rows() -> None:
 
     assert candidate["rules"] == "Resolution source is official Kalshi event metadata."
     assert candidate["resolution_criteria"] == "Resolution source is official Kalshi event metadata."
+    assert candidate["rules_primary"] == "Resolution source is official Kalshi event metadata."
+    assert candidate["rules_secondary"] is None
+    assert candidate["expected_expiration_time"] == "2026-12-31T23:00:00Z"
+    assert candidate["expiration_time"] is None
+    assert candidate["latest_expiration_time"] is None
     assert candidate["settlement_source_status"] == "explicit"
 
 

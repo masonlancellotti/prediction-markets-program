@@ -61,9 +61,10 @@ def _manifest(
             {
                 "venue": "kalshi",
                 "group_id": "event-1",
+                "manifest_id": "unit-test-manifest",
                 "exhaustive": True,
                 "source": source,
-                "evidence": "hand-reviewed venue event metadata states all outcomes included",
+                "evidence_text": "hand-reviewed venue event metadata states all outcomes included",
                 "trusted_local_manifest": trusted_local_manifest,
                 "reviewer": "unit-test-reviewer",
                 "reviewed_at": "2026-05-24T12:00:00+00:00",
@@ -110,6 +111,11 @@ def test_complete_exhaustive_group_sum_asks_below_one_passes_stop_for_review() -
     assert report["summary"]["stop_for_review_count"] == 1
     assert report["summary"]["paper_candidate_count"] == 0
     assert report["safety"]["paper_candidate_emitted"] is False
+    assert row["manifest_id"] == "unit-test-manifest"
+    assert row["manifest_reviewed_by"] == "unit-test-reviewer"
+    assert row["manifest_reviewed_at"] == "2026-05-24T12:00:00+00:00"
+    assert row["manifest_evidence_status"] == "PASS"
+    assert row["manifest_blockers"] == []
     assert "STOP_FOR_REVIEW" in render_structural_basket_review_markdown(report)
 
 
@@ -233,6 +239,7 @@ def test_stale_orderbook_fails_closed() -> None:
     row = report["rows"][0]
 
     assert row["status"] == STATUS_STALE_ORDERBOOK
+    assert row["manifest_evidence_status"] == "PASS"
     assert "stale_orderbook" in row["blockers"]
 
 
@@ -241,6 +248,7 @@ def test_missing_depth_fails_closed() -> None:
     row = report["rows"][0]
 
     assert row["status"] == STATUS_INSUFFICIENT_DEPTH
+    assert row["manifest_evidence_status"] == "PASS"
     assert "insufficient_ask_depth" in row["blockers"]
 
 
@@ -251,6 +259,7 @@ def test_fees_can_kill_apparent_candidate() -> None:
     assert row["sum_asks"] == 0.98
     assert row["total_cost_after_fees"] == 1.02
     assert row["status"] == STATUS_FEES_KILL
+    assert row["manifest_evidence_status"] == "PASS"
     assert "fees_kill_or_no_positive_basket_gap" in row["blockers"]
 
 
@@ -300,8 +309,10 @@ def test_local_manifest_fixture_is_explicit_exhaustive_evidence() -> None:
     assert row["status"] == STATUS_STOP_FOR_REVIEW
     assert row["evidence"]["source"] == "local_manifest_v1"
     assert row["evidence"]["manifest"]["reviewer"] == "unit-test-reviewer"
+    assert row["manifest_evidence_status"] == "PASS"
     assert row["paper_candidate_emitted"] is False
     assert report["summary"]["paper_candidate_count"] == 0
+    assert "| kalshi | event-1 | STOP_FOR_REVIEW | PASS | PASS |" in render_structural_basket_review_markdown(report)
 
 
 def test_local_manifest_missing_reviewer_and_reviewed_at_fails_closed() -> None:
@@ -331,7 +342,7 @@ def test_local_manifest_incomplete_outcome_list_fails_closed() -> None:
 def test_local_manifest_title_only_evidence_fails_closed() -> None:
     manifest = _manifest(["a", "b"])
     group = manifest["exhaustive_groups"][0]
-    group["evidence"] = "title similarity says this is a complete group"
+    group["evidence_text"] = "title similarity says this is a complete group"
     report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
     row = report["rows"][0]
 
@@ -358,6 +369,41 @@ def test_local_manifest_reference_only_source_fails_closed() -> None:
 
     assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
     assert "reference_only_source" in row["blockers"]
+    assert report["summary"]["stop_for_review_count"] == 0
+
+
+def test_local_manifest_missing_evidence_text_fails_closed() -> None:
+    manifest = _manifest(["a", "b"])
+    manifest["exhaustive_groups"][0].pop("evidence_text")
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert row["manifest_evidence_status"] == "FAIL"
+    assert "missing_manifest_evidence_text" in row["blockers"]
+
+
+def test_local_manifest_missing_settlement_evidence_fails_closed() -> None:
+    manifest = _manifest(["a", "b"])
+    manifest["exhaustive_groups"][0].pop("settlement_source_raw_evidence")
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert row["manifest_evidence_status"] == "FAIL"
+    assert "missing_manifest_settlement_source_evidence" in row["blockers"]
+
+
+def test_local_manifest_cannot_include_tickers_absent_from_snapshot() -> None:
+    manifest = _manifest(["a", "b", "missing"])
+    report = _report([_row("a", 0.20), _row("b", 0.25)], manifest)
+    row = report["rows"][0]
+
+    assert row["status"] == STATUS_NOT_EXHAUSTIVE_EVIDENCE
+    assert row["manifest_evidence_status"] == "FAIL"
+    assert "manifest_market_tickers_absent_from_snapshot" in row["blockers"]
+    assert "manifest_market_tickers_absent_from_snapshot" in row["manifest_blockers"]
+    assert "explicit_exhaustive_group_incomplete" in row["blockers"]
     assert report["summary"]["stop_for_review_count"] == 0
 
 

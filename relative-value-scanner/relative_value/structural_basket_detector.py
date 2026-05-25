@@ -126,16 +126,17 @@ def render_structural_basket_review_markdown(report: dict[str, Any]) -> str:
         "Saved-file-only diagnostic. Exhaustiveness requires explicit venue-native metadata or a trusted local manifest.",
         "No orders are placed. Graph hints and title similarity are not trusted exhaustive evidence.",
         "",
-        "| Venue | Group | Status | Settlement audit | Outcomes | Sum asks | Fees | Total cost | Min depth | Top blocker |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Venue | Group | Status | Manifest | Settlement audit | Outcomes | Sum asks | Fees | Total cost | Min depth | Top blocker |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in report.get("rows", []):
         blockers = row.get("blockers") or []
         lines.append(
-            "| {venue} | {group_id} | {status} | {settlement} | {outcomes} | {sum_asks:.4f} | {fees:.4f} | {total:.4f} | {depth:.4f} | {blocker} |".format(
+            "| {venue} | {group_id} | {status} | {manifest} | {settlement} | {outcomes} | {sum_asks:.4f} | {fees:.4f} | {total:.4f} | {depth:.4f} | {blocker} |".format(
                 venue=row.get("venue") or "",
                 group_id=str(row.get("group_id") or "").replace("|", "/"),
                 status=row.get("status") or "",
+                manifest=row.get("manifest_evidence_status") or "",
                 settlement=row.get("settlement_audit_status") or "",
                 outcomes=len(row.get("outcomes") or []),
                 sum_asks=float(row.get("sum_asks") or 0.0),
@@ -169,6 +170,8 @@ def _evaluate_group(
     member_ids = {_row_identifier for row in members for _row_identifier in _market_identifiers(row)}
     if expected_ids and not expected_ids.issubset(member_ids):
         blockers.append("explicit_exhaustive_group_member_mismatch")
+        if spec.get("evidence_source") == LOCAL_MANIFEST_SOURCE:
+            blockers.append("manifest_market_tickers_absent_from_snapshot")
     if not spec.get("is_exhaustive") or not spec.get("evidence_source"):
         blockers.append("missing_explicit_exhaustive_evidence")
     blockers.extend(
@@ -229,11 +232,18 @@ def _evaluate_group(
     status = _status_from_blockers(blockers)
     if status == STATUS_STRUCTURAL_BASKET_REVIEW:
         status = STATUS_STOP_FOR_REVIEW
+    manifest_metadata = spec.get("manifest_metadata") or {}
+    manifest_blockers = sorted(set(spec.get("manifest_blockers") or []) | (set(blockers) & set(MANIFEST_BLOCKERS)))
     return {
         "venue": venue,
         "group_id": spec.get("group_id"),
         "status": status,
         "blockers": sorted(set(blockers)),
+        "manifest_id": manifest_metadata.get("manifest_id"),
+        "manifest_reviewed_by": manifest_metadata.get("reviewer"),
+        "manifest_reviewed_at": manifest_metadata.get("reviewed_at"),
+        "manifest_evidence_status": _manifest_evidence_status(spec, blockers),
+        "manifest_blockers": manifest_blockers,
         "evidence": {
             "source": spec.get("evidence_source"),
             "detail": spec.get("evidence_detail"),
@@ -287,6 +297,18 @@ def _status_from_blockers(blockers: list[str]) -> str:
     return STATUS_FEES_KILL
 
 
+def _manifest_evidence_status(spec: dict[str, Any], blockers: list[str]) -> str | None:
+    if spec.get("evidence_source") != LOCAL_MANIFEST_SOURCE:
+        return None
+    manifest_blockers = set(spec.get("manifest_blockers") or [])
+    blocker_set = set(blockers)
+    if manifest_blockers or "manifest_market_tickers_absent_from_snapshot" in blocker_set:
+        return "FAIL"
+    if blocker_set & {"explicit_exhaustive_group_incomplete", "explicit_exhaustive_group_member_mismatch"}:
+        return "FAIL"
+    return "PASS"
+
+
 def _explicit_group_specs(rows: list[dict[str, Any]], manifest: dict[str, Any] | None) -> list[dict[str, Any]]:
     specs = []
     if manifest:
@@ -296,7 +318,7 @@ def _explicit_group_specs(rows: list[dict[str, Any]], manifest: dict[str, Any] |
             source = group.get("source") or group.get("evidence_source")
             manifest_blockers: list[str] = []
             manifest_metadata = None
-            outcome_market_ids = group.get("outcome_market_ids") or group.get("market_ids") or group.get("market_tickers") or []
+            outcome_market_ids = group.get("market_tickers") or group.get("exact_market_tickers") or group.get("outcome_market_ids") or group.get("market_ids") or []
             outcome_list = manifest_outcome_list(group)
             expected_count = group.get("expected_outcome_count")
             if expected_count is None and outcome_list:
@@ -304,7 +326,7 @@ def _explicit_group_specs(rows: list[dict[str, Any]], manifest: dict[str, Any] |
             if isinstance(source, str) and source.strip().lower() == LOCAL_MANIFEST_SOURCE:
                 manifest_blockers = validate_local_manifest_v1_group(group)
                 manifest_metadata = local_manifest_group_metadata(group)
-                outcome_market_ids = group.get("outcome_market_ids") or group.get("market_ids") or manifest_market_tickers(group)
+                outcome_market_ids = manifest_market_tickers(group)
             specs.append(
                 {
                     "venue": group.get("venue"),

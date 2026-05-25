@@ -20,7 +20,9 @@ MANIFEST_BLOCKERS = frozenset(
         "missing_manifest_market_tickers",
         "missing_manifest_outcome_list",
         "incomplete_manifest_outcome_list",
+        "manifest_market_tickers_absent_from_snapshot",
         "manifest_not_marked_complete",
+        "missing_manifest_evidence_text",
         "missing_manifest_settlement_source_evidence",
         "missing_manifest_rules_evidence",
         "title_only_manifest_evidence",
@@ -77,6 +79,8 @@ def validate_local_manifest_v1_group(group: dict[str, Any]) -> list[str]:
         blockers.append("incomplete_manifest_outcome_list")
     if not _manifest_marked_complete(group):
         blockers.append("manifest_not_marked_complete")
+    if not _evidence_text_or_notes(group):
+        blockers.append("missing_manifest_evidence_text")
     if not _settlement_source_evidence(group):
         blockers.append("missing_manifest_settlement_source_evidence")
     if not _rules_evidence(group):
@@ -105,10 +109,12 @@ def manifest_outcome_list(group: dict[str, Any]) -> list[str]:
 
 def local_manifest_group_metadata(group: dict[str, Any]) -> dict[str, Any]:
     return {
+        "manifest_id": group.get("manifest_id") or group.get("id"),
         "reviewer": group.get("reviewer"),
         "reviewed_at": group.get("reviewed_at"),
         "market_tickers": manifest_market_tickers(group),
         "outcome_list": manifest_outcome_list(group),
+        "evidence_text": _evidence_text_or_notes(group),
         "settlement_source_evidence": _settlement_source_evidence(group),
         "rules_evidence": _rules_evidence(group),
     }
@@ -136,6 +142,10 @@ def _settlement_source_evidence(group: dict[str, Any]) -> str | None:
     )
 
 
+def _evidence_text_or_notes(group: dict[str, Any]) -> str | None:
+    return _string_or_none(group.get("evidence_text") or group.get("evidence_notes") or group.get("evidence"))
+
+
 def _rules_evidence(group: dict[str, Any]) -> str | None:
     return _string_or_none(
         group.get("rules_evidence")
@@ -148,6 +158,8 @@ def _manifest_evidence_text(group: dict[str, Any]) -> str:
     parts = []
     for key in (
         "evidence",
+        "evidence_text",
+        "evidence_notes",
         "evidence_detail",
         "evidence_type",
         "evidence_source_detail",

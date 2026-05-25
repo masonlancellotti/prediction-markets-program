@@ -6,6 +6,7 @@
       "reviewer": "unit-test-reviewer",
       "reviewed_at": "2026-05-24T12:00:00+00:00",
       "venue": "kalshi",
+      "manifest_id": "unit-test-kalshi-event-manifest",
       "event_id": "event-1",
       "group_id": "event-1",
       "market_tickers": ["A", "B"],
@@ -14,7 +15,7 @@
       "complete": true,
       "settlement_source_raw_evidence": "Official Kalshi event metadata resolves every listed outcome from the same source.",
       "rules_evidence": "All outcomes resolve from the same official event result.",
-      "evidence": "Hand-reviewed local manifest with exact market tickers and complete outcome list."
+      "evidence_text": "Hand-reviewed local manifest with exact market tickers and complete outcome list."
     }
   ]
 }
