@@ -61,6 +61,7 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
         f"- Findings: {len(violations)}",
         f"- Multi-leg constraints: {multi_leg_report['constraint_count']}",
         f"- Formula diagnostics: {formula_report['comparison_count']}",
+        f"- Formula cluster constraints: {formula_report['formula_cluster_constraint_count']}",
         f"- Highest action: `{_highest_action(violations).value}`",
         f"- Scope: {_scope_text(snapshot)}",
         f"- Diagnostic only: true",
@@ -154,6 +155,32 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
         )
         lines.extend(_price_line(snapshot, market_id) for market_id in diagnostic["market_ids"])
         lines.extend([f"- Review reason: {diagnostic['review_reason']}", ""])
+
+    lines.extend(["## Formula Cluster Constraints", ""])
+    if not formula_report["formula_cluster_constraints"]:
+        lines.extend(["No synthesized formula cluster constraints in this snapshot.", ""])
+    for constraint in formula_report["formula_cluster_constraints"]:
+        lines.extend(
+            [
+                f"### `{constraint['constraint_id']}`",
+                "",
+                f"- Constraint type: `{constraint['constraint_type']}`",
+                f"- Constraint family: `{constraint['constraint_family']}`",
+                f"- Diagnostic rank: {constraint['diagnostic_rank']}",
+                f"- Diagnostic priority: `{constraint['diagnostic_priority']}`",
+                f"- Affects evaluator gates: `{str(constraint['affects_evaluator_gates']).lower()}`",
+                f"- Blockers: {', '.join(constraint['blockers']) if constraint['blockers'] else 'none'}",
+                "- Source markets:",
+            ]
+        )
+        lines.extend(f"- `{market_id}`" for market_id in constraint["source_market_ids"])
+        lines.extend(
+            [
+                f"- Review reason: {constraint['reason_for_review']}",
+                f"- Exact keys to verify: {', '.join(constraint['requested_exact_keys_to_verify'])}",
+                "",
+            ]
+        )
 
     return "\n".join(lines)
 

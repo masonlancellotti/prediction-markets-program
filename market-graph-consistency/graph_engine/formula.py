@@ -110,16 +110,21 @@ def build_formula_diagnostics_report(snapshot: GraphSnapshot) -> dict[str, Any]:
 
 
 def build_formula_diagnostics_report_from_formulas(formulas: list[MarketFormula]) -> dict[str, Any]:
+    from graph_engine.formula_clusters import build_formula_cluster_constraints_report
+
     formula_rows = [formula.to_dict() for formula in sorted(formulas, key=lambda item: item.market_id)]
     diagnostics = _compare_formulas(formulas)
+    cluster_report = build_formula_cluster_constraints_report(formulas)
     report = {
         "diagnostic_only": True,
         "affects_evaluator_gates": False,
         "allowed_actions": ALLOWED_ACTIONS,
         "formula_count": len(formula_rows),
         "comparison_count": len(diagnostics),
+        "formula_cluster_constraint_count": cluster_report["cluster_constraint_count"],
         "formulas": formula_rows,
         "formula_diagnostics": diagnostics,
+        "formula_cluster_constraints": cluster_report["formula_cluster_constraints"],
     }
     validate_formula_diagnostics_contract(report)
     return report

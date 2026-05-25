@@ -4,6 +4,8 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+import pytest
+
 from graph_engine.consistency.runner import run_consistency_checks
 from graph_engine.reporting.hints import build_relative_value_hints_report
 from graph_engine.reporting.schema_validation import (
@@ -149,6 +151,14 @@ def test_hint_contract_rejects_structural_exact_same_payoff_claims(fixture_snaps
 def test_hint_contract_rejects_exact_same_payoff_from_old_file(fixture_snapshot) -> None:
     report = _valid_report(fixture_snapshot)
     report["hints"][0]["relation_type"] = "EXACT_SAME_PAYOFF"
+
+    _assert_contract_invalid(report)
+
+
+@pytest.mark.parametrize("token", ["trade", "fill", "size", "paper"])
+def test_hint_contract_rejects_bare_prohibited_values(fixture_snapshot, token: str) -> None:
+    report = _valid_report(fixture_snapshot)
+    report["hints"][0]["review_reason"] = token
 
     _assert_contract_invalid(report)
 

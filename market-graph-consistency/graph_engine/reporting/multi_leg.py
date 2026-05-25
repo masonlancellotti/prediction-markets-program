@@ -17,6 +17,7 @@ def build_multi_leg_constraints_report(snapshot: GraphSnapshot) -> dict[str, Any
         *_exclusion_constraints(snapshot),
         *_threshold_ladder_constraints(snapshot),
         *_complement_parent_child_constraints(snapshot),
+        *_nested_subset_chain_constraints(snapshot),
     ]
     constraints = sorted(
         constraints,
@@ -192,6 +193,98 @@ def _complement_parent_child_constraints(snapshot: GraphSnapshot) -> list[dict[s
                 )
             )
     return constraints
+
+
+def _nested_subset_chain_constraints(snapshot: GraphSnapshot) -> list[dict[str, Any]]:
+    child_to_parent = _subset_parent_map(snapshot)
+    constraints: list[dict[str, Any]] = []
+    seen_chain_ids: set[str] = set()
+
+    for start_id in sorted(child_to_parent):
+        chain = _subset_chain_from(start_id, child_to_parent)
+        if len(chain) < 3:
+            continue
+        chain_key = "->".join(chain)
+        if chain_key in seen_chain_ids:
+            continue
+        seen_chain_ids.add(chain_key)
+
+        nodes = [snapshot.nodes[market_id] for market_id in chain]
+        worst_gap = 0.0
+        for child, parent in zip(nodes, nodes[1:]):
+            worst_gap = max(worst_gap, child.probability - parent.probability - DEFAULT_TOLERANCE)
+        if worst_gap <= 1e-12:
+            continue
+
+        blockers = _chain_blockers(nodes)
+        confidence_score = min(
+            edge.confidence
+            for child_id, parent_id in zip(chain, chain[1:])
+            for edge in child_to_parent[child_id]
+            if edge.dst_market_id == parent_id
+        )
+        constraints.append(
+            _constraint(
+                constraint_id=f"multi_leg:nested_subset_chain:{chain_key}",
+                constraint_type="nested_subset_chain",
+                constraint_family="compound_bound",
+                market_ids=chain,
+                bound_gap=worst_gap,
+                diagnostic_priority="WATCH" if blockers else "MANUAL_REVIEW",
+                review_reason="Nested subset chain has a narrower child above a broader parent after tolerance.",
+                observed_value=max(node.probability for node in nodes),
+                expected_lower_bound=0.0,
+                expected_upper_bound=min(node.probability for node in nodes[1:]),
+                confidence_score=confidence_score,
+                confidence_basis="Saved fixture subset edges form a three-or-more-market nested chain.",
+                required_review_questions=[
+                    "Does each child outcome strictly imply the next broader parent outcome?",
+                    "Do all markets in the chain share compatible source and settlement timing?",
+                    "Is any edge in the chain only a wording similarity rather than a subset relation?",
+                ],
+                blockers=blockers,
+            )
+        )
+    return constraints
+
+
+def _subset_parent_map(snapshot: GraphSnapshot):
+    child_to_parent = defaultdict(list)
+    for edge in snapshot.edges:
+        if edge.relation == RelationshipType.SUBSET and edge.src_market_id in snapshot.nodes and edge.dst_market_id in snapshot.nodes:
+            child_to_parent[edge.src_market_id].append(edge)
+    return child_to_parent
+
+
+def _subset_chain_from(start_id: str, child_to_parent) -> list[str]:
+    chain = [start_id]
+    seen = {start_id}
+    current = start_id
+    while current in child_to_parent:
+        parents = sorted(child_to_parent[current], key=lambda edge: edge.dst_market_id)
+        parent_id = parents[0].dst_market_id
+        if parent_id in seen:
+            break
+        chain.append(parent_id)
+        seen.add(parent_id)
+        current = parent_id
+    return chain
+
+
+def _chain_blockers(nodes: list[MarketNode]) -> list[str]:
+    blockers: list[str] = []
+    observables = {node.observable for node in nodes if node.observable}
+    sources = {node.settlement_source for node in nodes if node.settlement_source}
+    windows = {node.window for node in nodes if node.window}
+    if any(not node.observable for node in nodes) or len(observables) > 1:
+        blockers.append("observable_mismatch")
+    if any(not node.settlement_source for node in nodes) or len(sources) > 1:
+        blockers.append("settlement_source_mismatch")
+    if any(not node.window for node in nodes) or len(windows) > 1:
+        blockers.append("window_mismatch")
+    if any(node.reference_only for node in nodes):
+        blockers.append("reference_only_node")
+    return sorted(set(blockers))
 
 
 def _constraint(

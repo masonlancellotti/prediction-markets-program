@@ -44,3 +44,4 @@ Current v1 logic enforces only implication/subset/same-event/exclusion constrain
 - Formula comparison output remains graph-local diagnostics capped to `WATCH` or `MANUAL_REVIEW`.
 - Similar titles are not enough for trusted equality. Typed formula matches remain review-only in this project.
 - Any relative-value evaluator must independently prove exact same-payoff before producing candidate labels in its own repository.
+- Formula watchlists and investigation request exports are graph-local review packets only; relative-value work must independently prove exact payoff before any downstream candidate label is considered.

@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from graph_engine.reporting.safety import PROHIBITED_REPORT_TOKENS, find_prohibited_report_tokens
+
 
 class SchemaValidationError(ValueError):
     pass
@@ -33,25 +35,14 @@ STRUCTURAL_NOT_SAME_PAYOFF_RELATIONS = {
 }
 SAME_PAYOFF_BOUND = "same_payoff_equality_if_settlement_proven"
 DISALLOWED_HINT_RELATION_TYPES = {"EXACT_SAME_PAYOFF"}
-PROHIBITED_HINT_DIFF_TOKENS = {
-    "executable",
-    "executable_arb",
-    "fill_size",
-    "order",
-    "paper_candidate",
-    "pnl",
-    "profit",
-    "profit_usd",
-    "possible_arb",
-    "size_usd",
-    "trade_permission",
-}
+PROHIBITED_HINT_DIFF_TOKENS = PROHIBITED_REPORT_TOKENS
 MULTI_LEG_CONSTRAINT_TYPES = {
     "exhaustive_group",
     "mutually_exclusive_group",
     "threshold_ladder",
     "range_bucket_partition",
     "complement_parent_child",
+    "nested_subset_chain",
 }
 MULTI_LEG_CONSTRAINT_FAMILIES = {
     "compound_bound",
@@ -69,6 +60,24 @@ FORMULA_RELATIONS = {
     "overlap_not_identical",
     "disjoint_ranges",
     "parse_blocked",
+}
+FORMULA_CLUSTER_CONSTRAINT_TYPES = {
+    "blocked_exact_grouping",
+    "synthesized_complement_pair",
+    "synthesized_mutually_exclusive_group",
+    "synthesized_overlapping_ranges",
+    "synthesized_possible_exhaustive_group",
+    "synthesized_range_bucket_partition",
+    "synthesized_threshold_ladder",
+}
+FORMULA_CLUSTER_CONSTRAINT_FAMILIES = {
+    "complement_pair",
+    "formula_cluster",
+    "mutual_exclusion",
+    "ordered_thresholds",
+    "outcome_partition",
+    "range_overlap",
+    "range_partition",
 }
 
 
@@ -321,6 +330,50 @@ def validate_formula_diagnostics_contract(report: dict[str, Any]) -> None:
             raise SchemaValidationError(f"{path}.family is not allowed")
         if diagnostic.get("formula_relation") not in FORMULA_RELATIONS:
             raise SchemaValidationError(f"{path}.formula_relation is not allowed")
+    if "formula_cluster_constraints" in report:
+        validate_formula_cluster_constraints_contract(report)
+
+
+def validate_formula_cluster_constraints_contract(report: dict[str, Any]) -> None:
+    _reject_prohibited_tokens(report)
+    if report.get("diagnostic_only") is not True:
+        raise SchemaValidationError("formula cluster constraints must be diagnostic_only")
+    if report.get("affects_evaluator_gates") is not False:
+        raise SchemaValidationError("formula cluster constraints must not affect evaluator gates")
+    if report.get("allowed_actions") != DIAGNOSTIC_HINT_ACTIONS:
+        raise SchemaValidationError("formula cluster constraints actions must be WATCH and MANUAL_REVIEW only")
+    constraints = report.get("formula_cluster_constraints", [])
+    if not isinstance(constraints, list):
+        raise SchemaValidationError("formula_cluster_constraints must be a list")
+    for index, constraint in enumerate(constraints):
+        path = f"formula_cluster_constraints[{index}]"
+        if constraint.get("diagnostic_only") is not True:
+            raise SchemaValidationError(f"{path}.diagnostic_only must be true")
+        if constraint.get("affects_evaluator_gates") is not False:
+            raise SchemaValidationError(f"{path}.affects_evaluator_gates must be false")
+        if constraint.get("allowed_actions") != DIAGNOSTIC_HINT_ACTIONS:
+            raise SchemaValidationError(f"{path}.allowed_actions must be WATCH and MANUAL_REVIEW only")
+        if constraint.get("max_action_cap") not in DIAGNOSTIC_HINT_ACTIONS:
+            raise SchemaValidationError(f"{path}.max_action_cap must be WATCH or MANUAL_REVIEW")
+        if constraint.get("diagnostic_priority") not in DIAGNOSTIC_HINT_ACTIONS:
+            raise SchemaValidationError(f"{path}.diagnostic_priority must be WATCH or MANUAL_REVIEW")
+        if constraint.get("constraint_type") not in FORMULA_CLUSTER_CONSTRAINT_TYPES:
+            raise SchemaValidationError(f"{path}.constraint_type is not allowed")
+        if constraint.get("constraint_family") not in FORMULA_CLUSTER_CONSTRAINT_FAMILIES:
+            raise SchemaValidationError(f"{path}.constraint_family is not allowed")
+        market_ids = constraint.get("source_market_ids")
+        if not isinstance(market_ids, list) or not market_ids:
+            raise SchemaValidationError(f"{path}.source_market_ids must contain market ids")
+        if constraint.get("formula_count") != len(market_ids):
+            raise SchemaValidationError(f"{path}.formula_count must match source_market_ids")
+        keys = constraint.get("requested_exact_keys_to_verify")
+        if not isinstance(keys, list) or not keys or not all(isinstance(item, str) and item for item in keys):
+            raise SchemaValidationError(f"{path}.requested_exact_keys_to_verify must contain strings")
+        blockers = constraint.get("blockers")
+        if not isinstance(blockers, list) or not all(isinstance(item, str) for item in blockers):
+            raise SchemaValidationError(f"{path}.blockers must be a list of strings")
+        if not isinstance(constraint.get("reason_for_review"), str) or not constraint["reason_for_review"]:
+            raise SchemaValidationError(f"{path}.reason_for_review must be a non-empty string")
 
 
 def _validate_diff_hint_summary(hint: dict[str, Any], path: str) -> None:
@@ -358,21 +411,7 @@ def _validate_diff_change(change: dict[str, Any], path: str) -> None:
 
 
 def _reject_prohibited_tokens(payload: Any) -> None:
-    findings: list[str] = []
-
-    def visit(value: Any, path: str) -> None:
-        if isinstance(value, dict):
-            for key, nested in value.items():
-                if _contains_prohibited_token(str(key)):
-                    findings.append(f"{path}.{key}" if path else str(key))
-                visit(nested, f"{path}.{key}" if path else str(key))
-        elif isinstance(value, list):
-            for index, item in enumerate(value):
-                visit(item, f"{path}[{index}]")
-        elif isinstance(value, str) and _contains_prohibited_token(value):
-            findings.append(path)
-
-    visit(payload, "")
+    findings = find_prohibited_report_tokens(payload)
     if findings:
         raise SchemaValidationError(f"prohibited hint diff token present: {sorted(set(findings))}")
 

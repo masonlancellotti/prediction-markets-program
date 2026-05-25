@@ -1,0 +1,79 @@
+{
+  "fixture_set": "live-like-kalshi-formula-records",
+  "markets": [
+    {
+      "venue": "kalshi",
+      "ticker": "KXBTC-26JUN30-T120000",
+      "title": "Will Bitcoin be above $120,000 on Jun 30, 2026?",
+      "category": "BTC_THRESHOLD",
+      "settlement_source": "fixture_btc_index",
+      "target_date": "2026-06-30",
+      "settlement_time": "2026-06-30T16:00:00Z",
+      "comparator": ">",
+      "threshold": 120000,
+      "units": "USD",
+      "side": "YES"
+    },
+    {
+      "venue": "kalshi",
+      "ticker": "KXBTC-26JUN30-T140000",
+      "title": "Will Bitcoin be above $140,000 on Jun 30, 2026?",
+      "category": "BTC_THRESHOLD",
+      "settlement_source": "fixture_btc_index",
+      "target_date": "2026-06-30",
+      "settlement_time": "2026-06-30T16:00:00Z",
+      "comparator": ">",
+      "threshold": 140000,
+      "units": "USD",
+      "side": "YES"
+    },
+    {
+      "venue": "kalshi",
+      "ticker": "KXFED-26JUN17-425-450",
+      "title": "Fed target rate 4.25 to 4.50 after the June FOMC meeting",
+      "category": "FED_MEETING_RANGE",
+      "settlement_source": "federal_reserve_official",
+      "meeting_date": "2026-06-17",
+      "settlement_time": "post-meeting",
+      "lower_bound": 4.25,
+      "upper_bound": 4.5,
+      "units": "percent",
+      "side": "YES"
+    },
+    {
+      "venue": "kalshi",
+      "ticker": "KXFED-26JUN17-MISSING-SOURCE",
+      "title": "Fed target rate 4.25 to 4.50 after the June FOMC meeting",
+      "category": "FED_MEETING_RANGE",
+      "meeting_date": "2026-06-17",
+      "lower_bound": 4.25,
+      "upper_bound": 4.5,
+      "units": "percent",
+      "side": "YES"
+    },
+    {
+      "venue": "kalshi",
+      "ticker": "KXNFLCHAMP-2027-KC",
+      "title": "Kansas City to win the 2027 football championship",
+      "category": "SPORTS_CHAMPION",
+      "settlement_source": "fixture_league_official",
+      "resolution_date": "2027-02-07",
+      "team": "Kansas City",
+      "side": "YES"
+    },
+    {
+      "venue": "kalshi",
+      "ticker": "KXWEATHER-NYC-20260704-T90",
+      "title": "NYC high temperature above 90F on July 4, 2026",
+      "category": "WEATHER_RANGE",
+      "settlement_source": "fixture_weather_station",
+      "target_date": "2026-07-04",
+      "location": "New York City",
+      "weather_metric": "daily_high_temperature",
+      "comparator": ">",
+      "threshold": 90,
+      "units": "F",
+      "side": "YES"
+    }
+  ]
+}

@@ -13,32 +13,9 @@ from graph_engine.reporting.schema_validation import (
     validate_formula_diagnostics_contract,
     validate_multi_leg_constraints_contract,
 )
+from graph_engine.reporting.safety import PROHIBITED_REPORT_TOKENS, find_prohibited_report_keys
 
-PROHIBITED_VIOLATION_FIELDS = {
-    "buy",
-    "edge_bps",
-    "executable",
-    "executable_arb",
-    "fill",
-    "fill_size",
-    "order",
-    "paper",
-    "paper_candidate",
-    "pnl",
-    "position",
-    "profit",
-    "profit_usd",
-    "possible_arb",
-    "sell",
-    "signature",
-    "signing",
-    "trade",
-    "trade_permission",
-    "wallet",
-    "dollars",
-    "size",
-    "size_usd",
-}
+PROHIBITED_VIOLATION_FIELDS = PROHIBITED_REPORT_TOKENS
 
 
 def _stale_nodes(snapshot: GraphSnapshot, max_node_age_seconds: int = 24 * 60 * 60) -> list[str]:
@@ -58,23 +35,7 @@ def _reviewers(snapshot: GraphSnapshot) -> list[str]:
 
 
 def _assert_safe_violation_schema(payload: Any) -> None:
-    def visit(value: Any, path: str) -> list[str]:
-        if isinstance(value, dict):
-            found: list[str] = []
-            for key, nested in value.items():
-                normalized = str(key).lower()
-                if normalized in PROHIBITED_VIOLATION_FIELDS:
-                    found.append(f"{path}.{key}" if path else str(key))
-                found.extend(visit(nested, f"{path}.{key}" if path else str(key)))
-            return found
-        if isinstance(value, list):
-            found = []
-            for index, item in enumerate(value):
-                found.extend(visit(item, f"{path}[{index}]"))
-            return found
-        return []
-
-    forbidden = visit(payload, "")
+    forbidden = find_prohibited_report_keys(payload)
     if forbidden:
         raise ValueError(f"prohibited violation fields present: {sorted(forbidden)}")
 
@@ -104,6 +65,7 @@ def build_json_report(
             "violation_count": len(violations),
             "multi_leg_constraint_count": multi_leg_report["constraint_count"],
             "formula_diagnostic_count": formula_report["comparison_count"],
+            "formula_cluster_constraint_count": formula_report["formula_cluster_constraint_count"],
             "counts_by_kind": dict(sorted(kind_counts.items())),
             "counts_by_action": dict(sorted(action_counts.items())),
             "highest_action": "MANUAL_REVIEW" if any(v.action.value == "MANUAL_REVIEW" for v in violations) else "WATCH" if violations else "IGNORE",
