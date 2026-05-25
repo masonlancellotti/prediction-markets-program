@@ -12,17 +12,15 @@ REQUIRED_EXACT_KEYS = (
     "lower_bound",
     "upper_bound",
     "units",
-    "settlement_basis",
     "side",
     "market_family",
 )
-OPTIONAL_MATCH_KEYS = ("settlement_timing",)
+OPTIONAL_MATCH_KEYS = ("settlement_timing", "settlement_basis")
 MISSING_BLOCKER_BY_KEY = {
     "meeting_date": "missing_meeting_date",
     "lower_bound": "missing_range",
     "upper_bound": "missing_range",
     "units": "missing_units",
-    "settlement_basis": "missing_settlement_basis",
     "side": "missing_side",
     "market_family": "missing_market_family",
 }
@@ -38,6 +36,31 @@ RANGE_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(?:%|percent|pct)?\s*(?:-|to|through|and)\s*(\d+(?:\.\d+)?)\s*(%|percent|pct|bps|bp|basis points)?",
     re.IGNORECASE,
 )
+UPPER_BOUND_THRESHOLD_RE = re.compile(r"upper bound .*?(?:above|greater than)\s*(\d+(?:\.\d+)?)\s*(%|percent|pct)?", re.IGNORECASE)
+NOISY_MACRO_TERMS = (
+    "chair",
+    "powell",
+    "nominee",
+    "personnel",
+    "cpi",
+    "inflation",
+    "recession",
+    "unemployment",
+    "election",
+    "president",
+    "senate",
+    "congress",
+    "taiwan",
+    "china",
+)
+TARGET_RATE_TERMS = (
+    "target rate",
+    "target range",
+    "fed funds",
+    "federal funds",
+    "upper bound",
+    "fomc meeting",
+)
 
 
 def build_fed_fomc_range_readiness_report(
@@ -49,18 +72,24 @@ def build_fed_fomc_range_readiness_report(
     polymarket_contracts = parse_fed_fomc_snapshot(polymarket_snapshot, "polymarket")
     kalshi_contracts = parse_fed_fomc_snapshot(kalshi_snapshot, "kalshi")
     contracts = polymarket_contracts + kalshi_contracts
+    relevant_contracts = [contract for contract in contracts if contract["fed_inventory_classification"] == "fed_target_rate_market"]
+    exact_groups = _exact_key_groups(relevant_contracts)
+    cross_venue_groups = [group for group in exact_groups if len(group["venues"]) > 1]
     exact_matches = _exact_key_matches(polymarket_contracts, kalshi_contracts)
     overlaps = _overlapping_range_pairs(polymarket_contracts, kalshi_contracts)
     different_meetings = _different_meeting_pairs(polymarket_contracts, kalshi_contracts)
-    summary = _summary(contracts, exact_matches, overlaps, different_meetings)
+    summary = _summary(contracts, relevant_contracts, exact_groups, cross_venue_groups, exact_matches, overlaps, different_meetings)
     return {
         "schema_version": 1,
         "source": "fed_fomc_exact_range_saved_snapshot_diagnostic_v1",
         "required_exact_keys": list(REQUIRED_EXACT_KEYS),
         "optional_exact_keys": list(OPTIONAL_MATCH_KEYS),
+        "settlement_basis_status": "advisory_not_grouping_key",
+        "advisory_basis": "Fed settlement basis is reported for review but excluded from exact grouping until parser can distinguish materially different settlement sources.",
         "summary": summary,
         "contracts": contracts,
         "exact_meeting_range_matches": exact_matches[:max_examples],
+        "top_exact_meeting_range_groups": cross_venue_groups[:max_examples],
         "overlapping_range_examples": overlaps[:max_examples],
         "different_meeting_examples": different_meetings[:max_examples],
         "top_blockers": _top_blockers(contracts),
@@ -94,7 +123,9 @@ def parse_fed_fomc_market(row: dict[str, Any], venue: str) -> dict[str, Any] | N
     lowered = text.lower()
     if not _looks_like_fed_text(lowered):
         return None
-    lower, upper, units = _parse_range(lowered)
+    inventory_classification = _fed_inventory_classification(lowered)
+    is_relevant = inventory_classification == "fed_target_rate_market"
+    lower, upper, units = _parse_range(row, lowered)
     typed_keys = {
         "meeting_date": _parse_meeting_date(row, lowered),
         "lower_bound": lower,
@@ -104,19 +135,27 @@ def parse_fed_fomc_market(row: dict[str, Any], venue: str) -> dict[str, Any] | N
         "side": _parse_side(row, lowered),
         "market_family": _parse_market_family(lowered),
         "settlement_timing": _parse_settlement_timing(row),
+        "venue": venue,
     }
-    blockers = _typed_key_blockers(typed_keys)
+    blockers = [] if is_relevant else [inventory_classification]
+    if is_relevant:
+        blockers.extend(_typed_key_blockers(typed_keys))
     if _broad_text_only(lowered):
         blockers.append("broad_text_overlap_not_exact_pipeline")
-    if not _looks_like_range_formula(typed_keys):
+    if is_relevant and _upper_bound_threshold_only(row, lowered):
+        blockers.append("upper_bound_threshold_not_exact_range")
+    if is_relevant and not _looks_like_range_formula(typed_keys):
         blockers.append("not_typed_fed_range_formula")
-    classification = "READY_FOR_BOARD" if not blockers else "NOT_EXACT_PIPELINE"
+    classification = "READY_FOR_BOARD" if is_relevant and not blockers else "NOT_EXACT_PIPELINE"
     return {
         "venue": venue,
         "market_id": _first_string(row, "market_id", "id", "condition_id", "slug"),
         "ticker": _first_string(row, "ticker", "series_ticker", "event_ticker"),
+        "slug": _first_string(row, "slug", "market_slug", "event_slug"),
         "title": _first_string(row, "question", "title", "market_title", "event_title", "name") or "",
         "typed_keys": typed_keys,
+        "parser_confidence": _parser_confidence(typed_keys, blockers, is_relevant),
+        "fed_inventory_classification": inventory_classification,
         "blockers": blockers,
         "classification": classification,
         "allowed_actions": ["WATCH", "MANUAL_REVIEW"],
@@ -139,8 +178,11 @@ def exact_scope_from_fed_report(base_scope: dict[str, Any], fed_report: dict[str
             "fed_fomc_exact_range_counts": summary,
             "fed_fomc_exact_range_diagnostic": {
                 "source": fed_report["source"],
+                "settlement_basis_status": fed_report["settlement_basis_status"],
+                "advisory_basis": fed_report["advisory_basis"],
                 "top_blockers": fed_report["top_blockers"],
                 "exact_meeting_range_examples": fed_report["exact_meeting_range_matches"],
+                "top_exact_meeting_range_groups": fed_report["top_exact_meeting_range_groups"],
                 "overlapping_range_examples": fed_report["overlapping_range_examples"],
                 "different_meeting_examples": fed_report["different_meeting_examples"],
             },
@@ -159,21 +201,62 @@ def exact_scope_from_fed_report(base_scope: dict[str, Any], fed_report: dict[str
 
 def _summary(
     contracts: list[dict[str, Any]],
+    relevant_contracts: list[dict[str, Any]],
+    exact_groups: list[dict[str, Any]],
+    cross_venue_groups: list[dict[str, Any]],
     exact_matches: list[dict[str, Any]],
     overlaps: list[dict[str, Any]],
     different_meetings: list[dict[str, Any]],
 ) -> dict[str, int]:
     return {
         "fed_inventory_count": len(contracts),
-        "typed_fed_formula_count": sum(1 for contract in contracts if _looks_like_range_formula(contract["typed_keys"])),
+        "fed_relevant_target_range_count": len(relevant_contracts),
+        "typed_fed_formula_count": sum(1 for contract in relevant_contracts if _looks_like_range_formula(contract["typed_keys"])),
+        "exact_meeting_range_group_count": len(exact_groups),
+        "exact_cross_venue_meeting_range_group_count": len(cross_venue_groups),
         "exact_meeting_range_match_count": len(exact_matches),
         "overlapping_range_count": len(overlaps),
         "different_meeting_count": len(different_meetings),
-        "missing_meeting_count": sum(1 for contract in contracts if "missing_meeting_date" in contract["blockers"]),
-        "missing_range_count": sum(1 for contract in contracts if "missing_range" in contract["blockers"]),
+        "missing_meeting_count": sum(1 for contract in relevant_contracts if "missing_meeting_date" in contract["blockers"]),
+        "missing_range_count": sum(1 for contract in relevant_contracts if "missing_range" in contract["blockers"]),
+        "noisy_inventory_count": sum(1 for contract in contracts if contract["fed_inventory_classification"] != "fed_target_rate_market"),
         "not_exact_pipeline_count": sum(1 for contract in contracts if contract["classification"] == "NOT_EXACT_PIPELINE") + len(overlaps) + len(different_meetings),
         "paper_candidate_count": 0,
     }
+
+
+def _exact_key_groups(contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for contract in contracts:
+        if contract["classification"] != "READY_FOR_BOARD":
+            continue
+        keys = contract["typed_keys"]
+        group_key = tuple(keys.get(key) for key in REQUIRED_EXACT_KEYS)
+        groups.setdefault(group_key, []).append(contract)
+    result = []
+    for group_key, rows in groups.items():
+        keyed = dict(zip(REQUIRED_EXACT_KEYS, group_key))
+        result.append(
+            {
+                "classification": "READY_FOR_BOARD" if len({row["venue"] for row in rows}) > 1 else "MANUAL_REVIEW",
+                "allowed_actions": ["WATCH", "MANUAL_REVIEW"],
+                "paper_candidate_emitted": False,
+                "typed_keys": keyed,
+                "venues": sorted({row["venue"] for row in rows}),
+                "market_count": len(rows),
+                "markets": [
+                    {
+                        "venue": row["venue"],
+                        "market_id": row.get("market_id"),
+                        "ticker": row.get("ticker"),
+                        "slug": row.get("slug"),
+                        "title": row.get("title"),
+                    }
+                    for row in rows[:5]
+                ],
+            }
+        )
+    return sorted(result, key=lambda item: (-len(item["venues"]), -item["market_count"], str(item["typed_keys"])))
 
 
 def _exact_key_matches(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -198,7 +281,9 @@ def _overlapping_range_pairs(left: list[dict[str, Any]], right: list[dict[str, A
             poly_keys = poly["typed_keys"]
             kalshi_keys = kalshi["typed_keys"]
             if (
-                poly_keys.get("meeting_date")
+                poly["fed_inventory_classification"] == "fed_target_rate_market"
+                and kalshi["fed_inventory_classification"] == "fed_target_rate_market"
+                and poly_keys.get("meeting_date")
                 and poly_keys.get("meeting_date") == kalshi_keys.get("meeting_date")
                 and poly_keys.get("market_family")
                 and poly_keys.get("market_family") == kalshi_keys.get("market_family")
@@ -310,13 +395,31 @@ def _market_text(row: dict[str, Any]) -> str:
         "resolution_source",
         "settlement_source",
         "ticker",
+        "yes_sub_title",
+        "no_sub_title",
     ):
         value = row.get(key)
         if isinstance(value, str):
             parts.append(value)
     raw = row.get("raw")
     if isinstance(raw, dict):
-        for key in ("title", "question", "subtitle", "rules", "description", "resolution_source", "settlement_source"):
+        for key in (
+            "title",
+            "question",
+            "subtitle",
+            "yes_sub_title",
+            "no_sub_title",
+            "rules",
+            "rules_primary",
+            "rules_secondary",
+            "description",
+            "resolution_source",
+            "settlement_source",
+            "settlement_sources",
+            "ticker",
+            "event_ticker",
+            "series_ticker",
+        ):
             value = raw.get(key)
             if isinstance(value, str):
                 parts.append(value)
@@ -352,13 +455,22 @@ def _parse_meeting_date(row: dict[str, Any], lowered_text: str) -> str | None:
     return None
 
 
-def _parse_range(lowered_text: str) -> tuple[str | None, str | None, str | None]:
+def _parse_range(row: dict[str, Any], lowered_text: str) -> tuple[str | None, str | None, str | None]:
     for match in RANGE_RE.finditer(lowered_text):
         low = _normalize_decimal(match.group(1))
         high = _normalize_decimal(match.group(2))
         units = _parse_units(match.group(3) or lowered_text)
         if low and high and _decimal(low) is not None and _decimal(high) is not None and _decimal(low) < _decimal(high):
             return low, high, units
+    raw = row.get("raw")
+    if isinstance(raw, dict):
+        low = _normalize_decimal(raw.get("floor_strike"))
+        high = _normalize_decimal(raw.get("cap_strike"))
+        if low and high:
+            return low, high, "PERCENT"
+    upper_match = UPPER_BOUND_THRESHOLD_RE.search(lowered_text)
+    if upper_match:
+        return _normalize_decimal(upper_match.group(1)), None, _parse_units(upper_match.group(2) or lowered_text)
     return None, None, _parse_units(lowered_text)
 
 
@@ -381,8 +493,22 @@ def _parse_side(row: dict[str, Any], lowered_text: str) -> str | None:
     side = _first_string(row, "side", "outcome", "outcome_name")
     if side and side.strip().lower() in {"yes", "no"}:
         return side.strip().upper()
-    if " will " in lowered_text or lowered_text.startswith(("will ", "can ")):
+    if (
+        "resolves to yes" in lowered_text
+        or "resolve to yes" in lowered_text
+        or "yes if" in lowered_text
+        or "yes, if" in lowered_text
+        or "then the market resolves to yes" in lowered_text
+    ):
         return "YES"
+    if (
+        "resolves to no" in lowered_text
+        or "resolve to no" in lowered_text
+        or "no if" in lowered_text
+        or "no, if" in lowered_text
+        or "then the market resolves to no" in lowered_text
+    ):
+        return "NO"
     return None
 
 
@@ -425,6 +551,32 @@ def _broad_text_only(lowered_text: str) -> bool:
     broad_terms = ("fed decision", "next fomc", "rates after meeting", "interest rates")
     has_range = RANGE_RE.search(lowered_text) is not None
     return any(term in lowered_text for term in broad_terms) and not has_range
+
+
+def _fed_inventory_classification(lowered_text: str) -> str:
+    if any(term in lowered_text for term in NOISY_MACRO_TERMS) and not any(term in lowered_text for term in TARGET_RATE_TERMS):
+        return "noisy_macro_inventory"
+    if any(term in lowered_text for term in TARGET_RATE_TERMS):
+        return "fed_target_rate_market"
+    return "generic_fed_text_not_target_range"
+
+
+def _upper_bound_threshold_only(row: dict[str, Any], lowered_text: str) -> bool:
+    raw = row.get("raw")
+    if isinstance(raw, dict) and raw.get("floor_strike") is not None and raw.get("cap_strike") is None:
+        return True
+    return UPPER_BOUND_THRESHOLD_RE.search(lowered_text) is not None
+
+
+def _parser_confidence(typed_keys: dict[str, Any], blockers: list[str], is_relevant: bool) -> str:
+    if not is_relevant:
+        return "excluded_noisy"
+    present = sum(1 for key in REQUIRED_EXACT_KEYS if typed_keys.get(key))
+    if not blockers and present == len(REQUIRED_EXACT_KEYS):
+        return "high"
+    if typed_keys.get("meeting_date") and typed_keys.get("lower_bound"):
+        return "medium"
+    return "low"
 
 
 def _first_string(row: dict[str, Any], *keys: str) -> str | None:
@@ -476,4 +628,3 @@ def _month_number(value: str) -> int | None:
         "dec": 12,
     }
     return lookup.get(value[:4].lower()) or lookup.get(value[:3].lower())
-

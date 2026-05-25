@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import scan
+from relative_value.exact_market_expansion_plan import build_exact_market_expansion_plan
 from relative_value.exact_paper_candidate_universes import (
     UniverseSpec,
     build_exact_paper_candidate_universe_report,
@@ -615,14 +616,14 @@ def test_btc_exact_threshold_key_match_is_ready_for_board_not_paper(tmp_path: Pa
         tmp_path,
         [
             {
-                "question": "Will Bitcoin be above $100,000 on June 30, 2026?",
+                "question": "Will Bitcoin be above $100,000 on June 30, 2026? Yes if it resolves above the threshold.",
                 "end_date": "2026-06-30T23:59:00+00:00",
                 "settlement_source": "Coinbase BTC/USD",
             }
         ],
         [
             {
-                "question": "Will BTC be above $100,000 on June 30, 2026?",
+                "question": "Will BTC be above $100,000 on June 30, 2026? Yes if it resolves above the threshold.",
                 "ticker": "KXBTC-100K-26JUN30",
                 "close_time": "2026-06-30T23:59:00+00:00",
                 "settlement_source": "Coinbase BTC/USD",
@@ -634,31 +635,69 @@ def test_btc_exact_threshold_key_match_is_ready_for_board_not_paper(tmp_path: Pa
     btc = row["btc_exact_threshold_readiness"]
 
     assert btc["summary"]["btc_inventory_count"] == 2
+    assert btc["summary"]["btc_relevant_threshold_count"] == 2
     assert btc["summary"]["typed_btc_formula_count"] == 2
+    assert btc["summary"]["exact_key_group_count"] == 1
+    assert btc["summary"]["exact_cross_venue_key_group_count"] == 1
     assert btc["summary"]["exact_key_match_count"] == 1
     assert btc["summary"]["paper_candidate_count"] == 0
     assert btc["exact_key_matches"][0]["classification"] == "READY_FOR_BOARD"
     assert btc["exact_key_matches"][0]["paper_candidate_emitted"] is False
+    assert btc["top_exact_key_groups"][0]["classification"] == "READY_FOR_BOARD"
+    assert btc["top_exact_key_groups"][0]["venues"] == ["kalshi", "polymarket"]
+    assert btc["contracts"][0]["parser_confidence"] == "high"
+    assert btc["contracts"][0]["slug"] is None
+    assert btc["contracts"][0]["typed_keys"]["venue"] == "polymarket"
     assert row["exact_scope"]["status"] == "MANUAL_REVIEW"
     assert row["exact_scope"]["pipeline_classification"] == "READY_FOR_BOARD"
     assert row["paper_candidates_count"] == 0
     assert row["evaluator_counts"]["PAPER_CANDIDATE"] == 0
 
 
-def test_btc_same_threshold_different_date_or_source_rejected(tmp_path: Path) -> None:
+def test_btc_same_threshold_different_date_rejected(tmp_path: Path) -> None:
     spec = _btc_spec(
         tmp_path,
         [
             {
-                "question": "Will Bitcoin be above $100,000 on June 30, 2026?",
+                "question": "Bitcoin above $100,000 on June 30, 2026. Yes if BTC is above $100,000.",
                 "end_date": "2026-06-30T23:59:00+00:00",
                 "settlement_source": "Coinbase BTC/USD",
             }
         ],
         [
             {
-                "question": "Will BTC be above $100,000 on July 31, 2026?",
+                "question": "BTC above $100,000 on July 31, 2026. Yes if BTC is above $100,000.",
                 "close_time": "2026-07-31T23:59:00+00:00",
+                "settlement_source": "Coinbase BTC/USD",
+            }
+        ],
+    )
+
+    row = _btc_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))
+    btc = row["btc_exact_threshold_readiness"]
+
+    assert btc["summary"]["typed_btc_formula_count"] == 2
+    assert btc["summary"]["exact_key_match_count"] == 0
+    assert btc["summary"]["exact_cross_venue_key_group_count"] == 0
+    assert btc["summary"]["threshold_ladder_count"] == 0
+    assert row["exact_scope"]["pipeline_classification"] == "NOT_EXACT_PIPELINE"
+    assert row["exact_scope"]["paper_candidate_emitted"] is False
+
+
+def test_btc_same_threshold_different_source_rejected(tmp_path: Path) -> None:
+    spec = _btc_spec(
+        tmp_path,
+        [
+            {
+                "question": "Bitcoin above $100,000 on June 30, 2026. Yes if BTC is above $100,000.",
+                "end_date": "2026-06-30T23:59:00+00:00",
+                "settlement_source": "Coinbase BTC/USD",
+            }
+        ],
+        [
+            {
+                "question": "BTC above $100,000 on June 30, 2026. Yes if BTC is above $100,000.",
+                "close_time": "2026-06-30T23:59:00+00:00",
                 "settlement_source": "Binance BTC/USDT",
             }
         ],
@@ -669,6 +708,7 @@ def test_btc_same_threshold_different_date_or_source_rejected(tmp_path: Path) ->
 
     assert btc["summary"]["typed_btc_formula_count"] == 2
     assert btc["summary"]["exact_key_match_count"] == 0
+    assert btc["summary"]["exact_cross_venue_key_group_count"] == 0
     assert btc["summary"]["threshold_ladder_count"] == 0
     assert row["exact_scope"]["pipeline_classification"] == "NOT_EXACT_PIPELINE"
     assert row["exact_scope"]["paper_candidate_emitted"] is False
@@ -679,14 +719,14 @@ def test_btc_different_threshold_same_date_source_is_ladder_not_exact(tmp_path: 
         tmp_path,
         [
             {
-                "question": "Will Bitcoin be above $100,000 on June 30, 2026?",
+                "question": "Bitcoin above $100,000 on June 30, 2026. Yes if BTC is above $100,000.",
                 "end_date": "2026-06-30T23:59:00+00:00",
                 "settlement_source": "Coinbase BTC/USD",
             }
         ],
         [
             {
-                "question": "Will BTC be above $120,000 on June 30, 2026?",
+                "question": "BTC above $120,000 on June 30, 2026. Yes if BTC is above $120,000.",
                 "close_time": "2026-06-30T23:59:00+00:00",
                 "settlement_source": "Coinbase BTC/USD",
             }
@@ -720,6 +760,126 @@ def test_btc_missing_source_and_date_are_blocked_separately(tmp_path: Path) -> N
     assert btc["summary"]["missing_date_count"] == 2
     blockers = {item["blocker"] for item in btc["top_blockers"]}
     assert {"missing_source_index", "missing_date_window"}.issubset(blockers)
+
+
+def test_btc_bare_will_does_not_parse_side_or_group_exact(tmp_path: Path) -> None:
+    spec = _btc_spec(
+        tmp_path,
+        [
+            {
+                "question": "Will Bitcoin be above $100,000 on June 30, 2026?",
+                "end_date": "2026-06-30T23:59:00+00:00",
+                "settlement_source": "Coinbase BTC/USD",
+            }
+        ],
+        [
+            {
+                "question": "Will BTC be above $100,000 on June 30, 2026?",
+                "close_time": "2026-06-30T23:59:00+00:00",
+                "settlement_source": "Coinbase BTC/USD",
+            }
+        ],
+    )
+
+    btc = _btc_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["btc_exact_threshold_readiness"]
+
+    assert btc["summary"]["exact_key_match_count"] == 0
+    assert btc["summary"]["exact_cross_venue_key_group_count"] == 0
+    assert all(contract["typed_keys"]["side"] is None for contract in btc["contracts"])
+    assert all("missing_side" in contract["blockers"] for contract in btc["contracts"])
+
+
+def test_btc_explicit_yes_and_no_wording_parse_side(tmp_path: Path) -> None:
+    spec = _btc_spec(
+        tmp_path,
+        [
+            {
+                "question": "BTC above $100,000 by June 30, 2026. Yes if BTC is above $100,000.",
+                "end_date": "2026-06-30T23:59:00+00:00",
+                "settlement_source": "Coinbase BTC/USD",
+            }
+        ],
+        [
+            {
+                "question": "BTC above $100,000 by June 30, 2026. No if BTC is not above $100,000.",
+                "close_time": "2026-06-30T23:59:00+00:00",
+                "settlement_source": "Coinbase BTC/USD",
+            }
+        ],
+    )
+
+    btc = _btc_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["btc_exact_threshold_readiness"]
+    sides = {contract["venue"]: contract["typed_keys"]["side"] for contract in btc["contracts"]}
+
+    assert sides == {"polymarket": "YES", "kalshi": "NO"}
+    assert btc["summary"]["exact_key_match_count"] == 0
+
+
+def test_btc_noisy_bitcoin_adjacent_market_excluded_from_threshold_groups(tmp_path: Path) -> None:
+    spec = _btc_spec(
+        tmp_path,
+        [
+            {
+                "question": "MicroStrategy sells any Bitcoin by December 31, 2026?",
+                "end_date": "2027-01-01T05:00:00+00:00",
+            }
+        ],
+        [
+            {
+                "question": "Will BTC be above $100,000 on June 30, 2026?",
+                "close_time": "2026-06-30T23:59:00+00:00",
+                "settlement_source": "Coinbase BTC/USD",
+            }
+        ],
+    )
+
+    row = _btc_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))
+    btc = row["btc_exact_threshold_readiness"]
+
+    assert btc["summary"]["btc_inventory_count"] == 2
+    assert btc["summary"]["btc_relevant_threshold_count"] == 1
+    assert btc["summary"]["noisy_inventory_count"] == 1
+    assert btc["summary"]["exact_cross_venue_key_group_count"] == 0
+    noisy = next(contract for contract in btc["contracts"] if contract["venue"] == "polymarket")
+    assert noisy["btc_inventory_classification"] == "noisy_bitcoin_adjacent_inventory"
+    assert noisy["parser_confidence"] == "excluded_noisy"
+    assert "noisy_bitcoin_adjacent_inventory" in noisy["blockers"]
+    assert row["paper_candidates_count"] == 0
+
+
+def test_btc_kalshi_raw_threshold_fields_are_parsed_from_saved_snapshot(tmp_path: Path) -> None:
+    spec = _btc_spec(
+        tmp_path,
+        [],
+        [
+            {
+                "question": "Bitcoin price range on May 25, 2026?",
+                "ticker": "KXBTC-26MAY2517-T86249.99",
+                "raw": {
+                    "ticker": "KXBTC-26MAY2517-T86249.99",
+                    "yes_sub_title": "$86,250 or above",
+                    "close_time": "2026-05-25T21:00:00Z",
+                    "expected_expiration_time": "2026-05-25T21:05:00Z",
+                    "rules_primary": "If the simple average of the sixty seconds of CF Benchmarks' Bitcoin Real-Time Index (BRTI) before 5 PM EDT is above 86249.99 at 5 PM EDT on May 25, 2026, then the market resolves to Yes.",
+                    "rules_secondary": "The price used to determine this market is based on CF Benchmarks' corresponding Real Time Index (RTI).",
+                    "floor_strike": 86249.99,
+                },
+            }
+        ],
+    )
+
+    btc = _btc_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["btc_exact_threshold_readiness"]
+    contract = btc["contracts"][0]
+
+    assert contract["btc_inventory_classification"] == "btc_price_threshold"
+    assert contract["parser_confidence"] == "high"
+    assert contract["typed_keys"]["source_index"] == "cf_benchmarks_brti"
+    assert contract["typed_keys"]["date_window"] == "2026-05-25"
+    assert contract["typed_keys"]["settlement_time"] == "2026-05-25T21:00:00+00:00"
+    assert contract["typed_keys"]["comparator"] == "above"
+    assert contract["typed_keys"]["threshold"] == "86249.99"
+    assert contract["typed_keys"]["units"] == "USD"
+    assert contract["typed_keys"]["side"] == "YES"
 
 
 def test_btc_broad_text_overlap_remains_not_exact_pipeline(tmp_path: Path) -> None:
@@ -776,7 +936,7 @@ def test_fed_exact_meeting_range_match_is_ready_for_board_not_paper(tmp_path: Pa
         tmp_path,
         [
             {
-                "question": "Will the Federal Reserve target rate range be 4.25 to 4.50% after the June 17, 2026 FOMC meeting?",
+                "question": "Federal Reserve target rate range 4.25 to 4.50% after the June 17, 2026 FOMC meeting. Yes if the target range is 4.25 to 4.50%.",
                 "meeting_date": "2026-06-17T18:00:00+00:00",
                 "settlement_time": "2026-06-17T18:00:00+00:00",
                 "settlement_source": "Federal Reserve FOMC target range",
@@ -784,7 +944,7 @@ def test_fed_exact_meeting_range_match_is_ready_for_board_not_paper(tmp_path: Pa
         ],
         [
             {
-                "question": "Will the Fed funds target range be 4.25-4.50% for the June 17, 2026 FOMC meeting?",
+                "question": "Fed funds target range 4.25-4.50% for the June 17, 2026 FOMC meeting. Yes if the target range is 4.25-4.50%.",
                 "ticker": "KXFED-26JUN17-425-450",
                 "meeting_date": "2026-06-17T18:00:00+00:00",
                 "settlement_time": "2026-06-17T18:00:00+00:00",
@@ -797,18 +957,27 @@ def test_fed_exact_meeting_range_match_is_ready_for_board_not_paper(tmp_path: Pa
     fed = row["fed_fomc_exact_range_readiness"]
 
     assert fed["summary"]["fed_inventory_count"] == 2
+    assert fed["summary"]["fed_relevant_target_range_count"] == 2
     assert fed["summary"]["typed_fed_formula_count"] == 2
+    assert fed["summary"]["exact_meeting_range_group_count"] == 1
+    assert fed["summary"]["exact_cross_venue_meeting_range_group_count"] == 1
     assert fed["summary"]["exact_meeting_range_match_count"] == 1
     assert fed["summary"]["paper_candidate_count"] == 0
     assert fed["exact_meeting_range_matches"][0]["classification"] == "READY_FOR_BOARD"
     assert fed["exact_meeting_range_matches"][0]["paper_candidate_emitted"] is False
+    assert fed["top_exact_meeting_range_groups"][0]["venues"] == ["kalshi", "polymarket"]
+    assert fed["contracts"][0]["parser_confidence"] == "high"
+    assert fed["contracts"][0]["typed_keys"]["venue"] == "polymarket"
+    assert fed["required_exact_keys"] == ["meeting_date", "lower_bound", "upper_bound", "units", "side", "market_family"]
+    assert "settlement_basis" in fed["optional_exact_keys"]
+    assert fed["settlement_basis_status"] == "advisory_not_grouping_key"
     assert row["exact_scope"]["status"] == "MANUAL_REVIEW"
     assert row["exact_scope"]["pipeline_classification"] == "READY_FOR_BOARD"
     assert row["paper_candidates_count"] == 0
     assert row["evaluator_counts"]["PAPER_CANDIDATE"] == 0
 
 
-def test_fed_different_meeting_rejected(tmp_path: Path) -> None:
+def test_fed_bare_will_does_not_parse_side_or_group_exact(tmp_path: Path) -> None:
     spec = _fed_spec(
         tmp_path,
         [
@@ -820,7 +989,61 @@ def test_fed_different_meeting_rejected(tmp_path: Path) -> None:
         ],
         [
             {
-                "question": "Will the Fed funds target range be 4.25-4.50% for the July 29, 2026 FOMC meeting?",
+                "question": "Will the Fed funds target range be 4.25-4.50% for the June 17, 2026 FOMC meeting?",
+                "meeting_date": "2026-06-17T18:00:00+00:00",
+                "settlement_source": "Federal Reserve FOMC target range",
+            }
+        ],
+    )
+
+    fed = _fed_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["fed_fomc_exact_range_readiness"]
+
+    assert fed["summary"]["exact_meeting_range_match_count"] == 0
+    assert fed["summary"]["exact_cross_venue_meeting_range_group_count"] == 0
+    assert all(contract["typed_keys"]["side"] is None for contract in fed["contracts"])
+    assert all("missing_side" in contract["blockers"] for contract in fed["contracts"])
+
+
+def test_fed_settlement_basis_is_advisory_not_discriminating_exact_key(tmp_path: Path) -> None:
+    spec = _fed_spec(
+        tmp_path,
+        [
+            {
+                "question": "Target rate range 4.25 to 4.50% after June 17, 2026 FOMC. Yes if target range is 4.25 to 4.50%.",
+                "meeting_date": "2026-06-17T18:00:00+00:00",
+                "settlement_source": "Federal Reserve FOMC target range",
+            }
+        ],
+        [
+            {
+                "question": "Target rate range 4.25-4.50% after June 17, 2026 FOMC. Yes if target range is 4.25-4.50%.",
+                "meeting_date": "2026-06-17T18:00:00+00:00",
+                "settlement_source": "Federal Reserve official website",
+            }
+        ],
+    )
+
+    fed = _fed_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["fed_fomc_exact_range_readiness"]
+
+    assert "settlement_basis" not in fed["required_exact_keys"]
+    assert "settlement_basis" in fed["optional_exact_keys"]
+    assert fed["settlement_basis_status"] == "advisory_not_grouping_key"
+    assert fed["summary"]["exact_meeting_range_match_count"] == 1
+
+
+def test_fed_different_meeting_rejected(tmp_path: Path) -> None:
+    spec = _fed_spec(
+        tmp_path,
+        [
+            {
+                "question": "Target rate range 4.25 to 4.50% after June 17, 2026 FOMC. Yes if target range is 4.25 to 4.50%.",
+                "meeting_date": "2026-06-17T18:00:00+00:00",
+                "settlement_source": "Federal Reserve FOMC target range",
+            }
+        ],
+        [
+            {
+                "question": "Target rate range 4.25-4.50% after July 29, 2026 FOMC. Yes if target range is 4.25-4.50%.",
                 "meeting_date": "2026-07-29T18:00:00+00:00",
                 "settlement_source": "Federal Reserve FOMC target range",
             }
@@ -843,14 +1066,14 @@ def test_fed_overlapping_non_identical_range_is_diagnostic_only(tmp_path: Path) 
         tmp_path,
         [
             {
-                "question": "Will the Federal Reserve target rate range be 4.25 to 4.75% after the June 17, 2026 FOMC meeting?",
+                "question": "Federal Reserve target rate range 4.25 to 4.75% after the June 17, 2026 FOMC meeting. Yes if target range is 4.25 to 4.75%.",
                 "meeting_date": "2026-06-17T18:00:00+00:00",
                 "settlement_source": "Federal Reserve FOMC target range",
             }
         ],
         [
             {
-                "question": "Will the Fed funds target range be 4.50-5.00% for the June 17, 2026 FOMC meeting?",
+                "question": "Fed funds target range 4.50-5.00% for the June 17, 2026 FOMC meeting. Yes if target range is 4.50-5.00%.",
                 "meeting_date": "2026-06-17T18:00:00+00:00",
                 "settlement_source": "Federal Reserve FOMC target range",
             }
@@ -868,22 +1091,108 @@ def test_fed_overlapping_non_identical_range_is_diagnostic_only(tmp_path: Path) 
     assert row["paper_candidates_count"] == 0
 
 
-def test_fed_missing_meeting_and_range_are_blocked_separately(tmp_path: Path) -> None:
+def test_fed_missing_meeting_blocked(tmp_path: Path) -> None:
     spec = _fed_spec(
         tmp_path,
-        [{"question": "Will the Fed target rate change after the next FOMC meeting?"}],
-        [{"question": "Will the Federal Reserve set interest rates after the next FOMC?"}],
+        [{"question": "Will the Fed target rate range be 4.25 to 4.50% after the next FOMC meeting?"}],
+        [{"question": "Will the Federal Reserve target rate range be 4.25-4.50% after the next FOMC?"}],
     )
 
     fed = _fed_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["fed_fomc_exact_range_readiness"]
 
     assert fed["summary"]["fed_inventory_count"] == 2
+    assert fed["summary"]["fed_relevant_target_range_count"] == 2
     assert fed["summary"]["typed_fed_formula_count"] == 0
     assert fed["summary"]["exact_meeting_range_match_count"] == 0
     assert fed["summary"]["missing_meeting_count"] == 2
+    assert fed["summary"]["missing_range_count"] == 0
+    blockers = {item["blocker"] for item in fed["top_blockers"]}
+    assert "missing_meeting_date" in blockers
+
+
+def test_fed_missing_range_blocked(tmp_path: Path) -> None:
+    spec = _fed_spec(
+        tmp_path,
+        [{"question": "Will the Fed target rate change after the June 17, 2026 FOMC meeting?"}],
+        [{"question": "Will the Federal Reserve target rate move after the June 17, 2026 FOMC meeting?"}],
+    )
+
+    fed = _fed_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["fed_fomc_exact_range_readiness"]
+
+    assert fed["summary"]["fed_inventory_count"] == 2
+    assert fed["summary"]["fed_relevant_target_range_count"] == 2
+    assert fed["summary"]["typed_fed_formula_count"] == 0
+    assert fed["summary"]["exact_meeting_range_match_count"] == 0
+    assert fed["summary"]["missing_meeting_count"] == 0
     assert fed["summary"]["missing_range_count"] == 2
     blockers = {item["blocker"] for item in fed["top_blockers"]}
-    assert {"missing_meeting_date", "missing_range"}.issubset(blockers)
+    assert "missing_range" in blockers
+
+
+def test_fed_noisy_macro_inventory_excluded_from_target_range_groups(tmp_path: Path) -> None:
+    spec = _fed_spec(
+        tmp_path,
+        [{"question": "Will Jerome Powell remain Fed chair through 2026?"}],
+        [
+            {
+                "question": "Will the Fed funds target range be 4.25-4.50% for the June 17, 2026 FOMC meeting?",
+                "meeting_date": "2026-06-17T18:00:00+00:00",
+                "settlement_source": "Federal Reserve FOMC target range",
+            }
+        ],
+    )
+
+    row = _fed_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))
+    fed = row["fed_fomc_exact_range_readiness"]
+
+    assert fed["summary"]["fed_inventory_count"] == 2
+    assert fed["summary"]["fed_relevant_target_range_count"] == 1
+    assert fed["summary"]["noisy_inventory_count"] == 1
+    assert fed["summary"]["exact_cross_venue_meeting_range_group_count"] == 0
+    noisy = next(contract for contract in fed["contracts"] if contract["venue"] == "polymarket")
+    assert noisy["fed_inventory_classification"] == "noisy_macro_inventory"
+    assert noisy["parser_confidence"] == "excluded_noisy"
+    assert "noisy_macro_inventory" in noisy["blockers"]
+    assert row["paper_candidates_count"] == 0
+
+
+def test_fed_kalshi_upper_bound_threshold_fields_are_blocked_not_range(tmp_path: Path) -> None:
+    spec = _fed_spec(
+        tmp_path,
+        [],
+        [
+            {
+                "question": "Will the upper bound of the federal funds rate be above 4.25% following the Fed's Apr 28, 2027 meeting?",
+                "ticker": "KXFED-27APR-T4.25",
+                "raw": {
+                    "ticker": "KXFED-27APR-T4.25",
+                    "event_ticker": "KXFED-27APR",
+                    "yes_sub_title": "Above 4.25%",
+                    "close_time": "2027-04-28T17:55:00Z",
+                    "expected_expiration_time": "2027-04-28T18:05:00Z",
+                    "rules_primary": "If the upper bound of the target federal funds rate published on the Federal Reserve's official website is greater than 4.25% following the Federal Reserve's Apr 28, 2027 meeting, then the market resolves to Yes.",
+                    "rules_secondary": "This market will expire the first 2:05 PM ET following the release of a Federal Reserve statement for their Apr 28, 2027 meeting.",
+                    "floor_strike": 4.25,
+                },
+            }
+        ],
+    )
+
+    fed = _fed_row(build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW))["fed_fomc_exact_range_readiness"]
+    contract = fed["contracts"][0]
+
+    assert fed["summary"]["fed_relevant_target_range_count"] == 1
+    assert fed["summary"]["typed_fed_formula_count"] == 0
+    assert contract["fed_inventory_classification"] == "fed_target_rate_market"
+    assert contract["parser_confidence"] == "medium"
+    assert contract["typed_keys"]["meeting_date"] == "2027-04-28"
+    assert contract["typed_keys"]["lower_bound"] == "4.25"
+    assert contract["typed_keys"]["upper_bound"] is None
+    assert contract["typed_keys"]["settlement_basis"] == "federal_reserve_fomc_target_range"
+    assert contract["typed_keys"]["settlement_timing"] == "2027-04-28T17:55:00+00:00"
+    assert contract["typed_keys"]["side"] == "YES"
+    assert "upper_bound_threshold_not_exact_range" in contract["blockers"]
+    assert "not_typed_fed_range_formula" in contract["blockers"]
 
 
 def test_fed_broad_text_overlap_remains_not_exact_pipeline(tmp_path: Path) -> None:
@@ -910,14 +1219,14 @@ def test_fed_range_scaffolding_never_emits_paper_candidate(tmp_path: Path) -> No
         tmp_path,
         [
             {
-                "question": "Will the Federal Reserve target rate range be 4.25 to 4.50% after the June 17, 2026 FOMC meeting?",
+                "question": "Target rate range 4.25 to 4.50% after June 17, 2026 FOMC. Yes if target range is 4.25 to 4.50%.",
                 "meeting_date": "2026-06-17T18:00:00+00:00",
                 "settlement_source": "Federal Reserve FOMC target range",
             }
         ],
         [
             {
-                "question": "Will the Fed funds target range be 4.25-4.50% for the June 17, 2026 FOMC meeting?",
+                "question": "Target rate range 4.25-4.50% after June 17, 2026 FOMC. Yes if target range is 4.25-4.50%.",
                 "meeting_date": "2026-06-17T18:00:00+00:00",
                 "settlement_source": "Federal Reserve FOMC target range",
             }
@@ -933,6 +1242,105 @@ def test_fed_range_scaffolding_never_emits_paper_candidate(tmp_path: Path) -> No
     assert row["fed_fomc_exact_range_readiness"]["safety"]["paper_candidate_count"] == 0
     assert row["fed_fomc_exact_range_readiness"]["safety"]["affects_evaluator_gates"] is False
     assert '"paper_candidate_emitted": true' not in encoded
+
+
+def test_expansion_planner_emits_core_families_and_stays_fail_closed(tmp_path: Path) -> None:
+    readiness = build_exact_paper_candidate_universe_report(
+        specs=default_exact_paper_candidate_universe_specs(tmp_path),
+        generated_at=NOW,
+    )
+    plan = build_exact_market_expansion_plan(
+        project_root=tmp_path,
+        readiness_payload=readiness,
+        generated_at=NOW,
+    )
+    families = {row["family"]: row for row in plan["families"]}
+
+    assert {"crypto_thresholds", "fed_fomc_target_ranges", "sports_champions_winners"}.issubset(families)
+    assert families["crypto_thresholds"]["paperability_status"] == "NOT_EXACT_PIPELINE"
+    assert families["fed_fomc_target_ranges"]["paperability_status"] == "NOT_EXACT_PIPELINE"
+    assert families["sports_champions_winners"]["required_exact_keys"]
+    assert plan["summary"]["paper_candidate_count"] == 0
+    assert plan["safety"]["affects_evaluator_gates"] is False
+
+
+def test_expansion_planner_suggested_fetch_commands_are_read_only_examples(tmp_path: Path) -> None:
+    readiness = build_exact_paper_candidate_universe_report(
+        specs=default_exact_paper_candidate_universe_specs(tmp_path),
+        generated_at=NOW,
+    )
+    plan = build_exact_market_expansion_plan(
+        project_root=tmp_path,
+        readiness_payload=readiness,
+        generated_at=NOW,
+    )
+
+    assert plan["next_suggested_readonly_market_refreshes"]
+    for item in plan["next_suggested_readonly_market_refreshes"]:
+        command = item["command"]
+        assert item["read_only"] is True
+        assert item["example_only"] is True
+        assert "fetch-live-overlap-universe" in command
+        assert "place" not in command.lower()
+        assert "order" not in command.lower()
+        assert "account" not in command.lower()
+        assert "auth" not in command.lower()
+
+
+def test_expansion_planner_does_not_change_evaluator_readiness(tmp_path: Path) -> None:
+    spec = UniverseSpec(
+        universe_id="nba_champion_kxnba",
+        label="NBA Champion / KXNBA",
+        category="sports_championship_outright",
+        polymarket_snapshot=_write(tmp_path / "poly.json", _snapshot(1, "polymarket")),
+        kalshi_snapshot=_write(tmp_path / "kalshi.json", _snapshot(1, "kalshi")),
+        pairs=_write(tmp_path / "pairs.json", _pairs()),
+        derived_pairs=_write(tmp_path / "derived.json", _derived(0)),
+        evaluator=_write(tmp_path / "eval.json", _evaluator("MANUAL_REVIEW", "relationship_same_payoff_not_proven")),
+    )
+    readiness = build_exact_paper_candidate_universe_report(specs=[spec], generated_at=NOW)
+    before = readiness["universes"][0]["evaluator_ready"]
+
+    plan = build_exact_market_expansion_plan(project_root=tmp_path, readiness_payload=readiness, generated_at=NOW)
+
+    assert before is False
+    assert all(row["affects_evaluator_readiness"] is False for row in plan["families"])
+    assert readiness["universes"][0]["evaluator_ready"] is False
+
+
+def test_expansion_planner_never_emits_paper_candidate(tmp_path: Path) -> None:
+    readiness = build_exact_paper_candidate_universe_report(
+        specs=[
+            _btc_spec(
+                tmp_path,
+                [
+                    {
+                            "question": "Bitcoin above $100,000 on June 30, 2026. Yes if BTC is above $100,000.",
+                        "end_date": "2026-06-30T23:59:00+00:00",
+                        "settlement_source": "Coinbase BTC/USD",
+                    }
+                ],
+                [
+                    {
+                            "question": "BTC above $100,000 on June 30, 2026. Yes if BTC is above $100,000.",
+                        "close_time": "2026-06-30T23:59:00+00:00",
+                        "settlement_source": "Coinbase BTC/USD",
+                    }
+                ],
+            )
+        ],
+        generated_at=NOW,
+    )
+    plan = build_exact_market_expansion_plan(project_root=tmp_path, readiness_payload=readiness, generated_at=NOW)
+    encoded = json.dumps(plan)
+
+    assert plan["summary"]["paper_candidate_count"] == 0
+    assert plan["safety"]["paper_candidate_emitted"] is False
+    assert all(row["paper_candidate_count"] == 0 for row in plan["families"])
+    assert '"paper_candidate_emitted": true' not in encoded
+    assert plan["families"][0]["paperability_status"] == "REVIEW_ONLY_EXACT_GROUPS_PRESENT"
+    assert "not paperable" in plan["families"][0]["paperability_status_note"]
+    assert "not a PAPER_CANDIDATE path" in plan["status_notes"]["REVIEW_ONLY_EXACT_GROUPS_PRESENT"]
 
 
 def test_incomplete_btc_contract_stays_fail_closed_and_non_paper() -> None:

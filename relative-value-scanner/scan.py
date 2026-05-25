@@ -53,6 +53,8 @@ from relative_value.same_payoff_evidence import attach_same_payoff_evidence_file
 from relative_value.source_registry import ImplementationStatus, SOURCE_REGISTRY, SourceType
 from relative_value.executable_venue_plan import PLANNED_EXECUTABLE_VENUE_CAPABILITIES
 from relative_value.exact_paper_candidate_universes import build_exact_paper_candidate_universe_report_files
+from relative_value.exact_market_expansion_plan import write_exact_market_expansion_plan_files
+from relative_value.platform_expansion_matrix import write_platform_expansion_matrix_files
 from venues.kalshi import (
     FixtureKalshiAdapter,
     KalshiMarketFilterOptions,
@@ -9422,6 +9424,13 @@ def discover_exact_paper_candidate_universes(*, json_output: Path, markdown_outp
             json_output_path=json_output,
             markdown_output_path=markdown_output,
         )
+        expansion_payload = write_exact_market_expansion_plan_files(
+            project_root=PROJECT_ROOT,
+            readiness_payload=payload,
+        )
+        platform_payload = write_platform_expansion_matrix_files(
+            project_root=PROJECT_ROOT,
+        )
     except ValueError as exc:
         print(f"exact_paper_candidate_universes_status=FAILED message={exc}")
         return 1
@@ -9440,9 +9449,15 @@ def discover_exact_paper_candidate_universes(*, json_output: Path, markdown_outp
         f"same_scope_pairs={counts.get('SAME_SCOPE_PAIRS_AVAILABLE', 0)} "
         f"inventory_only={counts.get('INVENTORY_ONLY', 0)} "
         f"no_inventory={counts.get('NO_INVENTORY', 0)} "
-        f"json={json_output} markdown={markdown_output}"
+        f"json={json_output} markdown={markdown_output} "
+        "expansion_json=reports\\exact_market_expansion_plan.json "
+        "expansion_markdown=reports\\exact_market_expansion_plan.md "
+        "platform_json=reports\\platform_expansion_matrix.json "
+        "platform_markdown=reports\\platform_expansion_matrix.md"
     )
     print(_exact_universe_readiness_table(payload))
+    print(_exact_market_expansion_plan_table(expansion_payload))
+    print(_platform_expansion_matrix_table(platform_payload))
     return 0
 
 
@@ -9470,6 +9485,58 @@ def _exact_universe_readiness_table(payload: dict[str, Any]) -> str:
                     str(row.get("paper_candidates_count") or 0),
                     _safe_cli_text(str(row.get("paper_review_notice") or "none")),
                     _safe_cli_text(",".join(str(reason) for reason in reasons) or "none"),
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _exact_market_expansion_plan_table(payload: dict[str, Any]) -> str:
+    rows = payload.get("families") if isinstance(payload.get("families"), list) else []
+    lines = [
+        "expansion_family | inventory | typed | exact_groups | cross_venue | paperability | top_blockers",
+        "--- | ---: | ---: | ---: | ---: | --- | ---",
+    ]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        blockers = row.get("top_blockers") if isinstance(row.get("top_blockers"), list) else []
+        lines.append(
+            " | ".join(
+                [
+                    _safe_cli_text(str(row.get("family") or "")),
+                    str(row.get("current_saved_inventory_count") or 0),
+                    str(row.get("typed_formula_count") or 0),
+                    str(row.get("exact_group_count") or 0),
+                    str(row.get("cross_venue_exact_group_count") or 0),
+                    _safe_cli_text(str(row.get("paperability_status") or "NOT_EXACT_PIPELINE")),
+                    _safe_cli_text(",".join(str(item.get("blocker")) for item in blockers if isinstance(item, dict)) or "none"),
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _platform_expansion_matrix_table(payload: dict[str, Any]) -> str:
+    rows = payload.get("venues") if isinstance(payload.get("venues"), list) else []
+    lines = [
+        "platform | orderbook | fee_model | settlement_metadata | reference_only | paperability | blockers",
+        "--- | ---: | --- | --- | ---: | --- | ---",
+    ]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        blockers = row.get("blockers") if isinstance(row.get("blockers"), list) else []
+        lines.append(
+            " | ".join(
+                [
+                    _safe_cli_text(str(row.get("venue_id") or "")),
+                    str(row.get("executable_orderbook_available") is True).lower(),
+                    _safe_cli_text(str(row.get("fee_model_status") or "")),
+                    _safe_cli_text(str(row.get("settlement_metadata_quality") or "")),
+                    str(row.get("reference_only") is True).lower(),
+                    _safe_cli_text(str(row.get("paperability_status") or "")),
+                    _safe_cli_text(",".join(str(blocker) for blocker in blockers) or "none"),
                 ]
             )
         )
