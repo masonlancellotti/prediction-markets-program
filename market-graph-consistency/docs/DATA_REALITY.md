@@ -41,6 +41,8 @@ AI leadership, AGI, valuation, and revenue markets often differ by source, deadl
 
 Each `MarketNode` carries `as_of` and `source_snapshot_id`. Future real snapshots should reject or down-rank comparisons when timestamps differ beyond a documented freshness window.
 
+The venue lag watchlist compares saved files only. It is not exact same-payoff evidence, and relative-value review must independently verify exact payoff, execution, fees, depth, and freshness before any downstream use.
+
 ## Semantic Ambiguity
 
 Use `AMBIGUOUS` when wording seems related but not safe enough for a hard constraint. Ambiguous edges produce wording-review findings only.

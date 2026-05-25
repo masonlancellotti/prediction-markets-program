@@ -55,6 +55,9 @@ from relative_value.executable_venue_plan import PLANNED_EXECUTABLE_VENUE_CAPABI
 from relative_value.exact_paper_candidate_universes import build_exact_paper_candidate_universe_report_files
 from relative_value.exact_market_expansion_plan import write_exact_market_expansion_plan_files
 from relative_value.platform_expansion_matrix import write_platform_expansion_matrix_files
+from relative_value.structural_basket_detector import build_structural_basket_review_report_files
+from relative_value.paper_fill_simulator import simulate_paper_fill_journal_files
+from relative_value.kalshi_native_groups import audit_kalshi_native_groups_file
 from venues.kalshi import (
     FixtureKalshiAdapter,
     KalshiMarketFilterOptions,
@@ -534,6 +537,75 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "exact_paper_candidate_universes.md",
+    )
+
+    basket_parser = subparsers.add_parser(
+        "detect-structural-baskets",
+        help="Saved-file-only single-venue exhaustive basket review using explicit venue-native group evidence.",
+    )
+    basket_parser.add_argument(
+        "--snapshot",
+        dest="snapshots",
+        action="append",
+        type=Path,
+        required=True,
+        help="Saved market/orderbook snapshot path. Repeat for multiple saved snapshots.",
+    )
+    basket_parser.add_argument(
+        "--manifest",
+        type=Path,
+        help="Optional trusted local exhaustive-group manifest with explicit source/evidence fields.",
+    )
+    basket_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    basket_parser.add_argument("--min-depth", type=float, default=1.0)
+    basket_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_review.json",
+    )
+    basket_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_review.md",
+    )
+
+    paper_fill_parser = subparsers.add_parser(
+        "simulate-paper-fills",
+        help="Saved-file-only paper fill journal for rows already gated by upstream review logic.",
+    )
+    paper_fill_parser.add_argument("--input", required=True, type=Path, help="Saved upstream review report JSON.")
+    paper_fill_parser.add_argument(
+        "--json-output",
+        "--output",
+        dest="json_output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "paper_fill_journal.json",
+    )
+    paper_fill_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "paper_fill_journal.md",
+    )
+    paper_fill_parser.add_argument("--desired-quantity", type=float, default=1.0)
+    paper_fill_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    paper_fill_parser.add_argument("--slippage-budget-cents-per-leg", type=float, default=0.0)
+
+    kalshi_native_parser = subparsers.add_parser(
+        "audit-kalshi-native-groups",
+        help="Saved-file-only audit for explicit Kalshi venue-native event/group completeness metadata.",
+    )
+    kalshi_native_parser.add_argument("--snapshot", required=True, type=Path, help="Saved Kalshi snapshot/event/market JSON.")
+    kalshi_native_parser.add_argument(
+        "--output",
+        "--json-output",
+        dest="json_output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_native_groups_audit.json",
+    )
+    kalshi_native_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_native_groups_audit.md",
     )
 
     graph_parser = subparsers.add_parser(
@@ -1155,6 +1227,60 @@ def main(argv: list[str] | None = None) -> int:
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
+    if args.command == "detect-structural-baskets":
+        report = build_structural_basket_review_report_files(
+            snapshot_paths=args.snapshots,
+            manifest_path=args.manifest,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_depth=args.min_depth,
+        )
+        summary = report["summary"]
+        print(
+            "structural_basket_review_status=OK "
+            f"groups={summary['evaluated_group_count']} "
+            f"review={summary['review_count']} "
+            f"stop_for_review={summary['stop_for_review_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        if summary["stop_for_review_count"]:
+            print("STOP_FOR_REVIEW structural basket review candidate detected; report only, no orders placed.")
+        return 0
+    if args.command == "simulate-paper-fills":
+        journal = simulate_paper_fill_journal_files(
+            input_path=args.input,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            desired_quantity=args.desired_quantity,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            slippage_budget_cents_per_leg=args.slippage_budget_cents_per_leg,
+        )
+        summary = journal["summary"]
+        print(
+            "paper_fill_journal_status=OK "
+            f"rows={summary['input_row_count']} "
+            f"simulated={summary['simulated_fill_count']} "
+            f"blocked={summary['blocked_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "audit-kalshi-native-groups":
+        report = audit_kalshi_native_groups_file(
+            snapshot_path=args.snapshot,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "kalshi_native_groups_audit_status=OK "
+            f"groups={summary['groups_discovered']} "
+            f"complete={summary['complete_groups']} "
+            f"blocked={summary['blocked_groups']} "
+            f"candidate_input_rows={summary['candidate_input_row_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
     if args.command == "market-graph-diagnostics":
         return market_graph_diagnostics(
             fixture=args.fixture,

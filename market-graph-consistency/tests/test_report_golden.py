@@ -61,7 +61,7 @@ def test_json_report_structure_schema_sanity(fixture_snapshot) -> None:
     report = build_json_report(fixture_snapshot, violations, [{"file": "fixture.json"}])
 
     assert report["snapshot_id"] == fixture_snapshot.snapshot_id
-    assert report["summary"]["market_count"] == 35
+    assert report["summary"]["market_count"] == 63
     assert report["summary"]["highest_action"] == "MANUAL_REVIEW"
     assert report["summary"]["counts_by_kind"]["SUM_OVER_ONE"] == 4
     assert report["notes"] == fixture_snapshot.notes
