@@ -13,9 +13,13 @@ from graph_engine.reporting.schema_validation import (
     validate_formula_diagnostics_contract,
     validate_multi_leg_constraints_contract,
 )
-from graph_engine.reporting.safety import PROHIBITED_REPORT_TOKENS, find_prohibited_report_keys
+from graph_engine.reporting.safety import (
+    PROHIBITED_REPORT_PHRASES,
+    PROHIBITED_REPORT_TOKENS,
+    find_prohibited_report_keys,
+)
 
-PROHIBITED_VIOLATION_FIELDS = PROHIBITED_REPORT_TOKENS
+PROHIBITED_VIOLATION_FIELDS = PROHIBITED_REPORT_TOKENS | PROHIBITED_REPORT_PHRASES
 
 
 def _stale_nodes(snapshot: GraphSnapshot, max_node_age_seconds: int = 24 * 60 * 60) -> list[str]:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from typing import Any
 
 from graph_engine.models import ExclusionCompleteness, GraphSnapshot, MarketNode, RelationshipType
 from graph_engine.reporting.schema_validation import validate_multi_leg_constraints_contract
+from graph_engine.thresholds import ordered_ladder_candidates, threshold_candidate_from_node, threshold_group_blockers
 
 
 ALLOWED_ACTIONS = ["WATCH", "MANUAL_REVIEW"]
@@ -95,20 +95,54 @@ def _exclusion_constraints(snapshot: GraphSnapshot) -> list[dict[str, Any]]:
 
 
 def _threshold_ladder_constraints(snapshot: GraphSnapshot) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str, str], list[MarketNode]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str, str], list] = defaultdict(list)
     for node in snapshot.nodes.values():
         if "threshold" not in node.themes:
             continue
-        threshold = _threshold_value(node)
-        if threshold is None or not node.observable or not node.settlement_source or not node.window:
+        candidate = threshold_candidate_from_node(node)
+        if candidate.threshold is None or not candidate.observable or not candidate.source or not candidate.window:
             continue
-        grouped[(node.observable, node.settlement_source, node.window)].append(node)
+        grouped[(candidate.family, candidate.observable, candidate.source, candidate.window)].append(candidate)
 
     constraints: list[dict[str, Any]] = []
-    for (observable, settlement_source, window), nodes in grouped.items():
-        if len(nodes) < 3:
+    for (family, observable, settlement_source, window), candidates in grouped.items():
+        if len(candidates) < 3:
             continue
-        ordered = sorted(nodes, key=lambda item: _threshold_value(item) or 0.0, reverse=True)
+        blockers = threshold_group_blockers(candidates)
+        ordered_candidates = (
+            ordered_ladder_candidates(candidates)
+            if not blockers
+            else sorted(candidates, key=lambda item: item.threshold or 0.0, reverse=True)
+        )
+        ordered = [candidate.node for candidate in ordered_candidates]
+        unit = ordered_candidates[0].unit if ordered_candidates else None
+        comparator = ordered_candidates[0].comparator if ordered_candidates else None
+        if blockers:
+            constraints.append(
+                _constraint(
+                    constraint_id=f"multi_leg:threshold_ladder_blocked:{_threshold_key_id((family, observable, settlement_source, window))}",
+                    constraint_type="threshold_ladder",
+                    constraint_family="threshold_sequence",
+                    market_ids=[node.market_id for node in ordered],
+                    bound_gap=0.0,
+                    diagnostic_priority="WATCH",
+                    review_reason="Threshold sequence is blocked because comparator orientation or units are not review-ready.",
+                    observed_value=0.0,
+                    expected_lower_bound=0.0,
+                    expected_upper_bound=0.0,
+                    confidence_score=0.2,
+                    confidence_basis="Saved fixture threshold markets require comparator and unit review before monotonic diagnostics.",
+                    required_review_questions=[
+                        "Do all ladder markets use the same threshold comparator orientation?",
+                        "Do all ladder markets use the same explicit threshold unit?",
+                        "Can the typed threshold keys be verified without relying on title similarity?",
+                    ],
+                    blockers=blockers,
+                    constraint_violation=False,
+                    structural_inconsistency=False,
+                )
+            )
+            continue
         worst_gap = 0.0
         for narrower, broader in zip(ordered, ordered[1:]):
             worst_gap = max(worst_gap, narrower.probability - broader.probability - DEFAULT_TOLERANCE)
@@ -118,16 +152,19 @@ def _threshold_ladder_constraints(snapshot: GraphSnapshot) -> list[dict[str, Any
             _constraint(
                 constraint_id=f"multi_leg:threshold_ladder:{observable}:{settlement_source}:{window}",
                 constraint_type="threshold_ladder",
-                constraint_family="ordered_thresholds",
+                constraint_family="threshold_sequence",
                 market_ids=[node.market_id for node in ordered],
                 bound_gap=worst_gap,
                 diagnostic_priority="MANUAL_REVIEW",
-                review_reason="Ordered threshold ladder has a stricter threshold above a looser threshold after tolerance.",
+                review_reason="Monotonic threshold sequence has a stricter threshold above a looser threshold after tolerance.",
                 observed_value=max(node.probability for node in ordered),
                 expected_lower_bound=0.0,
                 expected_upper_bound=min(node.probability for node in ordered),
                 confidence_score=0.85,
-                confidence_basis="Saved fixture markets share observable, settlement source, and window with ordered numeric thresholds.",
+                confidence_basis=(
+                    "Saved fixture markets share formula family, observable, settlement source, window, "
+                    f"comparator {comparator}, and unit {unit} with a monotonic numeric threshold sequence."
+                ),
                 required_review_questions=[
                     "Do all ladder markets share the same settlement source and window?",
                     "Are the threshold comparators oriented the same way?",
@@ -303,6 +340,8 @@ def _constraint(
     confidence_basis: str,
     required_review_questions: list[str],
     blockers: list[str],
+    constraint_violation: bool = True,
+    structural_inconsistency: bool = True,
 ) -> dict[str, Any]:
     rounded_gap = round(max(0.0, bound_gap), 6)
     normalized_bound_gap = _normalized_gap(rounded_gap, expected_lower_bound, expected_upper_bound)
@@ -316,8 +355,8 @@ def _constraint(
         "allowed_actions": ALLOWED_ACTIONS,
         "max_action_cap": diagnostic_priority,
         "diagnostic_priority": diagnostic_priority,
-        "constraint_violation": True,
-        "structural_inconsistency": True,
+        "constraint_violation": constraint_violation,
+        "structural_inconsistency": structural_inconsistency,
         "bound_gap": rounded_gap,
         "normalized_bound_gap": normalized_bound_gap,
         "observed_value": round(observed_value, 6),
@@ -343,8 +382,5 @@ def _is_range_bucket(nodes: list[MarketNode]) -> bool:
     return all("range-bucket" in node.themes for node in nodes)
 
 
-def _threshold_value(node: MarketNode) -> float | None:
-    match = re.search(r"above\s+([0-9]+(?:\.[0-9]+)?)", node.canonical_text.lower())
-    if not match:
-        return None
-    return float(match.group(1))
+def _threshold_key_id(key: tuple[Any, ...]) -> str:
+    return ":".join(str(item).replace(" ", "_").replace(":", "_").replace("/", "_") for item in key if item not in {None, ""})

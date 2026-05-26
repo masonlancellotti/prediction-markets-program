@@ -10,8 +10,8 @@ from tests.conftest import PROJECT_ROOT
 def test_fixture_loader_loads_expected_markets_entities_and_themes() -> None:
     snapshot, metadata = load_fixture_markets(PROJECT_ROOT / "venues" / "fixtures")
 
-    assert len(snapshot.nodes) == 63
-    assert len(metadata) == 11
+    assert len(snapshot.nodes) == 90
+    assert len(metadata) == 12
     openai_valuation = snapshot.nodes["polymarket:openai_valuation_1t_2027"]
     assert "OpenAI" in openai_valuation.entities
     assert "private-company-valuation" in openai_valuation.themes

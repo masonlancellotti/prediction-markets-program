@@ -1,0 +1,16 @@
+{
+  "hypotheses": [
+    {
+      "hypothesis_id": "llm-bad-text-only-equality",
+      "market_ids": ["fixture:btc_over_120k_june", "fixture:btc_over_100k_other_window"],
+      "relationship_type": "EXACT_EQUALITY_HYPOTHESIS",
+      "natural_language_claim": "Both market titles mention BTC above a threshold so the two markets must be identical.",
+      "directionality": null,
+      "evidence_fields_used": ["title"],
+      "missing_evidence": [],
+      "falsification_checks": [],
+      "confidence_tier": "HIGH",
+      "action_permission": false
+    }
+  ]
+}

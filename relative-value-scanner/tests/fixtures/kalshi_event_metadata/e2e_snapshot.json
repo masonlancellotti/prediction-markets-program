@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "events": [
+    {
+      "event_ticker": "KXE2E-2026-DEMO",
+      "event_id": "kxe2e-2026-demo",
+      "series_ticker": "KXE2E",
+      "markets": [
+        {
+          "ticker": "KXE2E-2026-DEMO-ALPHA",
+          "market_ticker": "KXE2E-2026-DEMO-ALPHA",
+          "yes_sub_title": "Outcome Alpha",
+          "title": "Outcome Alpha wins",
+          "rules_primary": "Resolution source is the official Kalshi event metadata. Settles to the listed outcome on expiration.",
+          "close_time": "2026-12-31T22:00:00Z",
+          "expected_expiration_time": "2026-12-31T23:00:00Z",
+          "expiration_time": "2027-01-01T00:00:00Z",
+          "latest_expiration_time": "2027-01-01T00:00:00Z",
+          "outcomes": ["Yes", "No"],
+          "orderbook_enrichment": {
+            "best_ask": 0.30,
+            "depth_at_best_ask": 25.0,
+            "yes_asks": [[0.30, 25.0], [0.32, 50.0]],
+            "orderbook_captured_at": "2026-05-24T11:59:30+00:00"
+          }
+        },
+        {
+          "ticker": "KXE2E-2026-DEMO-BETA",
+          "market_ticker": "KXE2E-2026-DEMO-BETA",
+          "yes_sub_title": "Outcome Beta",
+          "title": "Outcome Beta wins",
+          "rules_primary": "Resolution source is the official Kalshi event metadata. Settles to the listed outcome on expiration.",
+          "close_time": "2026-12-31T22:00:00Z",
+          "expected_expiration_time": "2026-12-31T23:00:00Z",
+          "expiration_time": "2027-01-01T00:00:00Z",
+          "latest_expiration_time": "2027-01-01T00:00:00Z",
+          "outcomes": ["Yes", "No"],
+          "orderbook_enrichment": {
+            "best_ask": 0.28,
+            "depth_at_best_ask": 25.0,
+            "yes_asks": [[0.28, 25.0], [0.30, 50.0]],
+            "orderbook_captured_at": "2026-05-24T11:59:30+00:00"
+          }
+        },
+        {
+          "ticker": "KXE2E-2026-DEMO-GAMMA",
+          "market_ticker": "KXE2E-2026-DEMO-GAMMA",
+          "yes_sub_title": "Outcome Gamma",
+          "title": "Outcome Gamma wins",
+          "rules_primary": "Resolution source is the official Kalshi event metadata. Settles to the listed outcome on expiration.",
+          "close_time": "2026-12-31T22:00:00Z",
+          "expected_expiration_time": "2026-12-31T23:00:00Z",
+          "expiration_time": "2027-01-01T00:00:00Z",
+          "latest_expiration_time": "2027-01-01T00:00:00Z",
+          "outcomes": ["Yes", "No"],
+          "orderbook_enrichment": {
+            "best_ask": 0.27,
+            "depth_at_best_ask": 25.0,
+            "yes_asks": [[0.27, 25.0], [0.29, 50.0]],
+            "orderbook_captured_at": "2026-05-24T11:59:30+00:00"
+          }
+        }
+      ]
+    }
+  ]
+}

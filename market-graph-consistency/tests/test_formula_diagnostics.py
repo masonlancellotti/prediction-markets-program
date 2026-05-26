@@ -81,7 +81,14 @@ def _assert_proposal_invalid(payload: dict) -> None:
     raise AssertionError("invalid proposed formula payload should fail closed")
 
 
-def _btc_formula(market_id: str, threshold: float, source: str | None = "fixture_btc_index", date: str | None = "2026-06-30") -> MarketFormula:
+def _btc_formula(
+    market_id: str,
+    threshold: float,
+    source: str | None = "fixture_btc_index",
+    date: str | None = "2026-06-30",
+    comparator: str | None = ">",
+    units: str | None = "USD",
+) -> MarketFormula:
     return MarketFormula(
         market_id=market_id,
         family="BTC_THRESHOLD",
@@ -90,9 +97,9 @@ def _btc_formula(market_id: str, threshold: float, source: str | None = "fixture
         source=source,
         date=date,
         settlement_time=date,
-        comparator=">",
+        comparator=comparator,
         threshold=threshold,
-        units="USD",
+        units=units,
         parse_quality=0.95,
         blockers=[],
         provenance={"fixture": "formula_cluster_test"},
@@ -576,13 +583,54 @@ def test_formula_cluster_synthesizes_btc_threshold_ladder() -> None:
             _btc_formula("cluster:btc_140k", 140000),
         ]
     )
-    ladders = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "synthesized_threshold_ladder"]
+    ladders = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "derived_threshold_ladder"]
 
     assert len(ladders) == 1
     assert ladders[0]["diagnostic_only"] is True
     assert ladders[0]["max_action_cap"] == "MANUAL_REVIEW"
     assert ladders[0]["source_market_ids"] == ["cluster:btc_140k", "cluster:btc_120k", "cluster:btc_100k"]
     assert ladders[0]["derived_structure"]["thresholds"] == [140000, 120000, 100000]
+
+
+def test_formula_cluster_blocks_mixed_threshold_comparators() -> None:
+    report = build_formula_cluster_constraints_report(
+        [
+            _btc_formula("cluster:btc_100k", 100000),
+            _btc_formula("cluster:btc_120k", 120000),
+            _btc_formula("cluster:btc_le_140k", 140000, comparator="<="),
+        ]
+    )
+    blocked = [
+        item
+        for item in report["formula_cluster_constraints"]
+        if item["constraint_type"] == "blocked_exact_grouping"
+        and "mixed_threshold_comparators" in item["blockers"]
+    ]
+    ladders = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "derived_threshold_ladder"]
+
+    assert len(blocked) == 1
+    assert ladders == []
+    assert blocked[0]["max_action_cap"] == "WATCH"
+
+
+def test_formula_cluster_blocks_missing_threshold_units() -> None:
+    report = build_formula_cluster_constraints_report(
+        [
+            _btc_formula("cluster:btc_100k", 100000, units=None),
+            _btc_formula("cluster:btc_120k", 120000, units="USD"),
+            _btc_formula("cluster:btc_140k", 140000, units="USD"),
+        ]
+    )
+    blocked = [
+        item
+        for item in report["formula_cluster_constraints"]
+        if item["constraint_type"] == "blocked_exact_grouping"
+        and "mixed_or_missing_threshold_units" in item["blockers"]
+    ]
+    ladders = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "derived_threshold_ladder"]
+
+    assert len(blocked) == 1
+    assert ladders == []
 
 
 def test_formula_cluster_synthesizes_fed_overlap_diagnostics() -> None:
@@ -593,7 +641,7 @@ def test_formula_cluster_synthesizes_fed_overlap_diagnostics() -> None:
             _fed_formula("cluster:fed_475_500", 4.75, 5.0),
         ]
     )
-    overlaps = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "synthesized_overlapping_ranges"]
+    overlaps = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "derived_overlapping_ranges"]
 
     assert overlaps
     assert overlaps[0]["max_action_cap"] == "WATCH"
@@ -608,7 +656,7 @@ def test_formula_cluster_synthesizes_range_bucket_partition() -> None:
             _fed_formula("cluster:fed_450_475", 4.5, 4.75),
         ]
     )
-    partitions = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "synthesized_range_bucket_partition"]
+    partitions = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "derived_range_bucket_partition"]
 
     assert len(partitions) == 1
     assert partitions[0]["constraint_family"] == "range_partition"
@@ -625,7 +673,7 @@ def test_formula_cluster_missing_source_or_date_prevents_exact_grouping() -> Non
         ]
     )
     blocked = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "blocked_exact_grouping"]
-    ladders = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "synthesized_threshold_ladder"]
+    ladders = [item for item in report["formula_cluster_constraints"] if item["constraint_type"] == "derived_threshold_ladder"]
 
     assert len(blocked) == 2
     assert any("missing_source" in item["blockers"] for item in blocked)

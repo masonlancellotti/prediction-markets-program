@@ -299,6 +299,103 @@ def test_multi_leg_bound_math_for_fixture_examples(fixture_snapshot) -> None:
     assert threshold["normalized_bound_gap"] == 0.17
 
 
+def test_multi_leg_mixed_threshold_comparators_block_ladder_without_violation() -> None:
+    snapshot = GraphSnapshot(
+        snapshot_id="mixed-threshold-comparator-test",
+        as_of="2026-05-19T18:00:00+00:00",
+        nodes={
+            "test:btc_above_100k": make_node(
+                "test:btc_above_100k",
+                0.50,
+                title="BTC above 100k by June 30",
+                canonical_text="Bitcoin is above 100000 USD by 2026-06-30.",
+                themes=["threshold"],
+                observable="BTC",
+                settlement_source="fixture_btc_index",
+                window="2026-06-30",
+            ),
+            "test:btc_above_120k": make_node(
+                "test:btc_above_120k",
+                0.64,
+                title="BTC above 120k by June 30",
+                canonical_text="Bitcoin is above 120000 USD by 2026-06-30.",
+                themes=["threshold"],
+                observable="BTC",
+                settlement_source="fixture_btc_index",
+                window="2026-06-30",
+            ),
+            "test:btc_at_or_below_140k": make_node(
+                "test:btc_at_or_below_140k",
+                0.74,
+                title="BTC at or below 140k by June 30",
+                canonical_text="Bitcoin is at or below 140000 USD by 2026-06-30.",
+                themes=["threshold"],
+                observable="BTC",
+                settlement_source="fixture_btc_index",
+                window="2026-06-30",
+            ),
+        },
+        edges=[],
+    )
+
+    report = build_multi_leg_constraints_report(snapshot)
+    row = _by_type(report)["threshold_ladder"][0]
+
+    assert row["constraint_violation"] is False
+    assert row["structural_inconsistency"] is False
+    assert row["bound_gap"] == 0
+    assert "mixed_threshold_comparators" in row["blockers"]
+    assert row["allowed_actions"] == ["WATCH", "MANUAL_REVIEW"]
+
+
+def test_multi_leg_mixed_threshold_units_block_ladder_without_violation() -> None:
+    snapshot = GraphSnapshot(
+        snapshot_id="mixed-threshold-unit-test",
+        as_of="2026-05-19T18:00:00+00:00",
+        nodes={
+            "test:index_above_100": make_node(
+                "test:index_above_100",
+                0.50,
+                title="Custom index above 100",
+                canonical_text="Custom index is above 100.",
+                themes=["threshold"],
+                observable="CUSTOM_INDEX",
+                settlement_source="fixture_custom_index",
+                window="2026-06-30",
+            ),
+            "test:index_above_120": make_node(
+                "test:index_above_120",
+                0.64,
+                title="Custom index above 120",
+                canonical_text="Custom index is above 120.",
+                themes=["threshold"],
+                observable="CUSTOM_INDEX",
+                settlement_source="fixture_custom_index",
+                window="2026-06-30",
+            ),
+            "test:index_above_140k": make_node(
+                "test:index_above_140k",
+                0.74,
+                title="Custom index above 140k",
+                canonical_text="Custom index is above 140k.",
+                themes=["threshold"],
+                observable="CUSTOM_INDEX",
+                settlement_source="fixture_custom_index",
+                window="2026-06-30",
+            ),
+        },
+        edges=[],
+    )
+
+    report = build_multi_leg_constraints_report(snapshot)
+    row = _by_type(report)["threshold_ladder"][0]
+
+    assert row["constraint_violation"] is False
+    assert row["structural_inconsistency"] is False
+    assert row["bound_gap"] == 0
+    assert "mixed_or_missing_threshold_units" in row["blockers"]
+
+
 def test_multi_leg_output_uses_neutral_terminology_only(fixture_snapshot) -> None:
     report = build_multi_leg_constraints_report(fixture_snapshot)
     serialized = json.dumps(report).lower()

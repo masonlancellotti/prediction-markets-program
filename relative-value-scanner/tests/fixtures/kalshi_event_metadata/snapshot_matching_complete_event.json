@@ -1,0 +1,62 @@
+{
+  "events": [
+    {
+      "event_ticker": "KXEVT-2026-EXAMPLE",
+      "event_id": "kxevt-2026-example",
+      "series_ticker": "KXEVT",
+      "markets": [
+        {
+          "ticker": "KXEVT-2026-EXAMPLE-A",
+          "market_ticker": "KXEVT-2026-EXAMPLE-A",
+          "yes_sub_title": "Outcome A",
+          "title": "Outcome A wins",
+          "rules_primary": "Resolution source is official Kalshi event metadata. Settles to the listed outcome on expiration.",
+          "close_time": "2026-12-31T22:00:00Z",
+          "expected_expiration_time": "2026-12-31T23:00:00Z",
+          "expiration_time": "2027-01-01T00:00:00Z",
+          "latest_expiration_time": "2027-01-01T00:00:00Z",
+          "outcomes": ["Yes", "No"],
+          "orderbook_enrichment": {
+            "best_ask": 0.30,
+            "depth_at_best_ask": 25.0,
+            "orderbook_captured_at": "2026-05-24T11:59:30+00:00"
+          }
+        },
+        {
+          "ticker": "KXEVT-2026-EXAMPLE-B",
+          "market_ticker": "KXEVT-2026-EXAMPLE-B",
+          "yes_sub_title": "Outcome B",
+          "title": "Outcome B wins",
+          "rules_primary": "Resolution source is official Kalshi event metadata. Settles to the listed outcome on expiration.",
+          "close_time": "2026-12-31T22:00:00Z",
+          "expected_expiration_time": "2026-12-31T23:00:00Z",
+          "expiration_time": "2027-01-01T00:00:00Z",
+          "latest_expiration_time": "2027-01-01T00:00:00Z",
+          "outcomes": ["Yes", "No"],
+          "orderbook_enrichment": {
+            "best_ask": 0.28,
+            "depth_at_best_ask": 25.0,
+            "orderbook_captured_at": "2026-05-24T11:59:30+00:00"
+          }
+        },
+        {
+          "ticker": "KXEVT-2026-EXAMPLE-C",
+          "market_ticker": "KXEVT-2026-EXAMPLE-C",
+          "yes_sub_title": "Outcome C",
+          "title": "Outcome C wins",
+          "rules_primary": "Resolution source is official Kalshi event metadata. Settles to the listed outcome on expiration.",
+          "close_time": "2026-12-31T22:00:00Z",
+          "expected_expiration_time": "2026-12-31T23:00:00Z",
+          "expiration_time": "2027-01-01T00:00:00Z",
+          "latest_expiration_time": "2027-01-01T00:00:00Z",
+          "outcomes": ["Yes", "No"],
+          "orderbook_enrichment": {
+            "best_ask": 0.27,
+            "depth_at_best_ask": 25.0,
+            "orderbook_captured_at": "2026-05-24T11:59:30+00:00"
+          }
+        }
+      ]
+    }
+  ]
+}

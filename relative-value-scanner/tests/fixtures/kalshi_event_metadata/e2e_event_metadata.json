@@ -1,0 +1,52 @@
+{
+  "event_ticker": "KXE2E-2026-DEMO",
+  "event_id": "kxe2e-2026-demo",
+  "series_ticker": "KXE2E",
+  "title": "End-to-end structural basket dry run",
+  "outcome_list": ["Outcome Alpha", "Outcome Beta", "Outcome Gamma"],
+  "complete": true,
+  "all_outcomes_included": true,
+  "is_exhaustive": true,
+  "rules_primary": "Resolution source is the official Kalshi event metadata. Settles to the listed outcome on expiration.",
+  "rules_secondary": "All outcomes resolve from the same official event result.",
+  "settlement_source_raw_evidence": "Official Kalshi event metadata resolves every listed outcome from the same official source.",
+  "close_time": "2026-12-31T22:00:00Z",
+  "expected_expiration_time": "2026-12-31T23:00:00Z",
+  "expiration_time": "2027-01-01T00:00:00Z",
+  "latest_expiration_time": "2027-01-01T00:00:00Z",
+  "markets": [
+    {
+      "market_ticker": "KXE2E-2026-DEMO-ALPHA",
+      "yes_sub_title": "Outcome Alpha",
+      "title": "Outcome Alpha wins",
+      "rules_primary": "Resolution source is the official Kalshi event metadata. Settles to the listed outcome on expiration.",
+      "close_time": "2026-12-31T22:00:00Z",
+      "expected_expiration_time": "2026-12-31T23:00:00Z",
+      "expiration_time": "2027-01-01T00:00:00Z",
+      "latest_expiration_time": "2027-01-01T00:00:00Z",
+      "outcomes": ["Yes", "No"]
+    },
+    {
+      "market_ticker": "KXE2E-2026-DEMO-BETA",
+      "yes_sub_title": "Outcome Beta",
+      "title": "Outcome Beta wins",
+      "rules_primary": "Resolution source is the official Kalshi event metadata. Settles to the listed outcome on expiration.",
+      "close_time": "2026-12-31T22:00:00Z",
+      "expected_expiration_time": "2026-12-31T23:00:00Z",
+      "expiration_time": "2027-01-01T00:00:00Z",
+      "latest_expiration_time": "2027-01-01T00:00:00Z",
+      "outcomes": ["Yes", "No"]
+    },
+    {
+      "market_ticker": "KXE2E-2026-DEMO-GAMMA",
+      "yes_sub_title": "Outcome Gamma",
+      "title": "Outcome Gamma wins",
+      "rules_primary": "Resolution source is the official Kalshi event metadata. Settles to the listed outcome on expiration.",
+      "close_time": "2026-12-31T22:00:00Z",
+      "expected_expiration_time": "2026-12-31T23:00:00Z",
+      "expiration_time": "2027-01-01T00:00:00Z",
+      "latest_expiration_time": "2027-01-01T00:00:00Z",
+      "outcomes": ["Yes", "No"]
+    }
+  ]
+}

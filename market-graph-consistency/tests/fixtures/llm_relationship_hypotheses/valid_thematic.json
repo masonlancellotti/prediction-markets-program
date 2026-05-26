@@ -1,0 +1,25 @@
+{
+  "hypotheses": [
+    {
+      "hypothesis_id": "llm-thematic-election-cycle",
+      "market_ids": ["fixture:election_candidate_a", "fixture:election_candidate_b"],
+      "relationship_type": "THEMATIC_CORRELATION_HYPOTHESIS",
+      "natural_language_claim": "Both markets concern the same example election cycle and may co-move with shared political news, but neither outcome deterministically implies the other.",
+      "directionality": null,
+      "evidence_fields_used": [
+        "category_or_event",
+        "title"
+      ],
+      "missing_evidence": [
+        "prior_correlation_data",
+        "settlement_rules_review"
+      ],
+      "falsification_checks": [
+        "Confirm both markets resolve from the same election event.",
+        "Check that no shared driver could move both outcomes in opposite directions."
+      ],
+      "confidence_tier": "MEDIUM",
+      "action_permission": false
+    }
+  ]
+}

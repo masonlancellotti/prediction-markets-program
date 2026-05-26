@@ -5,7 +5,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from graph_engine.reporting.safety import PROHIBITED_REPORT_TOKENS, find_prohibited_report_tokens
+from graph_engine.reporting.safety import (
+    PROHIBITED_REPORT_PHRASES,
+    PROHIBITED_REPORT_TOKENS,
+    find_prohibited_rendered_text,
+    find_prohibited_report_tokens,
+)
 
 
 class SchemaValidationError(ValueError):
@@ -35,7 +40,7 @@ STRUCTURAL_NOT_SAME_PAYOFF_RELATIONS = {
 }
 SAME_PAYOFF_BOUND = "same_payoff_equality_if_settlement_proven"
 DISALLOWED_HINT_RELATION_TYPES = {"EXACT_SAME_PAYOFF"}
-PROHIBITED_HINT_DIFF_TOKENS = PROHIBITED_REPORT_TOKENS
+PROHIBITED_HINT_DIFF_TOKENS = PROHIBITED_REPORT_TOKENS | PROHIBITED_REPORT_PHRASES
 MULTI_LEG_CONSTRAINT_TYPES = {
     "exhaustive_group",
     "mutually_exclusive_group",
@@ -47,7 +52,7 @@ MULTI_LEG_CONSTRAINT_TYPES = {
 MULTI_LEG_CONSTRAINT_FAMILIES = {
     "compound_bound",
     "mutual_exclusion",
-    "ordered_thresholds",
+    "threshold_sequence",
     "outcome_partition",
     "range_partition",
 }
@@ -63,18 +68,18 @@ FORMULA_RELATIONS = {
 }
 FORMULA_CLUSTER_CONSTRAINT_TYPES = {
     "blocked_exact_grouping",
-    "synthesized_complement_pair",
-    "synthesized_mutually_exclusive_group",
-    "synthesized_overlapping_ranges",
-    "synthesized_possible_exhaustive_group",
-    "synthesized_range_bucket_partition",
-    "synthesized_threshold_ladder",
+    "derived_complement_pair",
+    "derived_mutually_exclusive_group",
+    "derived_overlapping_ranges",
+    "derived_possible_exhaustive_group",
+    "derived_range_bucket_partition",
+    "derived_threshold_ladder",
 }
 FORMULA_CLUSTER_CONSTRAINT_FAMILIES = {
     "complement_pair",
     "formula_cluster",
     "mutual_exclusion",
-    "ordered_thresholds",
+    "threshold_sequence",
     "outcome_partition",
     "range_overlap",
     "range_partition",
@@ -258,10 +263,19 @@ def validate_multi_leg_constraints_contract(report: dict[str, Any]) -> None:
             raise SchemaValidationError(f"{path}.constraint_type is not allowed")
         if constraint.get("constraint_family") not in MULTI_LEG_CONSTRAINT_FAMILIES:
             raise SchemaValidationError(f"{path}.constraint_family is not allowed")
+        blockers = constraint.get("blockers")
+        if not isinstance(blockers, list) or not all(isinstance(item, str) for item in blockers):
+            raise SchemaValidationError(f"{path}.blockers must be a list of strings")
+        blocked_threshold_review = (
+            constraint.get("constraint_type") == "threshold_ladder"
+            and bool(set(blockers) & {"mixed_threshold_comparators", "mixed_or_missing_threshold_units"})
+        )
         if constraint.get("constraint_violation") is not True:
-            raise SchemaValidationError(f"{path}.constraint_violation must be true")
+            if not (blocked_threshold_review and constraint.get("constraint_violation") is False):
+                raise SchemaValidationError(f"{path}.constraint_violation must be true unless threshold grouping is blocked")
         if constraint.get("structural_inconsistency") is not True:
-            raise SchemaValidationError(f"{path}.structural_inconsistency must be true")
+            if not (blocked_threshold_review and constraint.get("structural_inconsistency") is False):
+                raise SchemaValidationError(f"{path}.structural_inconsistency must be true unless threshold grouping is blocked")
         market_ids = constraint.get("market_ids")
         if not isinstance(market_ids, list) or len(market_ids) < 3:
             raise SchemaValidationError(f"{path}.market_ids must contain three or more markets")
@@ -278,9 +292,9 @@ def validate_multi_leg_constraints_contract(report: dict[str, Any]) -> None:
                 raise SchemaValidationError(f"{path}.{key} must be numeric")
         if constraint["expected_lower_bound"] > constraint["expected_upper_bound"]:
             raise SchemaValidationError(f"{path}.expected bounds are inverted")
-        if constraint["bound_gap"] <= 0:
+        if constraint["bound_gap"] <= 0 and not blocked_threshold_review:
             raise SchemaValidationError(f"{path}.bound_gap must be positive")
-        if constraint["normalized_bound_gap"] <= 0:
+        if constraint["normalized_bound_gap"] <= 0 and not blocked_threshold_review:
             raise SchemaValidationError(f"{path}.normalized_bound_gap must be positive")
         confidence_basis = constraint.get("confidence_basis")
         if not isinstance(confidence_basis, dict):
@@ -293,9 +307,6 @@ def validate_multi_leg_constraints_contract(report: dict[str, Any]) -> None:
         questions = constraint.get("required_review_questions")
         if not isinstance(questions, list) or not questions or not all(isinstance(item, str) and item for item in questions):
             raise SchemaValidationError(f"{path}.required_review_questions must contain non-empty strings")
-        blockers = constraint.get("blockers")
-        if not isinstance(blockers, list) or not all(isinstance(item, str) for item in blockers):
-            raise SchemaValidationError(f"{path}.blockers must be a list of strings")
 
 
 def validate_formula_diagnostics_contract(report: dict[str, Any]) -> None:

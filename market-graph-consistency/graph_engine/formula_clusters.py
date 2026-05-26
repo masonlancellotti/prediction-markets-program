@@ -43,6 +43,8 @@ def _threshold_ladder_constraints(formulas: list[MarketFormula]) -> list[dict[st
         if formula.family != "BTC_THRESHOLD":
             continue
         blockers = _required_key_blockers(formula, ["source", "date", "asset"])
+        if formula.threshold is None:
+            blockers.append("missing_threshold")
         if blockers:
             blocked.append(
                 _constraint(
@@ -57,29 +59,49 @@ def _threshold_ladder_constraints(formulas: list[MarketFormula]) -> list[dict[st
                 )
             )
             continue
-        if formula.threshold is None or formula.comparator not in {">", ">="}:
-            continue
-        grouped[(formula.family, formula.asset, formula.source, formula.date, formula.units)].append(formula)
+        grouped[(formula.family, formula.asset, formula.source, formula.date)].append(formula)
 
     constraints = blocked
     for key, items in grouped.items():
         distinct_thresholds = sorted({item.threshold for item in items if item.threshold is not None})
         if len(distinct_thresholds) < 3:
             continue
-        ordered = sorted(items, key=lambda item: item.threshold or 0.0, reverse=True)
+        ladder_blockers = _threshold_ladder_blockers(items)
+        if ladder_blockers:
+            constraints.append(
+                _constraint(
+                    constraint_id=f"formula_cluster:blocked_threshold_ladder:{_key_id(key)}",
+                    constraint_type="blocked_exact_grouping",
+                    constraint_family="formula_cluster",
+                    formulas=sorted(items, key=lambda item: item.market_id),
+                    max_action_cap="WATCH",
+                    reason_for_review="Threshold ladder grouping is blocked by comparator orientation or missing/mixed units.",
+                    requested_exact_keys_to_verify=["family", "asset", "source", "date", "comparator", "threshold", "units"],
+                    blockers=ladder_blockers,
+                    derived_structure={
+                        "comparators": sorted({str(item.comparator) for item in items}),
+                        "units": sorted({str(item.units) for item in items}),
+                        "thresholds": sorted(distinct_thresholds),
+                    },
+                )
+            )
+            continue
+        ordered = sorted(items, key=lambda item: item.threshold or 0.0, reverse=items[0].comparator in {">", ">="})
         constraints.append(
             _constraint(
-                constraint_id=f"formula_cluster:threshold_ladder:{_key_id(key)}",
-                constraint_type="synthesized_threshold_ladder",
-                constraint_family="ordered_thresholds",
+                constraint_id=f"formula_cluster:threshold_ladder:{_key_id((*key, items[0].comparator, items[0].units))}",
+                constraint_type="derived_threshold_ladder",
+                constraint_family="threshold_sequence",
                 formulas=ordered,
                 max_action_cap="MANUAL_REVIEW",
-                reason_for_review="Typed formulas form an ordered threshold ladder requiring wording and settlement review.",
+                reason_for_review="Typed formulas form a monotonic threshold sequence requiring wording and settlement review.",
                 requested_exact_keys_to_verify=["family", "asset", "source", "date", "settlement_time", "comparator", "threshold", "units"],
                 blockers=[],
                 derived_structure={
                     "thresholds": [item.threshold for item in ordered],
-                    "ordering": "stricter_threshold_should_not_exceed_looser_threshold_probability",
+                    "comparator": items[0].comparator,
+                    "units": items[0].units,
+                    "sequence_rule": "stricter_threshold_should_not_exceed_looser_threshold_probability",
                 },
             )
         )
@@ -122,7 +144,7 @@ def _fed_range_constraints(formulas: list[MarketFormula]) -> list[dict[str, Any]
                 constraints.append(
                     _constraint(
                         constraint_id=f"formula_cluster:overlapping_ranges:{left.market_id}->{right.market_id}",
-                        constraint_type="synthesized_overlapping_ranges",
+                        constraint_type="derived_overlapping_ranges",
                         constraint_family="range_overlap",
                         formulas=[left, right],
                         max_action_cap="WATCH",
@@ -139,7 +161,7 @@ def _fed_range_constraints(formulas: list[MarketFormula]) -> list[dict[str, Any]
             constraints.append(
                 _constraint(
                     constraint_id=f"formula_cluster:range_bucket_partition:{_key_id(key)}",
-                    constraint_type="synthesized_range_bucket_partition",
+                    constraint_type="derived_range_bucket_partition",
                     constraint_family="range_partition",
                     formulas=ranges,
                     max_action_cap="MANUAL_REVIEW",
@@ -169,7 +191,7 @@ def _possible_group_constraints(formulas: list[MarketFormula]) -> list[dict[str,
         constraints.append(
             _constraint(
                 constraint_id=f"formula_cluster:possible_exhaustive_group:{_key_id(key)}",
-                constraint_type="synthesized_possible_exhaustive_group",
+                constraint_type="derived_possible_exhaustive_group",
                 constraint_family="outcome_partition",
                 formulas=sorted(items, key=lambda item: item.market_id),
                 max_action_cap="WATCH",
@@ -182,7 +204,7 @@ def _possible_group_constraints(formulas: list[MarketFormula]) -> list[dict[str,
         constraints.append(
             _constraint(
                 constraint_id=f"formula_cluster:mutually_exclusive_group:{_key_id(key)}",
-                constraint_type="synthesized_mutually_exclusive_group",
+                constraint_type="derived_mutually_exclusive_group",
                 constraint_family="mutual_exclusion",
                 formulas=sorted(items, key=lambda item: item.market_id),
                 max_action_cap="MANUAL_REVIEW",
@@ -207,7 +229,7 @@ def _complement_pair_constraints(formulas: list[MarketFormula]) -> list[dict[str
         constraints.append(
             _constraint(
                 constraint_id=f"formula_cluster:complement_pair:{left.market_id}->{right.market_id}",
-                constraint_type="synthesized_complement_pair",
+                constraint_type="derived_complement_pair",
                 constraint_family="complement_pair",
                 formulas=[left, right],
                 max_action_cap="WATCH",
@@ -279,6 +301,19 @@ def _required_key_blockers(formula: MarketFormula, names: list[str]) -> list[str
         if getattr(formula, name) in {None, ""}:
             blockers.append(f"missing_{name}")
     return sorted(set(blockers))
+
+
+def _threshold_ladder_blockers(items: list[MarketFormula]) -> list[str]:
+    blockers: list[str] = []
+    comparators = {item.comparator for item in items}
+    if None in comparators or len(comparators) > 1:
+        blockers.append("mixed_threshold_comparators")
+    elif next(iter(comparators)) not in {">", ">=", "<", "<="}:
+        blockers.append("mixed_threshold_comparators")
+    units = {item.units for item in items}
+    if None in units or len(units) > 1:
+        blockers.append("mixed_or_missing_threshold_units")
+    return blockers
 
 
 def _same_range(left: MarketFormula, right: MarketFormula) -> bool:

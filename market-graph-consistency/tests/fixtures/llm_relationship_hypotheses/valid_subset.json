@@ -1,0 +1,26 @@
+{
+  "hypotheses": [
+    {
+      "hypothesis_id": "llm-subset-btc-strict-vs-loose",
+      "market_ids": ["fixture:btc_over_140k_june", "fixture:btc_over_120k_june"],
+      "relationship_type": "SUBSET_HYPOTHESIS",
+      "natural_language_claim": "BTC above 140k by June 30 implies BTC above 120k by June 30; the strict resolution should never fire without the loose one also firing.",
+      "directionality": "fixture:btc_over_140k_june -> fixture:btc_over_120k_june",
+      "evidence_fields_used": [
+        "title",
+        "rules_or_description_excerpt",
+        "normalized_formula"
+      ],
+      "missing_evidence": [
+        "settlement_source_match_review",
+        "comparator_orientation_review"
+      ],
+      "falsification_checks": [
+        "Confirm both markets resolve from the same BTC index source and the same 2026-06-30 window.",
+        "Confirm both comparators are oriented the same way (e.g. '>' vs '>=')."
+      ],
+      "confidence_tier": "MEDIUM",
+      "action_permission": false
+    }
+  ]
+}

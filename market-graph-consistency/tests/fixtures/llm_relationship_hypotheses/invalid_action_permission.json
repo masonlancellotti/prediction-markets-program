@@ -1,0 +1,16 @@
+{
+  "hypotheses": [
+    {
+      "hypothesis_id": "llm-bad-trade-permission",
+      "market_ids": ["fixture:btc_over_140k_june", "fixture:btc_over_120k_june"],
+      "relationship_type": "COMPLEMENT_HYPOTHESIS",
+      "natural_language_claim": "Pair these two markets to capture the spread immediately.",
+      "directionality": "fixture:btc_over_140k_june -> fixture:btc_over_120k_june",
+      "evidence_fields_used": ["title"],
+      "missing_evidence": [],
+      "falsification_checks": ["Pretend nothing could go wrong."],
+      "confidence_tier": "HIGH",
+      "action_permission": true
+    }
+  ]
+}

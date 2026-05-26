@@ -6,6 +6,8 @@ from pathlib import Path
 from graph_engine.models import Action, ConsistencyViolation, GraphSnapshot, ViolationKind
 from graph_engine.formula import build_formula_diagnostics_report
 from graph_engine.reporting.multi_leg import build_multi_leg_constraints_report
+from graph_engine.reporting.safety import find_prohibited_rendered_text
+from graph_engine.reporting.schema_validation import SchemaValidationError
 
 
 def _price_line(snapshot: GraphSnapshot, market_id: str) -> str:
@@ -158,7 +160,7 @@ def build_markdown_report(snapshot: GraphSnapshot, violations: list[ConsistencyV
 
     lines.extend(["## Formula Cluster Constraints", ""])
     if not formula_report["formula_cluster_constraints"]:
-        lines.extend(["No synthesized formula cluster constraints in this snapshot.", ""])
+        lines.extend(["No derived formula cluster constraints in this snapshot.", ""])
     for constraint in formula_report["formula_cluster_constraints"]:
         lines.extend(
             [
@@ -190,6 +192,13 @@ def write_markdown_report(
     violations: list[ConsistencyViolation],
     path: Path | str,
 ) -> None:
+    markdown = build_markdown_report(snapshot, violations)
+    hits = find_prohibited_rendered_text(markdown)
+    if hits:
+        raise SchemaValidationError(
+            "graph consistency Markdown contains prohibited diagnostic vocabulary: "
+            + ", ".join(hits)
+        )
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(build_markdown_report(snapshot, violations), encoding="utf-8")
+    output.write_text(markdown, encoding="utf-8")

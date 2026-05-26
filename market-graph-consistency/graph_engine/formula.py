@@ -368,6 +368,24 @@ def _compare_pair(left: MarketFormula, right: MarketFormula) -> dict[str, Any] |
 def _compare_btc(left: MarketFormula, right: MarketFormula) -> dict[str, Any] | None:
     if left.source != right.source or left.date != right.date:
         return _diagnostic(left, right, "ambiguous_not_exact", "WATCH", ["source_or_date_mismatch"], "BTC formulas differ by source or date.")
+    if left.comparator != right.comparator:
+        return _diagnostic(
+            left,
+            right,
+            "ambiguous_not_exact",
+            "WATCH",
+            ["mixed_threshold_comparators"],
+            "BTC threshold formulas use different comparator orientations.",
+        )
+    if left.units is None or right.units is None or left.units != right.units:
+        return _diagnostic(
+            left,
+            right,
+            "ambiguous_not_exact",
+            "WATCH",
+            ["mixed_or_missing_threshold_units"],
+            "BTC threshold formulas use missing or mismatched units.",
+        )
     if left.threshold == right.threshold and left.comparator == right.comparator:
         return _diagnostic(left, right, "typed_formula_match_review_only", "MANUAL_REVIEW", [], "Typed BTC formulas match, but graph output remains diagnostic only.")
     return _diagnostic(left, right, "threshold_ladder", "MANUAL_REVIEW", [], "BTC thresholds share source and date but use different thresholds.")
