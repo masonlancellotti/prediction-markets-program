@@ -15,6 +15,7 @@ SCHEMA_KIND = "sports_mlb_daily_residual_risk_scout_v1"
 REPORT_SOURCE = "sports_mlb_daily_residual_risk_scout_v1"
 
 ACTION_RESIDUAL_REVIEW = "RESIDUAL_RISK_SHADOW_PAPER_REVIEW"
+ACTION_OPERATOR_REVIEW = "OPERATOR_ARB_PAPER_REVIEW"
 ACTION_MANUAL_REVIEW = "MANUAL_REVIEW"
 ACTION_WATCH = "WATCH"
 ACTION_IGNORE_BLOCKED = "IGNORE_BLOCKED"
@@ -34,7 +35,10 @@ B_STALE_QUOTE = "stale_or_missing_quote"
 B_LIVE_GAME_EXCLUDED = "live_game_excluded_or_review_required"
 B_MISSING_FEE_MODEL = "missing_or_uncertain_fee_model"
 B_SIZE_UNIT_REVIEW = "quote_size_unit_review_required"
-B_INSUFFICIENT_DEPTH = "available_notional_below_minimum"
+B_MISSING_KALSHI_SIZE = "missing_kalshi_size"
+B_MISSING_POLYMARKET_SIZE = "missing_polymarket_size"
+B_PARTIAL_DEPTH = "partial_or_missing_depth"
+B_INSUFFICIENT_DEPTH = "insufficient_available_notional"
 B_NO_POSITIVE_GROSS_EDGE = "no_positive_gross_edge"
 B_NO_POSITIVE_NET_EDGE = "no_positive_net_edge_after_fees"
 
@@ -130,6 +134,7 @@ def build_sports_mlb_daily_residual_risk_report(
     polymarket_evidence: Path,
     date: str,
     accept_mlb_daily_contingency_risk: bool = False,
+    operator_accepted_as_arb: bool = False,
     include_live_games: bool = False,
     max_quote_age_seconds: float = DEFAULT_MAX_QUOTE_AGE_SECONDS,
     min_available_notional: float = DEFAULT_MIN_AVAILABLE_NOTIONAL,
@@ -175,6 +180,7 @@ def build_sports_mlb_daily_residual_risk_report(
             max_quote_age_seconds=max_quote_age_seconds,
             min_available_notional=min_available_notional,
             accept_mlb_daily_contingency_risk=accept_mlb_daily_contingency_risk,
+            operator_accepted_as_arb=operator_accepted_as_arb,
             include_live_games=include_live_games,
             fee_models_available=fee_models_available,
             payload_scope_blockers=payload_scope_blockers,
@@ -194,9 +200,16 @@ def build_sports_mlb_daily_residual_risk_report(
         "generated_at": generated.isoformat(),
         "diagnostic_only": True,
         "shadow_paper_only": True,
+        "operator_arb_mode": bool(accept_mlb_daily_contingency_risk and operator_accepted_as_arb),
         "human_accepted_residual_risk": bool(accept_mlb_daily_contingency_risk),
+        "operator_accepted_as_arb": bool(operator_accepted_as_arb),
         "strict_exact_arb": False,
+        "mathematical_strict_exact_arb": False,
         "paper_candidate_emitted": False,
+        "global_paper_candidate_emitted": False,
+        "standard_paper_candidate_rows": 0,
+        "operator_arb_review_rows": summary["operator_arb_review_rows"],
+        "operator_paper_review_rows": summary["operator_arb_review_rows"],
         "date": date,
         "include_live_games": bool(include_live_games),
         "max_quote_age_seconds": max_quote_age_seconds,
@@ -218,10 +231,16 @@ def build_sports_mlb_daily_residual_risk_report(
         "safety": {
             "diagnostic_only": True,
             "shadow_paper_only": True,
+            "operator_arb_mode": bool(accept_mlb_daily_contingency_risk and operator_accepted_as_arb),
             "strict_exact_arb": False,
+            "mathematical_strict_exact_arb": False,
             "exact_ready": False,
             "paper_candidate": False,
+            "standard_paper_candidate_rows": 0,
             "paper_candidate_emitted": False,
+            "global_paper_candidate_emitted": False,
+            "candidate_pair_creation": False,
+            "evaluator_invoked": False,
             "affects_global_evaluator_gates": False,
             "override_default_enabled": False,
             "orders_or_execution_logic_added": False,
@@ -240,6 +259,7 @@ def write_sports_mlb_daily_residual_risk_files(
     include_live_games: bool,
     json_output: Path,
     markdown_output: Path,
+    operator_accepted_as_arb: bool = False,
     max_quote_age_seconds: float = DEFAULT_MAX_QUOTE_AGE_SECONDS,
     min_available_notional: float = DEFAULT_MIN_AVAILABLE_NOTIONAL,
     generated_at: datetime | None = None,
@@ -249,6 +269,7 @@ def write_sports_mlb_daily_residual_risk_files(
         polymarket_evidence=polymarket_evidence,
         date=date,
         accept_mlb_daily_contingency_risk=accept_mlb_daily_contingency_risk,
+        operator_accepted_as_arb=operator_accepted_as_arb,
         include_live_games=include_live_games,
         max_quote_age_seconds=max_quote_age_seconds,
         min_available_notional=min_available_notional,
@@ -264,32 +285,45 @@ def write_sports_mlb_daily_residual_risk_files(
 def render_sports_mlb_daily_residual_risk_markdown(report: dict[str, Any]) -> str:
     summary = report.get("summary_counts") or {}
     rows = report.get("rows") or []
+    operator_rows = [row for row in rows if row.get("action") == ACTION_OPERATOR_REVIEW]
     review_rows = [row for row in rows if row.get("action") == ACTION_RESIDUAL_REVIEW]
-    other_rows = [row for row in rows if row.get("action") != ACTION_RESIDUAL_REVIEW]
+    other_rows = [row for row in rows if row.get("action") not in {ACTION_OPERATOR_REVIEW, ACTION_RESIDUAL_REVIEW}]
     lines = [
-        "# MLB Daily Residual-Risk Scout",
+        "# MLB Daily Game Operator Arb Scout",
         "",
-        "Saved-evidence-only diagnostic for MLB daily game-winner cross-venue baskets. This is not strict riskless arb; it only reviews normal-state opportunities when the MLB daily contingency-risk override is explicitly enabled.",
+        "Saved-evidence-only diagnostic for MLB daily game-winner cross-venue baskets. This is operator-risk only, not strict exact arb, and it never creates standard paper candidates.",
         "",
         "## Summary",
         "",
         f"- date: `{_md(report.get('date'))}`",
         f"- human_accepted_residual_risk: `{str(bool(report.get('human_accepted_residual_risk'))).lower()}`",
+        f"- operator_accepted_as_arb: `{str(bool(report.get('operator_accepted_as_arb'))).lower()}`",
+        f"- operator_arb_mode: `{str(bool(report.get('operator_arb_mode'))).lower()}`",
         f"- strict_exact_arb: `false`",
-        f"- paper_candidate_emitted: `false`",
+        f"- mathematical_strict_exact_arb: `false`",
+        f"- global_paper_candidate_emitted: `false`",
         f"- games_loaded_kalshi: `{(report.get('games_loaded') or {}).get('kalshi', 0)}`",
         f"- games_loaded_polymarket: `{(report.get('games_loaded') or {}).get('polymarket', 0)}`",
         f"- matched_games: `{report.get('matched_games', 0)}`",
         f"- rows: `{summary.get('rows', 0)}`",
+        f"- operator_arb_review_rows: `{summary.get('operator_arb_review_rows', 0)}`",
         f"- residual_review_rows: `{summary.get('residual_review_rows', 0)}`",
         f"- manual_review_rows: `{summary.get('manual_review_rows', 0)}`",
         f"- watch_rows: `{summary.get('watch_rows', 0)}`",
         f"- exact_ready_rows: `0`",
-        f"- paper_candidate_rows: `0`",
+        f"- standard_paper_candidate_rows: `0`",
         "",
-        "## Residual-Risk Shadow Review Rows",
+        "## Operator Arb Review Rows",
         "",
     ]
+    lines.extend(_row_table(operator_rows))
+    lines.extend(
+        [
+            "",
+            "## Residual-Risk Shadow Review Rows",
+            "",
+        ]
+    )
     lines.extend(_row_table(review_rows))
     lines.extend(["", "## Watch / Manual Review Rows", ""])
     lines.extend(_row_table(other_rows[:50]))
@@ -307,10 +341,13 @@ def render_sports_mlb_daily_residual_risk_markdown(report: dict[str, Any]) -> st
             "",
             "- diagnostic_only: `true`",
             "- shadow_paper_only: `true`",
+            f"- operator_arb_mode: `{str(bool(report.get('operator_arb_mode'))).lower()}`",
             "- strict_exact_arb: `false`",
+            "- mathematical_strict_exact_arb: `false`",
+            "- candidate_pair_creation: `false`",
             "- exact_ready: `false`",
-            "- paper_candidate: `false`",
-            "- paper_candidate_emitted: `false`",
+            "- standard_paper_candidate_rows: `0`",
+            "- global_paper_candidate_emitted: `false`",
             "- affects_global_evaluator_gates: `false`",
             "- override_default_enabled: `false`",
             "- saved_files_only: `true`",
@@ -321,7 +358,7 @@ def render_sports_mlb_daily_residual_risk_markdown(report: dict[str, Any]) -> st
 
 def _row_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
-        "| Action | Gross Edge | Net Edge | Size | Game | Direction | Kalshi Team | Polymarket Team | Blockers |",
+        "| Action | Gross Edge | Net Edge | Available Notional | Game | Direction | Kalshi Team | Polymarket Team | Blockers |",
         "|---|---:|---:|---:|---|---|---|---|---|",
     ]
     if not rows:
@@ -335,7 +372,7 @@ def _row_table(rows: list[dict[str, Any]]) -> list[str]:
                     _md(row.get("action")),
                     _fmt(row.get("gross_edge")),
                     _fmt(row.get("net_edge")),
-                    _fmt(row.get("available_size")),
+                    _fmt(row.get("available_notional")),
                     _md(row.get("game")),
                     _md(row.get("direction")),
                     _md(row.get("kalshi_team")),
@@ -357,6 +394,7 @@ def _rows_for_game(
     max_quote_age_seconds: float,
     min_available_notional: float,
     accept_mlb_daily_contingency_risk: bool,
+    operator_accepted_as_arb: bool,
     include_live_games: bool,
     fee_models_available: bool,
     payload_scope_blockers: list[str],
@@ -374,6 +412,7 @@ def _rows_for_game(
                 polymarket_game=polymarket_game,
                 blockers=scope_blockers,
                 accept_mlb_daily_contingency_risk=accept_mlb_daily_contingency_risk,
+                operator_accepted_as_arb=operator_accepted_as_arb,
             )
         ]
     kalshi_outcomes = _outcome_index(kalshi_game, venue="kalshi")
@@ -389,6 +428,7 @@ def _rows_for_game(
                 kalshi_game=kalshi_game,
                 polymarket_game=polymarket_game,
                 accept_mlb_daily_contingency_risk=accept_mlb_daily_contingency_risk,
+                operator_accepted_as_arb=operator_accepted_as_arb,
             )
         ]
     team_a, team_b = ordered_teams[0], ordered_teams[1]
@@ -403,6 +443,7 @@ def _rows_for_game(
             max_quote_age_seconds=max_quote_age_seconds,
             min_available_notional=min_available_notional,
             accept_mlb_daily_contingency_risk=accept_mlb_daily_contingency_risk,
+            operator_accepted_as_arb=operator_accepted_as_arb,
             include_live_games=include_live_games,
             fee_models_available=fee_models_available,
         ),
@@ -416,6 +457,7 @@ def _rows_for_game(
             max_quote_age_seconds=max_quote_age_seconds,
             min_available_notional=min_available_notional,
             accept_mlb_daily_contingency_risk=accept_mlb_daily_contingency_risk,
+            operator_accepted_as_arb=operator_accepted_as_arb,
             include_live_games=include_live_games,
             fee_models_available=fee_models_available,
         ),
@@ -433,22 +475,36 @@ def _direction_row(
     max_quote_age_seconds: float,
     min_available_notional: float,
     accept_mlb_daily_contingency_risk: bool,
+    operator_accepted_as_arb: bool,
     include_live_games: bool,
     fee_models_available: bool,
 ) -> dict[str, Any]:
     kalshi_ask = _float_or_none(kalshi_outcome.get("ask"))
     polymarket_ask = _float_or_none(polymarket_outcome.get("ask"))
-    kalshi_size = _float_or_none(kalshi_outcome.get("ask_size"))
-    polymarket_size = _float_or_none(polymarket_outcome.get("ask_size"))
     gross_edge = (
         round(1.0 - kalshi_ask - polymarket_ask, 6)
         if kalshi_ask is not None and polymarket_ask is not None
         else None
     )
-    available_size = (
-        round(min(kalshi_size, polymarket_size), 6)
-        if kalshi_size is not None and polymarket_size is not None
+    kalshi_size = _normalize_leg_notional(kalshi_outcome, venue="kalshi", price=kalshi_ask)
+    polymarket_size = _normalize_leg_notional(polymarket_outcome, venue="polymarket", price=polymarket_ask)
+    kalshi_notional = kalshi_size["notional"]
+    polymarket_notional = polymarket_size["notional"]
+    available_notional = (
+        round(min(kalshi_notional, polymarket_notional), 6)
+        if kalshi_notional is not None and polymarket_notional is not None
         else None
+    )
+    depth_gate_passed = _depth_is_acceptable(kalshi_outcome, venue="kalshi") and _depth_is_acceptable(
+        polymarket_outcome,
+        venue="polymarket",
+    )
+    size_gate_passed = (
+        kalshi_size["status"] == "normalized"
+        and polymarket_size["status"] == "normalized"
+        and depth_gate_passed
+        and available_notional is not None
+        and available_notional >= min_available_notional
     )
     fee_estimate, net_edge, net_edge_status = _fee_estimate(
         kalshi_ask=kalshi_ask,
@@ -464,12 +520,18 @@ def _direction_row(
         blockers.append(B_RESIDUAL_NOT_ACCEPTED)
     if kalshi_ask is None or polymarket_ask is None:
         blockers.append(B_MISSING_QUOTE)
-    if kalshi_size is None or polymarket_size is None or available_size is None or available_size <= 0:
+    if kalshi_size["missing_size"]:
+        blockers.append(B_MISSING_KALSHI_SIZE)
+    if polymarket_size["missing_size"]:
+        blockers.append(B_MISSING_POLYMARKET_SIZE)
+    if kalshi_size["missing_size"] or polymarket_size["missing_size"] or available_notional is None or available_notional <= 0:
         blockers.append(B_MISSING_DEPTH)
-    elif available_size < min_available_notional:
-        blockers.append(B_INSUFFICIENT_DEPTH)
-    if available_size is not None and not (_size_unit_reviewed(kalshi_outcome) and _size_unit_reviewed(polymarket_outcome)):
+    if kalshi_size["status"] == "blocked_unclear" or polymarket_size["status"] == "blocked_unclear":
         blockers.append(B_SIZE_UNIT_REVIEW)
+    if not depth_gate_passed:
+        blockers.append(B_PARTIAL_DEPTH)
+    if available_notional is not None and available_notional < min_available_notional:
+        blockers.append(B_INSUFFICIENT_DEPTH)
     blockers.extend(
         _timestamp_blockers(
             quote_timestamps=quote_timestamps,
@@ -487,9 +549,18 @@ def _direction_row(
     if net_edge is not None and net_edge <= 0:
         blockers.append(B_NO_POSITIVE_NET_EDGE)
     blockers = list(dict.fromkeys(blockers))
-    action = _action(blockers, net_edge_status=net_edge_status, net_edge=net_edge)
+    action = _action(
+        blockers,
+        net_edge_status=net_edge_status,
+        net_edge=net_edge,
+        gross_edge=gross_edge,
+        operator_accepted_as_arb=operator_accepted_as_arb,
+    )
+    freshness_status = "stale_or_missing" if B_STALE_QUOTE in blockers else "fresh"
+    live_status_text = "live_or_in_progress" if live_status else "not_live"
     return {
         "cross_platform_game_key": kalshi_game.get("cross_platform_game_key"),
+        "teams": kalshi_game.get("teams") or polymarket_game.get("teams"),
         "game": _game_label(kalshi_game),
         "direction": direction,
         "kalshi_team": kalshi_outcome.get("team"),
@@ -497,14 +568,42 @@ def _direction_row(
         "kalshi_ticker": kalshi_outcome.get("market_ticker"),
         "polymarket_market_id": polymarket_game.get("ids", {}).get("market_id"),
         "polymarket_token_id": polymarket_outcome.get("token_id"),
+        "kalshi_leg": {
+            "platform": "Kalshi",
+            "side": "YES",
+            "team": kalshi_outcome.get("team"),
+            "market_ticker": kalshi_outcome.get("market_ticker"),
+            "ask": kalshi_ask,
+            "ask_size": kalshi_outcome.get("ask_size"),
+        },
+        "polymarket_leg": {
+            "platform": "Polymarket",
+            "side": "outcome",
+            "team": polymarket_outcome.get("team"),
+            "market_id": polymarket_game.get("ids", {}).get("market_id"),
+            "token_id": polymarket_outcome.get("token_id"),
+            "ask": polymarket_ask,
+            "ask_size": polymarket_outcome.get("ask_size"),
+        },
         "kalshi_ask": kalshi_ask,
         "polymarket_ask": polymarket_ask,
         "gross_edge": gross_edge,
         "conservative_fee_estimate": fee_estimate,
         "net_edge": net_edge,
         "net_edge_status": net_edge_status,
-        "available_size": available_size,
+        "kalshi_leg_notional": kalshi_notional,
+        "polymarket_leg_notional": polymarket_notional,
+        "available_notional": available_notional,
+        "available_size": available_notional,
+        "kalshi_size_units": kalshi_size["units"],
+        "polymarket_size_units": polymarket_size["units"],
+        "kalshi_size_unit_interpretation": kalshi_size["interpretation"],
+        "polymarket_size_unit_interpretation": polymarket_size["interpretation"],
+        "size_unit_status": _size_unit_status(kalshi_size, polymarket_size, depth_gate_passed=depth_gate_passed),
+        "size_gate_passed": size_gate_passed,
         "quote_timestamps": quote_timestamps,
+        "freshness_status": freshness_status,
+        "live_status": live_status_text,
         "game_status": {
             "kalshi": _quote_status(kalshi_game, "game_status_at_fetch"),
             "polymarket": _quote_status(polymarket_game, "market_status_at_fetch"),
@@ -512,10 +611,14 @@ def _direction_row(
         "blockers": blockers,
         "action": action,
         "human_accepted_residual_risk": bool(accept_mlb_daily_contingency_risk),
+        "operator_accepted_as_arb": bool(operator_accepted_as_arb),
         "residual_risk_type": RESIDUAL_RISK_TYPE if accept_mlb_daily_contingency_risk else None,
+        "mathematical_strict_exact_arb": False,
         "strict_exact_arb": False,
         "exact_ready": False,
         "paper_candidate": False,
+        "standard_paper_candidate": False,
+        "operator_paper_review": action == ACTION_OPERATOR_REVIEW,
         "diagnostic_only": True,
         "shadow_paper_only": True,
         "can_create_candidate_pair": False,
@@ -529,6 +632,7 @@ def _blocked_team_match_row(
     kalshi_game: dict[str, Any],
     polymarket_game: dict[str, Any],
     accept_mlb_daily_contingency_risk: bool,
+    operator_accepted_as_arb: bool,
 ) -> dict[str, Any]:
     blockers = [B_UNMATCHED_TEAM]
     if not accept_mlb_daily_contingency_risk:
@@ -548,15 +652,26 @@ def _blocked_team_match_row(
         "conservative_fee_estimate": None,
         "net_edge": None,
         "net_edge_status": "NOT_CALCULATED",
+        "kalshi_leg_notional": None,
+        "polymarket_leg_notional": None,
+        "available_notional": None,
         "available_size": None,
+        "kalshi_size_units": None,
+        "polymarket_size_units": None,
+        "size_unit_status": "not_calculated",
+        "size_gate_passed": False,
         "quote_timestamps": {},
         "blockers": blockers,
         "action": ACTION_IGNORE_BLOCKED,
         "human_accepted_residual_risk": bool(accept_mlb_daily_contingency_risk),
+        "operator_accepted_as_arb": bool(operator_accepted_as_arb),
         "residual_risk_type": RESIDUAL_RISK_TYPE if accept_mlb_daily_contingency_risk else None,
+        "mathematical_strict_exact_arb": False,
         "strict_exact_arb": False,
         "exact_ready": False,
         "paper_candidate": False,
+        "standard_paper_candidate": False,
+        "operator_paper_review": False,
         "diagnostic_only": True,
         "shadow_paper_only": True,
         "can_create_candidate_pair": False,
@@ -571,6 +686,7 @@ def _blocked_scope_row(
     polymarket_game: dict[str, Any],
     blockers: list[str],
     accept_mlb_daily_contingency_risk: bool,
+    operator_accepted_as_arb: bool,
 ) -> dict[str, Any]:
     effective_blockers = list(dict.fromkeys([*blockers, B_NOT_MLB_DAILY_GAME_WINNER]))
     if not accept_mlb_daily_contingency_risk:
@@ -590,15 +706,26 @@ def _blocked_scope_row(
         "conservative_fee_estimate": None,
         "net_edge": None,
         "net_edge_status": "NOT_CALCULATED",
+        "kalshi_leg_notional": None,
+        "polymarket_leg_notional": None,
+        "available_notional": None,
         "available_size": None,
+        "kalshi_size_units": None,
+        "polymarket_size_units": None,
+        "size_unit_status": "not_calculated",
+        "size_gate_passed": False,
         "quote_timestamps": {},
         "blockers": effective_blockers,
         "action": ACTION_IGNORE_BLOCKED,
         "human_accepted_residual_risk": bool(accept_mlb_daily_contingency_risk),
+        "operator_accepted_as_arb": bool(operator_accepted_as_arb),
         "residual_risk_type": RESIDUAL_RISK_TYPE if accept_mlb_daily_contingency_risk else None,
+        "mathematical_strict_exact_arb": False,
         "strict_exact_arb": False,
         "exact_ready": False,
         "paper_candidate": False,
+        "standard_paper_candidate": False,
+        "operator_paper_review": False,
         "diagnostic_only": True,
         "shadow_paper_only": True,
         "can_create_candidate_pair": False,
@@ -607,7 +734,14 @@ def _blocked_scope_row(
     }
 
 
-def _action(blockers: list[str], *, net_edge_status: str, net_edge: float | None) -> str:
+def _action(
+    blockers: list[str],
+    *,
+    net_edge_status: str,
+    net_edge: float | None,
+    gross_edge: float | None,
+    operator_accepted_as_arb: bool,
+) -> str:
     if B_NOT_MLB_DAILY_GAME_WINNER in blockers or B_UNSUPPORTED_SCOPE in blockers:
         return ACTION_IGNORE_BLOCKED
     if B_RESIDUAL_NOT_ACCEPTED in blockers or B_LIVE_GAME_EXCLUDED in blockers:
@@ -618,16 +752,19 @@ def _action(blockers: list[str], *, net_edge_status: str, net_edge: float | None
         or B_STALE_QUOTE in blockers
         or B_UNMATCHED_TEAM in blockers
         or B_INSUFFICIENT_DEPTH in blockers
+        or B_MISSING_KALSHI_SIZE in blockers
+        or B_MISSING_POLYMARKET_SIZE in blockers
+        or B_PARTIAL_DEPTH in blockers
     ):
         return ACTION_WATCH
     if B_SIZE_UNIT_REVIEW in blockers:
-        return ACTION_MANUAL_REVIEW if net_edge is not None and net_edge > 0 else ACTION_WATCH
+        return ACTION_MANUAL_REVIEW if gross_edge is not None and gross_edge > 0 else ACTION_WATCH
     if net_edge_status == "FEE_REVIEW_REQUIRED":
         return ACTION_MANUAL_REVIEW
     if blockers:
         return ACTION_WATCH
     if net_edge is not None and net_edge > 0:
-        return ACTION_RESIDUAL_REVIEW
+        return ACTION_OPERATOR_REVIEW if operator_accepted_as_arb else ACTION_RESIDUAL_REVIEW
     return ACTION_WATCH
 
 
@@ -691,7 +828,16 @@ def _outcome_index(game: dict[str, Any], *, venue: str) -> dict[str, Any]:
             "ask": _first(outcome, ("yes_ask", "ask")),
             "ask_size": outcome.get(ask_size_key) if ask_size_key else None,
             "ask_size_key": ask_size_key,
-            "ask_size_unit": _first(outcome, ("ask_size_unit", "yes_ask_size_unit", "size_unit")) or quotes.get("size_unit") or quotes.get("size_unit_normalized"),
+            "ask_size_unit": _first(outcome, ("ask_size_unit", "yes_ask_size_unit", "size_unit"))
+            or quotes.get("size_unit")
+            or quotes.get("size_unit_normalized"),
+            "quote_size_unit_note": quotes.get("size_unit_note"),
+            "quote_source": quotes.get("quote_source"),
+            "depth_status": _first(outcome, ("depth_status", "depth_status_observed")),
+            "partial_book": outcome.get("partial_book"),
+            "book_blockers": outcome.get("book_blockers"),
+            "asks_levels": outcome.get("asks_levels"),
+            "bids_levels": outcome.get("bids_levels"),
             "quote_timestamp": quote_timestamp,
             "token_id": _token_id_for_team(team, token_ids),
         }
@@ -800,11 +946,113 @@ def _raw_outcome_records(game: dict[str, Any]) -> list[dict[str, Any]]:
     return [outcome for outcome in outcomes if isinstance(outcome, dict)]
 
 
-def _size_unit_reviewed(outcome: dict[str, Any]) -> bool:
-    unit = _string_or_none(outcome.get("ask_size_unit"))
-    if unit and unit.lower() in {"notional_usd", "usd", "dollars", "dollar_notional"}:
+def _normalize_leg_notional(outcome: dict[str, Any], *, venue: str, price: float | None) -> dict[str, Any]:
+    size = _float_or_none(outcome.get("ask_size"))
+    if price is None or size is None:
+        return {
+            "notional": None,
+            "status": "missing",
+            "missing_size": size is None,
+            "units": None,
+            "interpretation": "missing_price_or_size",
+        }
+    unit_text = " ".join(
+        str(value or "")
+        for value in (
+            outcome.get("ask_size_unit"),
+            outcome.get("ask_size_key"),
+            outcome.get("quote_size_unit_note"),
+            outcome.get("quote_source"),
+            outcome.get("depth_status"),
+        )
+    ).lower()
+    if venue == "kalshi":
+        if outcome.get("ask_size_key") == "yes_ask_size_dollars" or any(
+            token in unit_text for token in ("notional", "dollar", "usd")
+        ):
+            return {
+                "notional": round(size, 6),
+                "status": "normalized",
+                "missing_size": False,
+                "units": "dollar_notional",
+                "interpretation": "explicit_dollar_notional_size_used_directly",
+            }
+        if any(token in unit_text for token in ("orderbook", "resting", "level", "contract", "share")) or outcome.get(
+            "partial_book"
+        ) is not None:
+            return {
+                "notional": round(price * size, 6),
+                "status": "normalized",
+                "missing_size": False,
+                "units": "orderbook_contract_quantity",
+                "interpretation": "raw_orderbook_size_converted_to_notional_as_ask_price_times_size",
+            }
+        return {
+            "notional": None,
+            "status": "blocked_unclear",
+            "missing_size": False,
+            "units": _string_or_none(unit_text),
+            "interpretation": "kalshi_size_units_unclear",
+        }
+    if venue == "polymarket":
+        if any(token in unit_text for token in ("notional", "dollar", "usd")):
+            return {
+                "notional": round(size, 6),
+                "status": "normalized",
+                "missing_size": False,
+                "units": "dollar_notional",
+                "interpretation": "explicit_dollar_notional_size_used_directly",
+            }
+        if any(token in unit_text for token in ("share", "token", "contract", "clob")) or _level_count_present(outcome):
+            return {
+                "notional": round(price * size, 6),
+                "status": "normalized",
+                "missing_size": False,
+                "units": "token_or_share_quantity",
+                "interpretation": "token_or_share_quantity_converted_to_notional_as_ask_price_times_size",
+            }
+        return {
+            "notional": None,
+            "status": "blocked_unclear",
+            "missing_size": False,
+            "units": _string_or_none(unit_text),
+            "interpretation": "polymarket_size_units_unclear",
+        }
+    return {
+        "notional": None,
+        "status": "blocked_unclear",
+        "missing_size": False,
+        "units": _string_or_none(unit_text),
+        "interpretation": "unknown_venue_size_units",
+    }
+
+
+def _depth_is_acceptable(outcome: dict[str, Any], *, venue: str) -> bool:
+    depth_status = str(outcome.get("depth_status") or "").strip().lower()
+    if "full_clob" in depth_status or "full clob" in depth_status or "present_full_clob" in depth_status:
         return True
-    return outcome.get("ask_size_key") == "yes_ask_size_dollars"
+    if outcome.get("partial_book") is False:
+        return True
+    if venue == "polymarket" and _level_count_present(outcome):
+        return True
+    blockers = outcome.get("book_blockers")
+    if isinstance(blockers, list) and blockers:
+        return False
+    return False
+
+
+def _level_count_present(outcome: dict[str, Any]) -> bool:
+    asks = _float_or_none(outcome.get("asks_levels"))
+    bids = _float_or_none(outcome.get("bids_levels"))
+    return asks is not None and asks > 0 and bids is not None and bids > 0
+
+
+def _size_unit_status(kalshi_size: dict[str, Any], polymarket_size: dict[str, Any], *, depth_gate_passed: bool) -> str:
+    if kalshi_size["status"] == "missing" or polymarket_size["status"] == "missing" or not depth_gate_passed:
+        return "missing"
+    if kalshi_size["status"] != "normalized" or polymarket_size["status"] != "normalized":
+        return "blocked_unclear"
+    return "normalized"
 
 
 def _token_id_for_team(team: str | None, token_ids: Any) -> Any:
@@ -861,17 +1109,21 @@ def _summary(
         "polymarket_games_loaded": len(polymarket_games),
         "matched_games": len(matched_game_keys),
         "rows": len(rows),
+        "operator_arb_review_rows": action_counts[ACTION_OPERATOR_REVIEW],
+        "operator_paper_review_rows": action_counts[ACTION_OPERATOR_REVIEW],
         "residual_review_rows": action_counts[ACTION_RESIDUAL_REVIEW],
         "manual_review_rows": action_counts[ACTION_MANUAL_REVIEW],
         "watch_rows": action_counts[ACTION_WATCH],
         "ignore_blocked_rows": action_counts[ACTION_IGNORE_BLOCKED],
         "rows_with_positive_gross_edge": sum(1 for row in rows if (row.get("gross_edge") is not None and row.get("gross_edge") > 0)),
         "rows_with_positive_net_edge": sum(1 for row in rows if (row.get("net_edge") is not None and row.get("net_edge") > 0)),
+        "rows_with_size_gate_passed": sum(1 for row in rows if row.get("size_gate_passed") is True),
         "rows_missing_quote_or_depth": sum(1 for row in rows if B_MISSING_QUOTE in row.get("blockers", []) or B_MISSING_DEPTH in row.get("blockers", [])),
         "fee_review_required_rows": sum(1 for row in rows if row.get("net_edge_status") == "FEE_REVIEW_REQUIRED"),
         "live_game_rows": sum(1 for row in rows if B_LIVE_GAME_EXCLUDED in row.get("blockers", [])),
         "exact_ready_rows": 0,
         "paper_candidate_rows": 0,
+        "standard_paper_candidate_rows": 0,
         "top_blockers": [
             {"blocker": blocker, "count": count}
             for blocker, count in blocker_counts.most_common(15)

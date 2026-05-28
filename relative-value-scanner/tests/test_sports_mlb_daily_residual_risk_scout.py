@@ -7,11 +7,14 @@ from pathlib import Path
 import scan
 from relative_value.sports_mlb_daily_residual_risk_scout import (
     ACTION_MANUAL_REVIEW,
+    ACTION_OPERATOR_REVIEW,
     ACTION_RESIDUAL_REVIEW,
     ACTION_WATCH,
+    B_INSUFFICIENT_DEPTH,
     B_LIVE_GAME_EXCLUDED,
     B_MISSING_DEPTH,
     B_MISSING_FEE_MODEL,
+    B_MISSING_POLYMARKET_SIZE,
     B_NOT_MLB_DAILY_GAME_WINNER,
     B_RESIDUAL_NOT_ACCEPTED,
     B_SIZE_UNIT_REVIEW,
@@ -59,6 +62,10 @@ def test_acceptance_allows_normal_state_shadow_review_when_quotes_depth_and_fees
     assert row["direction"] == "A"
     assert row["gross_edge"] > 0
     assert row["net_edge"] > 0
+    assert row["available_notional"] == 50.0
+    assert row["kalshi_leg_notional"] == 100.0
+    assert row["polymarket_leg_notional"] == 50.0
+    assert row["size_gate_passed"] is True
     assert row["net_edge_status"] == "OK"
     assert row["human_accepted_residual_risk"] is True
     assert row["residual_risk_type"] == RESIDUAL_RISK_TYPE
@@ -66,6 +73,31 @@ def test_acceptance_allows_normal_state_shadow_review_when_quotes_depth_and_fees
     assert row["exact_ready"] is False
     assert row["paper_candidate"] is False
     assert report["summary_counts"]["residual_review_rows"] == 1
+    assert report["summary_counts"]["operator_arb_review_rows"] == 0
+
+
+def test_operator_flag_allows_operator_review_when_all_gates_pass(tmp_path: Path) -> None:
+    kalshi, polymarket = _write_evidence(tmp_path, [_kalshi_game()], [_polymarket_game()])
+
+    report = build_sports_mlb_daily_residual_risk_report(
+        kalshi_evidence=kalshi,
+        polymarket_evidence=polymarket,
+        date="2026-05-28",
+        accept_mlb_daily_contingency_risk=True,
+        operator_accepted_as_arb=True,
+        generated_at=NOW,
+    )
+
+    operator_rows = [row for row in report["rows"] if row["action"] == ACTION_OPERATOR_REVIEW]
+    assert operator_rows
+    row = operator_rows[0]
+    assert row["operator_accepted_as_arb"] is True
+    assert row["operator_paper_review"] is True
+    assert row["mathematical_strict_exact_arb"] is False
+    assert row["exact_ready"] is False
+    assert row["standard_paper_candidate"] is False
+    assert report["operator_arb_review_rows"] == 1
+    assert report["summary_counts"]["operator_arb_review_rows"] == 1
 
 
 def test_outputs_never_emit_forbidden_paper_candidate_literal(tmp_path: Path) -> None:
@@ -179,7 +211,7 @@ def test_missing_or_uncertain_size_units_blocks_shadow_review(tmp_path: Path) ->
     kalshi, polymarket = _write_evidence(
         tmp_path,
         [_kalshi_game()],
-        [_polymarket_game(size_unit=None)],
+        [_polymarket_game(size_unit=None, include_depth=False)],
     )
 
     report = build_sports_mlb_daily_residual_risk_report(
@@ -192,7 +224,7 @@ def test_missing_or_uncertain_size_units_blocks_shadow_review(tmp_path: Path) ->
 
     positive_gross = next(row for row in report["rows"] if row["gross_edge"] and row["gross_edge"] > 0)
     assert B_SIZE_UNIT_REVIEW in positive_gross["blockers"]
-    assert positive_gross["action"] == ACTION_MANUAL_REVIEW
+    assert positive_gross["action"] == ACTION_WATCH
     assert report["summary_counts"]["residual_review_rows"] == 0
 
 
@@ -213,9 +245,34 @@ def test_missing_quote_depth_prevents_reviewable_row(tmp_path: Path) -> None:
 
     affected = next(row for row in report["rows"] if row["direction"] == "A")
     assert B_MISSING_DEPTH in affected["blockers"]
+    assert B_MISSING_POLYMARKET_SIZE in affected["blockers"]
     assert affected["available_size"] is None
+    assert affected["available_notional"] is None
     assert affected["action"] == ACTION_WATCH
     assert report["summary_counts"]["residual_review_rows"] == 0
+
+
+def test_insufficient_available_notional_blocks_operator_review(tmp_path: Path) -> None:
+    kalshi, polymarket = _write_evidence(
+        tmp_path,
+        [_kalshi_game()],
+        [_polymarket_game(laa_ask_size=5.0)],
+    )
+
+    report = build_sports_mlb_daily_residual_risk_report(
+        kalshi_evidence=kalshi,
+        polymarket_evidence=polymarket,
+        date="2026-05-28",
+        accept_mlb_daily_contingency_risk=True,
+        operator_accepted_as_arb=True,
+        generated_at=NOW,
+    )
+
+    affected = next(row for row in report["rows"] if row["direction"] == "A")
+    assert affected["polymarket_leg_notional"] == 2.5
+    assert affected["available_notional"] == 2.5
+    assert B_INSUFFICIENT_DEPTH in affected["blockers"]
+    assert affected["action"] == ACTION_WATCH
 
 
 def test_team_matching_handles_laa_det_and_hou_tex_aliases(tmp_path: Path) -> None:
@@ -389,6 +446,7 @@ def test_cli_writes_residual_risk_scout_outputs(tmp_path: Path, capsys) -> None:
             "--date",
             "2026-05-28",
             "--accept-mlb-daily-contingency-risk",
+            "--operator-accepted-as-arb",
             "--json-output",
             str(json_output),
             "--markdown-output",
@@ -400,10 +458,89 @@ def test_cli_writes_residual_risk_scout_outputs(tmp_path: Path, capsys) -> None:
     stdout = capsys.readouterr().out
     assert "sports_mlb_daily_residual_risk_scout_status=OK" in stdout
     assert "shadow_paper_only=true" in stdout
+    assert "operator_accepted_as_arb=true" in stdout
     assert "exact_ready_rows=0" in stdout
     payload = json.loads(json_output.read_text(encoding="utf-8"))
     assert payload["schema_kind"] == "sports_mlb_daily_residual_risk_scout_v1"
     assert payload["paper_candidate_emitted"] is False
+    assert "operator_arb_review_rows" in payload["summary_counts"]
+
+
+def test_run_mlb_daily_operator_check_calls_collector_then_scout_with_saved_paths(tmp_path: Path, monkeypatch, capsys) -> None:
+    calls: list[str] = []
+
+    def fake_collector(**kwargs):
+        calls.append("collector")
+        normalized = kwargs["normalized_output_dir"]
+        normalized.mkdir(parents=True, exist_ok=True)
+        date_label = kwargs["target_date"]
+        kalshi = normalized / f"sports_kalshi_mlb_daily_games_{date_label}_normalized_evidence.json"
+        polymarket = normalized / f"sports_polymarket_mlb_daily_games_{date_label}_normalized_evidence.json"
+        kalshi.write_text(json.dumps({"platform": "Kalshi", "league": "MLB", "games": []}), encoding="utf-8")
+        polymarket.write_text(json.dumps({"platform": "Polymarket", "league": "MLB", "games": []}), encoding="utf-8")
+        return {
+            "summary_counts": {"kalshi_games": 1, "polymarket_games": 1, "matched_games": 1},
+            "top_blockers": [],
+            "outputs": {"summary_json": str(normalized / "summary.json"), "summary_markdown": str(normalized / "summary.md")},
+        }
+
+    def fake_scout(**kwargs):
+        calls.append("scout")
+        assert kwargs["accept_mlb_daily_contingency_risk"] is True
+        assert kwargs["operator_accepted_as_arb"] is True
+        assert kwargs["kalshi_evidence"].name == "sports_kalshi_mlb_daily_games_2026-05-28_normalized_evidence.json"
+        assert kwargs["polymarket_evidence"].name == "sports_polymarket_mlb_daily_games_2026-05-28_normalized_evidence.json"
+        kwargs["json_output"].parent.mkdir(parents=True, exist_ok=True)
+        kwargs["markdown_output"].parent.mkdir(parents=True, exist_ok=True)
+        report = {
+            "matched_games": 1,
+            "summary_counts": {
+                "rows": 2,
+                "operator_arb_review_rows": 1,
+                "manual_review_rows": 0,
+                "watch_rows": 1,
+                "ignore_blocked_rows": 0,
+                "top_blockers": [{"blocker": "stale_or_missing_quote", "count": 1}],
+            },
+        }
+        kwargs["json_output"].write_text(json.dumps(report), encoding="utf-8")
+        kwargs["markdown_output"].write_text("# scout\n", encoding="utf-8")
+        return report
+
+    monkeypatch.setattr(scan, "write_mlb_daily_game_evidence_files", fake_collector)
+    monkeypatch.setattr(scan, "write_sports_mlb_daily_residual_risk_files", fake_scout)
+    monkeypatch.setattr(scan, "PROJECT_ROOT", tmp_path)
+
+    result = scan.main(
+        [
+            "run-mlb-daily-operator-check",
+            "--date",
+            "2026-05-28",
+            "--output-root",
+            str(tmp_path / "raw"),
+            "--normalized-root",
+            str(tmp_path / "normalized"),
+            "--json-output",
+            str(tmp_path / "scout.json"),
+            "--markdown-output",
+            str(tmp_path / "scout.md"),
+            "--accept-mlb-daily-contingency-risk",
+            "--operator-accepted-as-arb",
+        ]
+    )
+
+    assert result == 0
+    assert calls == ["collector", "scout"]
+    stdout = capsys.readouterr().out
+    assert "run_mlb_daily_operator_check_status=OK" in stdout
+    assert "operator_arb_review_rows=1" in stdout
+    summary = json.loads(
+        (tmp_path / "reports" / "sports_mlb_daily_games_2026-05-28_operator_check_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["standard_paper_candidate_rows"] == 0
+    assert summary["global_paper_candidate_emitted"] is False
 
 
 def _write_evidence(tmp_path: Path, kalshi_games: list[dict], polymarket_games: list[dict]) -> tuple[Path, Path]:
@@ -459,6 +596,8 @@ def _kalshi_game(
                     "market_ticker": f"KXMLBGAME-{key}-{team}",
                     "yes_ask": 0.40 if index == 0 else 0.58,
                     "yes_ask_size_dollars": 100.0,
+                    "partial_book": False,
+                    "book_blockers": [],
                 }
                 for index, team in enumerate(outcome_names)
             ],
@@ -476,7 +615,8 @@ def _polymarket_game(
     quote_timestamp: str = "2026-05-28T04:55:00Z",
     market_type: str = "game_winner",
     outcomes: list[str] | None = None,
-    size_unit: str | None = "notional_usd",
+    size_unit: str | None = "shares",
+    include_depth: bool = True,
 ) -> dict:
     outcome_names = outcomes or [team_a, team_b]
     return {
@@ -506,7 +646,8 @@ def _polymarket_game(
                 {
                     "team": team,
                     "ask": "0.50" if index == 0 else "0.42",
-                    "ask_size": None if index == 0 and laa_ask_size is None else "100.0",
+                    "ask_size": None if index == 0 and laa_ask_size is None else str(laa_ask_size if index == 0 else 100.0),
+                    **({"asks_levels": 4, "bids_levels": 4} if include_depth else {}),
                     **({"ask_size_unit": size_unit} if size_unit is not None else {}),
                 }
                 for index, team in enumerate(outcome_names)

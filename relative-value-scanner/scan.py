@@ -2308,6 +2308,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Explicitly accept MLB daily-game residual postponement/suspension/cancellation tail risk for this diagnostic run only.",
     )
     mlb_daily_residual_parser.add_argument(
+        "--operator-accepted-as-arb",
+        action="store_true",
+        help="Allow scoped operator-approved arb review rows after the MLB daily contingency-risk flag and all diagnostic gates pass.",
+    )
+    mlb_daily_residual_parser.add_argument(
         "--include-live-games",
         action="store_true",
         help="Allow live/in-progress games to reach residual-risk review if all other diagnostic gates pass. Defaults off.",
@@ -2361,6 +2366,70 @@ def main(argv: list[str] | None = None) -> int:
     )
     mlb_daily_fetch_parser.add_argument("--max-games", type=int, default=20)
     mlb_daily_fetch_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+
+    mlb_daily_operator_check_parser = subparsers.add_parser(
+        "run-mlb-daily-operator-check",
+        help=(
+            "Run the public no-auth MLB daily evidence collector and then the saved-evidence-only "
+            "operator/residual scout. No execution or candidate-pair logic is invoked."
+        ),
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--date",
+        default=None,
+        help="Slate date in YYYY-MM-DD. Defaults to current local date if omitted.",
+    )
+    mlb_daily_operator_check_parser.add_argument("--max-games", type=int, default=20)
+    mlb_daily_operator_check_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    mlb_daily_operator_check_parser.add_argument(
+        "--accept-mlb-daily-contingency-risk",
+        action="store_true",
+        help="Explicitly accept MLB daily-game residual contingency risk for this diagnostic run only.",
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--operator-accepted-as-arb",
+        action="store_true",
+        help="Allow scoped OPERATOR_ARB_PAPER_REVIEW rows if all diagnostic gates pass.",
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--include-live-games",
+        action="store_true",
+        help="Allow live/in-progress games to reach operator review if all other diagnostic gates pass.",
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--max-quote-age-seconds",
+        type=float,
+        default=MLB_DAILY_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--min-available-notional",
+        type=float,
+        default=MLB_DAILY_RESIDUAL_RISK_DEFAULT_MIN_AVAILABLE_NOTIONAL,
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "live_readonly" / "mlb_daily",
+        help="Raw collector output root. The date subdirectory is appended.",
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--normalized-root",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_evidence" / "sports" / "mlb_daily_games",
+        help="Normalized evidence root. The date/normalized subdirectory is appended.",
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Scout JSON output path. Defaults to reports/sports_mlb_daily_games_<date>_operator_arb_scout.json.",
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=None,
+        help="Scout Markdown output path. Defaults to reports/sports_mlb_daily_games_<date>_operator_arb_scout.md.",
+    )
 
     mlb_world_series_fetch_parser = subparsers.add_parser(
         "fetch-mlb-world-series-evidence",
@@ -4386,6 +4455,7 @@ def main(argv: list[str] | None = None) -> int:
             polymarket_evidence=args.polymarket_evidence,
             date=args.date,
             accept_mlb_daily_contingency_risk=args.accept_mlb_daily_contingency_risk,
+            operator_accepted_as_arb=args.operator_accepted_as_arb,
             include_live_games=args.include_live_games,
             max_quote_age_seconds=args.max_quote_age_seconds,
             min_available_notional=args.min_available_notional,
@@ -4398,14 +4468,89 @@ def main(argv: list[str] | None = None) -> int:
             "sports_mlb_daily_residual_risk_scout_status=OK "
             f"diagnostic_only=true shadow_paper_only=true "
             f"human_accepted_residual_risk={str(bool(report.get('human_accepted_residual_risk'))).lower()} "
+            f"operator_accepted_as_arb={str(bool(report.get('operator_accepted_as_arb'))).lower()} "
             f"matched_games={report.get('matched_games', 0)} "
             f"rows={summary.get('rows', 0)} "
+            f"operator_arb_review_rows={summary.get('operator_arb_review_rows', 0)} "
             f"residual_review_rows={summary.get('residual_review_rows', 0)} "
             f"manual_review_rows={summary.get('manual_review_rows', 0)} "
             f"watch_rows={summary.get('watch_rows', 0)} "
             f"exact_ready_rows=0 paper_candidate_rows=0 "
             f"top_blocker={top_blocker} "
             f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "run-mlb-daily-operator-check":
+        date_label = args.date or datetime.now().date().isoformat()
+        output_dir = args.output_root / date_label
+        normalized_output_dir = args.normalized_root / date_label / "normalized"
+        scout_json = args.json_output or PROJECT_ROOT / "reports" / f"sports_mlb_daily_games_{date_label}_operator_arb_scout.json"
+        scout_markdown = (
+            args.markdown_output
+            or PROJECT_ROOT / "reports" / f"sports_mlb_daily_games_{date_label}_operator_arb_scout.md"
+        )
+        summary_json = PROJECT_ROOT / "reports" / f"sports_mlb_daily_games_{date_label}_operator_check_summary.json"
+        summary_markdown = PROJECT_ROOT / "reports" / f"sports_mlb_daily_games_{date_label}_operator_check_summary.md"
+        collector_report = write_mlb_daily_game_evidence_files(
+            target_date=date_label,
+            output_dir=output_dir,
+            normalized_output_dir=normalized_output_dir,
+            max_games=args.max_games,
+            timeout_seconds=args.timeout_seconds,
+        )
+        kalshi_evidence = normalized_output_dir / f"sports_kalshi_mlb_daily_games_{date_label}_normalized_evidence.json"
+        polymarket_evidence = normalized_output_dir / f"sports_polymarket_mlb_daily_games_{date_label}_normalized_evidence.json"
+        missing_outputs = [str(path) for path in (kalshi_evidence, polymarket_evidence) if not path.exists()]
+        if missing_outputs:
+            print(
+                "run_mlb_daily_operator_check_status=FAILED "
+                "diagnostic_only=true execution_enabled=false "
+                f"date={date_label} missing_outputs={','.join(missing_outputs)}"
+            )
+            return 1
+        scout_report = write_sports_mlb_daily_residual_risk_files(
+            kalshi_evidence=kalshi_evidence,
+            polymarket_evidence=polymarket_evidence,
+            date=date_label,
+            accept_mlb_daily_contingency_risk=args.accept_mlb_daily_contingency_risk,
+            operator_accepted_as_arb=args.operator_accepted_as_arb,
+            include_live_games=args.include_live_games,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            json_output=scout_json,
+            markdown_output=scout_markdown,
+        )
+        runner_summary = _mlb_daily_operator_check_summary(
+            date_label=date_label,
+            collector_report=collector_report,
+            scout_report=scout_report,
+            kalshi_evidence=kalshi_evidence,
+            polymarket_evidence=polymarket_evidence,
+            scout_json=scout_json,
+            scout_markdown=scout_markdown,
+            summary_json=summary_json,
+            summary_markdown=summary_markdown,
+        )
+        summary_json.parent.mkdir(parents=True, exist_ok=True)
+        summary_markdown.parent.mkdir(parents=True, exist_ok=True)
+        summary_json.write_text(json.dumps(runner_summary, indent=2, sort_keys=True), encoding="utf-8")
+        summary_markdown.write_text(_render_mlb_daily_operator_check_summary(runner_summary), encoding="utf-8")
+        counts = scout_report.get("summary_counts") or {}
+        top_blocker = (counts.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "run_mlb_daily_operator_check_status=OK "
+            "diagnostic_only=true public_no_auth_only=true execution_enabled=false "
+            f"date={date_label} "
+            f"matched_games={scout_report.get('matched_games', 0)} "
+            f"scout_rows={counts.get('rows', 0)} "
+            f"operator_arb_review_rows={counts.get('operator_arb_review_rows', 0)} "
+            f"manual_review_rows={counts.get('manual_review_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"exact_ready_rows=0 standard_paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} "
+            f"scout_json={scout_json} scout_markdown={scout_markdown} "
+            f"summary_json={summary_json} summary_markdown={summary_markdown}"
         )
         return 0
     if args.command == "fetch-mlb-daily-game-evidence":
@@ -14741,6 +14886,128 @@ def _format_count_map(counts: dict[str, int], limit: int = 3) -> str:
         return "none"
     items = list(counts.items())[:limit]
     return ",".join(f"{_safe_cli_text(str(key))}:{value}" for key, value in items)
+
+
+def _mlb_daily_operator_check_summary(
+    *,
+    date_label: str,
+    collector_report: dict[str, Any],
+    scout_report: dict[str, Any],
+    kalshi_evidence: Path,
+    polymarket_evidence: Path,
+    scout_json: Path,
+    scout_markdown: Path,
+    summary_json: Path,
+    summary_markdown: Path,
+) -> dict[str, Any]:
+    collector_counts = collector_report.get("summary_counts") or {}
+    scout_counts = scout_report.get("summary_counts") or {}
+    return {
+        "schema_kind": "mlb_daily_operator_check_summary_v1",
+        "diagnostic_only": True,
+        "public_no_auth_only": True,
+        "execution_enabled": False,
+        "date": date_label,
+        "collector_status": "OK",
+        "games_found": {
+            "kalshi": collector_counts.get("kalshi_games", 0),
+            "polymarket": collector_counts.get("polymarket_games", 0),
+        },
+        "matched_games": scout_report.get("matched_games", collector_counts.get("matched_games", 0)),
+        "scout_rows": scout_counts.get("rows", 0),
+        "operator_arb_review_rows": scout_counts.get("operator_arb_review_rows", 0),
+        "manual_review_rows": scout_counts.get("manual_review_rows", 0),
+        "watch_rows": scout_counts.get("watch_rows", 0),
+        "ignore_blocked_rows": scout_counts.get("ignore_blocked_rows", 0),
+        "exact_ready_rows": 0,
+        "standard_paper_candidate_rows": 0,
+        "global_paper_candidate_emitted": False,
+        "top_blockers": scout_counts.get("top_blockers") or [],
+        "report_paths": {
+            "kalshi_evidence": str(kalshi_evidence),
+            "polymarket_evidence": str(polymarket_evidence),
+            "scout_json": str(scout_json),
+            "scout_markdown": str(scout_markdown),
+            "collector_summary_json": (collector_report.get("outputs") or {}).get("summary_json"),
+            "collector_summary_markdown": (collector_report.get("outputs") or {}).get("summary_markdown"),
+            "runner_summary_json": str(summary_json),
+            "runner_summary_markdown": str(summary_markdown),
+        },
+        "safety": {
+            "collector_public_no_auth_only": True,
+            "saved_evidence_scout_only": True,
+            "execution_enabled": False,
+            "candidate_pair_creation": False,
+            "evaluator_invoked": False,
+            "exact_ready": False,
+            "standard_paper_candidate_rows": 0,
+            "global_paper_candidate_emitted": False,
+        },
+    }
+
+
+def _render_mlb_daily_operator_check_summary(summary: dict[str, Any]) -> str:
+    paths = summary.get("report_paths") or {}
+    lines = [
+        "# MLB Daily Operator Check Summary",
+        "",
+        "Public-read-only collection followed by saved-evidence-only operator/residual scouting. No execution, evaluator, or candidate-pair path is invoked.",
+        "",
+        "## Summary",
+        "",
+        f"- date: `{_safe_markdown_text(summary.get('date'))}`",
+        f"- collector_status: `{_safe_markdown_text(summary.get('collector_status'))}`",
+        f"- kalshi_games_found: `{(summary.get('games_found') or {}).get('kalshi', 0)}`",
+        f"- polymarket_games_found: `{(summary.get('games_found') or {}).get('polymarket', 0)}`",
+        f"- matched_games: `{summary.get('matched_games', 0)}`",
+        f"- scout_rows: `{summary.get('scout_rows', 0)}`",
+        f"- operator_arb_review_rows: `{summary.get('operator_arb_review_rows', 0)}`",
+        f"- manual_review_rows: `{summary.get('manual_review_rows', 0)}`",
+        f"- watch_rows: `{summary.get('watch_rows', 0)}`",
+        f"- ignore_blocked_rows: `{summary.get('ignore_blocked_rows', 0)}`",
+        f"- exact_ready_rows: `0`",
+        f"- standard_paper_candidate_rows: `0`",
+        "",
+        "## Report Paths",
+        "",
+        f"- kalshi_evidence: `{_safe_markdown_text(paths.get('kalshi_evidence'))}`",
+        f"- polymarket_evidence: `{_safe_markdown_text(paths.get('polymarket_evidence'))}`",
+        f"- scout_json: `{_safe_markdown_text(paths.get('scout_json'))}`",
+        f"- scout_markdown: `{_safe_markdown_text(paths.get('scout_markdown'))}`",
+        f"- collector_summary_json: `{_safe_markdown_text(paths.get('collector_summary_json'))}`",
+        f"- collector_summary_markdown: `{_safe_markdown_text(paths.get('collector_summary_markdown'))}`",
+        "",
+        "## Top Blockers",
+        "",
+        "| Blocker | Count |",
+        "|---|---:|",
+    ]
+    blockers = summary.get("top_blockers") or []
+    if blockers:
+        for item in blockers:
+            lines.append(f"| {_safe_markdown_text(item.get('blocker'))} | {item.get('count', 0)} |")
+    else:
+        lines.append("| none | 0 |")
+    lines.extend(
+        [
+            "",
+            "## Safety",
+            "",
+            "- diagnostic_only: `true`",
+            "- public_no_auth_only: `true`",
+            "- execution_enabled: `false`",
+            "- candidate_pair_creation: `false`",
+            "- evaluator_invoked: `false`",
+            "- exact_ready: `false`",
+            "- standard_paper_candidate_rows: `0`",
+            "- global_paper_candidate_emitted: `false`",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _safe_markdown_text(value: Any) -> str:
+    return "" if value is None else str(value).replace("|", "\\|").replace("\n", " ")
 
 
 if __name__ == "__main__":
