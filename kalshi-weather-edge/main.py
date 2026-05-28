@@ -26,7 +26,7 @@ from live.paper_market_making_basket import PaperMarketMakingBasket, PaperMarket
 from live.weather_recorder import WeatherForecastRecorder, WeatherObservationRecorder
 from live.paper_trader import PaperTrader
 from live.scanner import LiveScanner
-from maintenance import ProjectMaintenance
+from maintenance import ProjectMaintenance, render_weather_runbook_commands
 from research.liquidity_analysis import LiquidityAnalyzer
 from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingConfig
 from research.market_making_snapshot import MarketMakingSnapshotBuilder, MarketMakingSnapshotConfig
@@ -34,6 +34,7 @@ from research.paper_basket_diagnostics import PaperBasketDiagnosticsReporter
 from research.paper_market_making_drilldown import PaperMarketMakingDrilldownConfig, PaperMarketMakingDrilldownReporter
 from research.paper_market_making_evidence import PaperMarketMakingEvidenceConfig, PaperMarketMakingEvidenceReporter
 from research.paper_market_making_target_review import PaperMarketMakingTargetReviewConfig, PaperMarketMakingTargetReviewer
+from research.recorded_sweep_attribution import RecordedSweepAttributionReporter
 from research.daily_weather_evidence import (
     DailyWeatherEvidenceConfig,
     DailyWeatherEvidenceDrilldownConfig,
@@ -65,8 +66,7 @@ def configure_logging() -> None:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    configure_logging()
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Kalshi research system: weather fair-value edge plus broad market-making data collection")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -102,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     exact.add_argument("--start")
     exact.add_argument("--end")
     exact.add_argument("--market-ticker")
+    exact.add_argument("--limit", type=int, default=None, help="Process at most this many eligible parsed weather contracts.")
     climate = sub.add_parser("fetch-nws-climate-report", help="Fetch and parse one NWS Daily Climate Report")
     climate.add_argument("--station", required=True)
     climate.add_argument("--date", required=True)
@@ -137,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
     sweep.add_argument("--end")
     sweep.add_argument("--last-days", type=int)
     sweep.add_argument("--label-quality", choices=["primary", "exploratory", "all"], default="primary")
+    attribution = sub.add_parser("recorded-sweep-attribution", help="Explain why the latest recorded sweep did not produce a trusted edge")
+    attribution.add_argument("--start")
+    attribution.add_argument("--end")
+    attribution.add_argument("--last-days", type=int, default=7)
+    attribution.add_argument("--label-quality", choices=["primary", "exploratory", "all"], default="primary")
+    attribution.add_argument("--top-n", type=int, default=10)
     report = sub.add_parser("edge-report", help="Generate markdown edge report from recorded data")
     report.add_argument("--start")
     report.add_argument("--end")
@@ -220,6 +227,21 @@ def main(argv: list[str] | None = None) -> int:
     health.add_argument("--last-hours", type=int, default=24)
     weather_health = sub.add_parser("weather-recorder-health", help="Summarize live weather/forecast recorder health from DB")
     weather_health.add_argument("--last-hours", type=int, default=24)
+    ops_status = sub.add_parser("weather-ops-status", help="Operator-facing consolidated health/readiness snapshot with exact next commands")
+    ops_status.add_argument("--last-days", type=int, default=7)
+    ops_status.add_argument("--from-runbook", action="store_true", help="Print the categorized weather operator command bundle instead of JSON status.")
+    sub.add_parser("weather-data-audit", help="Read-only DB discovery and weather data lineage audit")
+    settlement_coverage = sub.add_parser("weather-settlement-coverage", help="Read-only settlement label and replay blocker coverage report")
+    settlement_coverage.add_argument("--min-settlement-confidence", type=float, default=0.85)
+    label_expansion = sub.add_parser("weather-label-expansion-plan", help="Read-only plan for expanding exact high-confidence weather labels")
+    label_expansion.add_argument("--min-settlement-confidence", type=float, default=0.85)
+    label_expansion.add_argument("--top-n", type=int, default=10)
+    replay_coverage = sub.add_parser("weather-replay-build-coverage", help="Read-only dry-run explaining build-recorded-replay filters")
+    replay_coverage.add_argument("--start")
+    replay_coverage.add_argument("--end")
+    replay_coverage.add_argument("--last-days", type=int)
+    replay_coverage.add_argument("--market-ticker")
+    replay_coverage.add_argument("--min-settlement-confidence", type=float, default=0.85)
     readiness = sub.add_parser("trading-readiness", help="Score whether research is ready for paper/live trading")
     readiness.add_argument("--last-days", type=int, default=7)
     liquidity = sub.add_parser("analyze-liquidity", help="Analyze spread persistence, passive fill evidence, and adverse selection")
@@ -419,6 +441,12 @@ def main(argv: list[str] | None = None) -> int:
     paper_mm_drilldown.add_argument("--side", choices=["BUY_YES", "BUY_NO"], required=True)
     paper_mm_drilldown.add_argument("--stale-open-seconds", type=int, default=600)
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    configure_logging()
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "init-db":
         Storage().init_db()
@@ -459,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         print(result.to_dict())
         return 0
     if args.command == "build-exact-settlements":
-        result = WeatherSettlementLoader().build_settlements(start=_date_arg(args.start), end=_date_arg(args.end), market_ticker=args.market_ticker)
+        result = WeatherSettlementLoader().build_settlements(start=_date_arg(args.start), end=_date_arg(args.end), market_ticker=args.market_ticker, limit=args.limit)
         print(result.to_dict())
         return 0
     if args.command == "fetch-nws-climate-report":
@@ -511,6 +539,19 @@ def main(argv: list[str] | None = None) -> int:
             label_quality=args.label_quality,
         )
         print_sweep_result(result)
+        return 0
+    if args.command == "recorded-sweep-attribution":
+        print(
+            RecordedSweepAttributionReporter()
+            .report(
+                start=_date_arg(args.start),
+                end=_date_arg(args.end),
+                last_days=args.last_days,
+                label_quality=args.label_quality,
+                top_n=args.top_n,
+            )
+            .to_text()
+        )
         return 0
     if args.command == "edge-report":
         result = EdgeReportGenerator().generate(
@@ -751,6 +792,35 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "weather-recorder-health":
         print(ProjectMaintenance().weather_recorder_health(last_hours=args.last_hours).to_text())
+        return 0
+    if args.command == "weather-ops-status":
+        result = ProjectMaintenance().weather_ops_status(last_days=args.last_days)
+        if args.from_runbook:
+            print(render_weather_runbook_commands(result.payload["runbook_commands"]))
+        else:
+            print(result.to_text())
+        return 0
+    if args.command == "weather-data-audit":
+        print(ProjectMaintenance().weather_data_audit().to_text())
+        return 0
+    if args.command == "weather-settlement-coverage":
+        print(ProjectMaintenance().weather_settlement_coverage(min_confidence=args.min_settlement_confidence).to_text())
+        return 0
+    if args.command == "weather-label-expansion-plan":
+        print(ProjectMaintenance().weather_label_expansion_plan(min_confidence=args.min_settlement_confidence, top_n=args.top_n).to_text())
+        return 0
+    if args.command == "weather-replay-build-coverage":
+        print(
+            ProjectMaintenance()
+            .weather_replay_build_coverage(
+                start=_date_arg(args.start),
+                end=_date_arg(args.end),
+                last_days=args.last_days,
+                market_ticker=args.market_ticker,
+                min_confidence=args.min_settlement_confidence,
+            )
+            .to_text()
+        )
         return 0
     if args.command == "trading-readiness":
         print(TradingReadiness().evaluate(last_days=args.last_days).to_text())

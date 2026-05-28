@@ -342,20 +342,20 @@ class WeatherEdgeMiner:
 def _contract_from_row(row) -> WeatherContract | None:
     try:
         return WeatherContract(
-            event_ticker=str(row.get("event_ticker") or ""),
-            market_ticker=str(row.get("market_ticker") or ""),
+            event_ticker=_str_or_none(row.get("event_ticker")) or "",
+            market_ticker=_str_or_none(row.get("market_ticker")) or "",
             city=_str_or_none(row.get("city")),
             station_code=_str_or_none(row.get("station_code")),
             local_date=_date_or_none(row.get("local_date")),
-            variable_type=str(row.get("variable_type") or "unknown"),
-            contract_type=str(row.get("contract_type") or "unknown"),
+            variable_type=_str_or_none(row.get("variable_type")) or "unknown",
+            contract_type=_str_or_none(row.get("contract_type")) or "unknown",
             threshold=_num(row.get("threshold")),
-            comparator=str(row.get("comparator") or "unknown"),
+            comparator=_str_or_none(row.get("comparator")) or "unknown",
             range_low=_num(row.get("range_low")),
             range_high=_num(row.get("range_high")),
             parse_confidence=_num(row.get("data_quality_score")) or 0.75,
             station_confidence=_num(row.get("settlement_confidence")) or _num(row.get("data_quality_score")) or 0.75,
-            parser_version=str(row.get("parser_version") or ""),
+            parser_version=_str_or_none(row.get("parser_version")) or "",
         )
     except Exception:
         return None

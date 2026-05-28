@@ -18,6 +18,17 @@ from research.edge_types import confidence_level, edge_type_for_strategy
 RecordedMode = Literal["default", "taker", "signal_only", "conservative_passive", "full_orderbook_passive_approx"]
 LabelQuality = Literal["primary", "exploratory", "all"]
 STRATEGY_VERSION = "v2_range_bucket_semantics"
+TRADABLE_REPLAY_WHERE = """
+(
+    minutes_to_close > 0
+    OR (
+        minutes_to_close IS NULL
+        AND local_date IS NOT NULL
+        AND date(ts) IS NOT NULL
+        AND date(ts) <= local_date
+    )
+)
+"""
 
 
 @dataclass(frozen=True)
@@ -203,6 +214,10 @@ class RecordedOrderbookBacktester:
         if threshold >= 0:
             clauses.append("settlement_confidence >= :settlement_confidence")
             params["settlement_confidence"] = threshold
+        # Many weather contracts lack a parsed close_time, which leaves
+        # minutes_to_close NULL. In that case, conservatively treat snapshots
+        # after the contract's local weather date as non-tradable replay noise.
+        clauses.append(TRADABLE_REPLAY_WHERE)
         frame = self.storage.fetch_sql(
             f"SELECT * FROM recorded_orderbook_replay_snapshots WHERE {' AND '.join(clauses)} ORDER BY market_ticker, ts",
             params,
@@ -559,7 +574,10 @@ def _summarize(strategy: str, mode: str, params: dict[str, Any], snapshots: pd.D
         peak = max(peak, equity)
         max_dd = min(max_dd, equity - peak)
     source_breakdown = snapshots.get("settlement_source_type", pd.Series(dtype=object)).fillna("missing").value_counts().to_dict() if not snapshots.empty else {}
-    limitations = ["Replay uses locally recorded full orderbook snapshots."]
+    limitations = [
+        "Replay uses locally recorded full orderbook snapshots.",
+        "Rows after contract local_date are excluded when parsed close_time is missing.",
+    ]
     if mode in {"conservative_passive", "full_orderbook_passive_approx"}:
         limitations.append("Passive results are approximate: queue position and exact trade prints are unknown.")
     if not source_breakdown.get("nws_daily_climate_report", 0):

@@ -13,12 +13,17 @@ from data.storage import Storage
 class SignalValidationResult:
     summary_by_strategy: list[dict[str, Any]]
     rows: list[dict[str, Any]]
+    empty_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"summary_by_strategy": self.summary_by_strategy, "rows_preview": self.rows[:50]}
+        return {"summary_by_strategy": self.summary_by_strategy, "rows_preview": self.rows[:50], "empty_reason": self.empty_reason}
 
     def to_text(self) -> str:
         lines = ["Signal future-price validation:"]
+        if not self.summary_by_strategy:
+            reason = self.empty_reason or "no_validation_rows"
+            lines.append(f"- No validation rows: {reason}")
+            return "\n".join(lines)
         for row in self.summary_by_strategy:
             lines.append(
                 f"- {row['strategy']} signals={row['signal_count']} beat_5m={row['beat_5m_pct']:.2%} "
@@ -36,8 +41,14 @@ class SignalValidator:
         trades = self._load_trades(start, end)
         replay = self._load_replay(start, end)
         rows: list[dict[str, Any]] = []
-        if trades.empty or replay.empty:
-            return SignalValidationResult([], [])
+        if trades.empty:
+            return SignalValidationResult(
+                [],
+                [],
+                "no_backtest_trades_in_window; sweep-recorded stores sweep summaries, not per-trade validation rows",
+            )
+        if replay.empty:
+            return SignalValidationResult([], [], "no_recorded_replay_rows_in_window")
         replay_by_market = {ticker: group.sort_values("ts").reset_index(drop=True) for ticker, group in replay.groupby("market_ticker")}
         for _, trade in trades.iterrows():
             group = replay_by_market.get(str(trade.get("market_ticker")))
@@ -45,7 +56,11 @@ class SignalValidator:
                 continue
             validation = future_price_validation_for_signal(trade.to_dict(), group)
             rows.append({**trade.to_dict(), **validation})
+        if not rows:
+            return SignalValidationResult([], [], "backtest_trades_have_no_matching_recorded_replay_rows")
         summary = _summarize(rows)
+        if not summary:
+            return SignalValidationResult([], rows, "future_mid_validation_unavailable_for_matching_rows")
         return SignalValidationResult(summary, rows)
 
     def _load_trades(self, start: date | None, end: date | None) -> pd.DataFrame:

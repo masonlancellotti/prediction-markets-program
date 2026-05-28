@@ -603,9 +603,22 @@ def test_market_likely_expired_uses_past_close_time_even_when_status_open():
 def test_ticker_event_date_hint_parses_only_supported_obvious_sports_patterns():
     assert _ticker_event_date_hint("KXNBATEAMTOTAL-26MAY19CLENYK-CLE91") == date(2026, 5, 19)
     assert _ticker_event_date_hint("KXMLBEXTRAS-26MAY211310CLEDET-EXTRAS") == date(2026, 5, 21)
+    assert _ticker_event_date_hint("KXNCAABBGAME-26MAY241200ECPUTS-ECP") == date(2026, 5, 24)
+    assert _ticker_event_date_hint("KXNCAAFBGAME-26SEP05NDOSU-NDA") == date(2026, 9, 5)
     assert _ticker_event_date_hint("KXPRIMARYTURNOUT-KY4R26-130000") is None
     assert _ticker_event_date_hint("KXHIGHAUS-26MAY21-B81.5") is None
     assert _ticker_event_date_hint("KXNBA-NOTADATE-BOS") is None
+
+
+def test_market_likely_expired_uses_ncaa_basketball_ticker_event_date_when_status_and_close_time_missing():
+    books = pd.DataFrame(
+        {
+            "market_ticker": ["KXNCAABBGAME-26MAY241200ECPUTS-ECP"],
+            "market_status": [None],
+            "market_close_time": [None],
+        }
+    )
+    assert _market_likely_expired(books) is True
 
 
 def test_market_likely_expired_uses_supported_ticker_event_date_before_formal_close():

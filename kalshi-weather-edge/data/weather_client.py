@@ -80,6 +80,8 @@ class WeatherClient:
         self.stats: dict[str, object] = {
             "weather_api_errors_total": 0,
             "weather_api_timeouts_total": 0,
+            "weather_api_rate_limited_total": 0,
+            "weather_api_skipped_due_to_rate_limit_total": 0,
             "station_error_counts": {},
             "last_successful_weather_fetch_by_station": {},
         }
@@ -314,11 +316,23 @@ class WeatherClient:
         if cached and now - cached[0] <= settings.weather_cache_ttl_seconds:
             return cached[1]  # type: ignore[return-value]
         last_error: requests.RequestException | None = None
-        for attempt in range(max(1, settings.nws_max_retries)):
+        attempts = max(1, settings.nws_max_retries)
+        for attempt in range(attempts):
             try:
                 response = self.session.get(url, params=params, timeout=settings.nws_timeout_seconds)
+                if response.status_code == 429:
+                    self.stats["weather_api_rate_limited_total"] = int(self.stats["weather_api_rate_limited_total"]) + 1
+                    if station:
+                        counts = self.stats["station_error_counts"]  # type: ignore[assignment]
+                        counts[station] = counts.get(station, 0) + 1
+                    if attempt >= attempts - 1:
+                        self.stats["weather_api_skipped_due_to_rate_limit_total"] = int(self.stats["weather_api_skipped_due_to_rate_limit_total"]) + 1
+                        return response
+                    sleep_seconds = min(2.0 * (2**attempt), float(settings.nws_backoff_max_seconds)) + random.uniform(0.0, 1.0)
+                    time.sleep(sleep_seconds)
+                    continue
                 self._cache[cache_key] = (time.time(), response)
-                if station:
+                if station and response.status_code < 400:
                     self.stats["last_successful_weather_fetch_by_station"][station] = datetime.now(timezone.utc).isoformat()  # type: ignore[index]
                 return response
             except requests.Timeout as exc:

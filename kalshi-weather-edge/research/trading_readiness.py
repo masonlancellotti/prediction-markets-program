@@ -17,6 +17,12 @@ from research.liquidity_analysis import LiquidityAnalyzer
 from research.signal_validation import SignalValidator
 
 
+def _operator_command(command: str) -> str:
+    if command.startswith("python main.py"):
+        return r".\python.cmd" + command.removeprefix("python")
+    return command
+
+
 @dataclass(frozen=True)
 class TradingReadinessResult:
     status: str
@@ -37,7 +43,7 @@ class TradingReadinessResult:
     def to_text(self) -> str:
         lines = [f"Trading readiness: {self.status}", self.message, "Reasons:"]
         lines.extend(f"- {reason}" for reason in self.reasons)
-        lines.append(f"Next command: {self.next_command}")
+        lines.append(f"Next command: {_operator_command(self.next_command)}")
         return "\n".join(lines)
 
 
@@ -130,7 +136,7 @@ class TradingReadiness:
             next_command = "python main.py edge-report --last-days 7"
         if _paper_ready(best, validation, liquidity):
             status = "PAPER_READY_SPECIFIC_STRATEGY"
-            next_command = "python main.py paper-trade --strategy " + str(best.get("strategy")) + " --weather-only"
+            next_command = f"python main.py paper-trade --strategy {best.get('strategy')} --weather-only"
         if _tiny_live_ready(best, validation, liquidity):
             status = "TINY_LIVE_READY_SPECIFIC_STRATEGY"
             next_command = "Do not run live trading from this repo yet; manual approval and paper results required."
@@ -217,11 +223,7 @@ def _load_market_making_summary(path: Path | None = None) -> dict[str, Any]:
 
 
 def _paper_market_making_basket_command() -> str:
-    return (
-        "python main.py paper-market-making-basket --last-days 1 "
-        "--search-max-markets 100 --max-targets 5 --duration-minutes 60 "
-        "--quantity 1 --max-position 5 --max-open-quotes 1"
-    )
+    return "python main.py paper-market-making-basket --last-days 1 --search-max-markets 100 --max-targets 5 --duration-minutes 60 --quantity 1 --max-position 5 --max-open-quotes 1"
 
 
 def _message(status: str) -> str:

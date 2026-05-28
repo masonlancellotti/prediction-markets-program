@@ -18,17 +18,66 @@ Lean research/backtesting/live-monitoring MVP for Kalshi weather markets. The sy
 ## Setup
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-py -m pip install -r requirements.txt
-Copy-Item .env.example .env
-python main.py init-db
+.\scripts\setup-dev.ps1
+.\scripts\run.ps1 init-db
 ```
+
+`setup-dev.ps1` creates a repo-local `.venv`, upgrades pip inside that virtual
+environment, installs `requirements.txt`, and runs an environment doctor. It
+does not create, copy, or edit `.env`.
 
 `.env.example` is a template only. Keep real `.env` files local and uncommitted,
 and never paste API keys, private keys, account identifiers, tokens, or
 credentials into ChatGPT, Claude, Codex, or git history. Public-data mode does
 not require Kalshi credentials.
+
+## Operator Environment
+
+PowerShell resolves `python` from your active shell state and `PATH`. Running
+`python main.py ...` can fail with missing packages, such as
+`ModuleNotFoundError: No module named 'sqlalchemy'`, if that global interpreter
+is not the repo `.venv` used by prior runs. Treat that as an environment failure,
+not a trading-readiness or data-readiness result.
+
+This repo includes root shims:
+
+- `python.cmd` delegates to `.\.venv\Scripts\python.exe`
+- `pytest.cmd` delegates to `.\.venv\Scripts\python.exe -m pytest`
+
+In Command Prompt, running from the `kalshi-weather-edge` root can use the local
+shim with normal-looking commands:
+
+```cmd
+python main.py trading-readiness --last-days 7
+python main.py weather-label-expansion-plan
+pytest
+```
+
+PowerShell may still resolve bare `python` to the WindowsApps/global Python
+instead of the local `python.cmd`. `scripts\env_doctor.py` reports the actual
+resolution. If PowerShell does not use the shim, use the explicit shim or the
+script wrapper:
+
+```powershell
+.\scripts\setup-dev.ps1
+.\python.cmd main.py trading-readiness --last-days 7
+.\scripts\run.ps1 trading-readiness --last-days 7
+.\scripts\test.ps1
+```
+
+To inspect the active interpreter:
+
+```powershell
+where python
+python -c "import sys; print(sys.executable)"
+.\.venv\Scripts\python.exe -c "import sqlalchemy; print('ok')"
+python scripts\env_doctor.py
+.\python.cmd scripts\env_doctor.py
+.\.venv\Scripts\python.exe scripts\env_doctor.py
+```
+
+`scripts\env_doctor.py` is intentionally lightweight and does not import
+`main.py` or the application stack before checking dependencies.
 
 ## Configuration
 

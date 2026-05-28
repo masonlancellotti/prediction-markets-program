@@ -729,12 +729,7 @@ def _next_paper_command(rows: list[dict[str, Any]]) -> str | None:
     if not rows:
         return None
     row = rows[0]
-    return (
-        "python main.py paper-market-making "
-        f"--market-ticker {row['market_ticker']} --side {row['best_side']} "
-        "--interval-seconds 30 --duration-minutes 60 --quantity 1 "
-        "--max-position 5 --max-open-quotes 1"
-    )
+    return f"python main.py paper-market-making --market-ticker {row['market_ticker']} --side {row['best_side']} --interval-seconds 30 --duration-minutes 60 --quantity 1 --max-position 5 --max-open-quotes 1"
 
 
 def _fmt(value: Any) -> str:

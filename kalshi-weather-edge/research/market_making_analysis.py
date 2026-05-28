@@ -14,7 +14,7 @@ from data.storage import Storage
 
 QuoteSide = Literal["BUY_YES", "BUY_NO"]
 
-_EVENT_DATE_SERIES_PREFIXES = ("KXNBA", "KXMLB", "KXNFL", "KXNHL")
+_EVENT_DATE_SERIES_PREFIXES = ("KXNBA", "KXMLB", "KXNFL", "KXNHL", "KXNCAABB", "KXNCAAFB")
 _MONTHS = {
     "JAN": 1,
     "FEB": 2,

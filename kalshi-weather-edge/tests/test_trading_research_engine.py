@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 import time as _time_mod
 from dataclasses import replace
 from datetime import date, datetime, time, timezone
@@ -8,15 +10,18 @@ import pandas as pd
 
 from backtest.execution import NormalizedOrderBook
 from backtest.passive_fill_model import PassiveFillConfig, PassiveFillType, PassiveQuote, adverse_selection_cents, simulate_passive_fill
+from backtest.recorded_backtester import RecordedOrderbookBacktester
 from backtest.recorded_replay import RecordedOrderbookReplayBuilder, missing_weather_features_asof
 from config import settings
 from data.storage import Storage
+from data.weather_settlement_loader import SETTLEMENT_VERSION
 from live.paper_trader import PaperTrader
 from live.paper_market_maker import PaperMarketMaker, PaperMarketMakerConfig
 from live.paper_market_making_basket import PaperMarketMakingBasket, PaperMarketMakingBasketConfig
 from models.weather_fair_value import WeatherFairValueModel
-from parsing.weather_contract import WeatherContract
-from research.signal_validation import future_price_validation_for_signal
+from parsing.weather_contract import PARSER_VERSION, WeatherContract
+from research.recorded_sweep_attribution import RecordedSweepAttributionReporter
+from research.signal_validation import SignalValidator, future_price_validation_for_signal
 from research.liquidity_analysis import LiquidityAnalysisResult, _future_mid_after, _passive_verdict
 from research.market_making_analysis import MarketMakingAnalyzer, MarketMakingConfig, _market_likely_expired, _market_readiness, _prepare_trades, _trade_fill_for_quote
 from research.market_making_replay import MarketMakingReplayBacktester, MarketMakingReplayConfig
@@ -28,6 +33,50 @@ from risk.risk_engine import RiskDecision, RiskEngine
 
 def _storage(tmp_path) -> Storage:
     return Storage(replace(settings, database_url=f"sqlite:///{tmp_path / 'test.db'}"))
+
+
+def _make_audit_db(path, tables: dict[str, tuple[str, list[str]]]) -> None:
+    with sqlite3.connect(path) as conn:
+        for table, (timestamp_column, values) in tables.items():
+            conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY, {timestamp_column} TEXT)")
+            for value in values:
+                conn.execute(f"INSERT INTO {table} ({timestamp_column}) VALUES (?)", (value,))
+
+
+def _insert_sweep(storage: Storage, **overrides) -> None:
+    params = overrides.pop("params", {})
+    summary = overrides.pop("summary", {})
+    trades = overrides.pop("trades", [])
+    strategy = overrides.get("strategy", "already_hit")
+    mode = overrides.get("mode", "taker")
+    parameter_hash = overrides.get("parameter_hash", f"{strategy}-{mode}-{len(storage.fetch_table('recorded_strategy_sweeps', limit=1000))}")
+    row = {
+        "ts": overrides.pop("ts", datetime.now(timezone.utc)),
+        "strategy": strategy,
+        "mode": mode,
+        "params_json": json.dumps(params),
+        "label_quality": overrides.pop("label_quality", "primary"),
+        "markets": overrides.pop("markets", 1),
+        "snapshots": overrides.pop("snapshots", 100),
+        "signals": overrides.pop("signals", 0),
+        "fills": overrides.pop("fills", 0),
+        "gross_pnl": overrides.pop("gross_pnl", 0.0),
+        "fees": overrides.pop("fees", 0.0),
+        "net_pnl": overrides.pop("net_pnl", 0.0),
+        "roi": overrides.pop("roi", 0.0),
+        "win_rate": overrides.pop("win_rate", 0.0),
+        "max_drawdown": overrides.pop("max_drawdown", 0.0),
+        "robustness_verdict": overrides.pop("robustness_verdict", "rejected: no fills"),
+        "recommendation": overrides.pop("recommendation", "DO_NOT_TRADE_EDGE_NOT_FOUND"),
+        "parser_version": PARSER_VERSION,
+        "settlement_version": SETTLEMENT_VERSION,
+        "strategy_version": overrides.pop("strategy_version", "v2_range_bucket_semantics"),
+        "parameter_hash": parameter_hash,
+        "is_stale": 0,
+        "raw_json": json.dumps({"summary": {"strategy": strategy, "mode": mode, "params": params, **summary}, "trades": trades}, default=str),
+    }
+    row.update(overrides)
+    storage.insert_recorded_strategy_sweep(row)
 
 
 def test_no_midpoint_fill_orderbook_math_uses_ask():
@@ -101,6 +150,102 @@ def test_future_price_validation_handles_naive_replay_timestamps():
     )
     result = future_price_validation_for_signal({"ts": "2026-05-01 12:00:00", "action": "BUY_YES", "entry_price": 50}, replay)
     assert result["beat_5m"] is True
+
+
+def test_recorded_sweep_attribution_generates_no_edge_blocker_counts(tmp_path):
+    storage = _storage(tmp_path)
+    _insert_sweep(
+        storage,
+        strategy="late_day_high_fade",
+        mode="taker",
+        params={"min_local_hour": 14, "min_gap": 2},
+        signals=0,
+        fills=0,
+        parameter_hash="no-signal",
+    )
+    _insert_sweep(
+        storage,
+        strategy="wide_spread_passive",
+        mode="conservative_passive",
+        params={"min_spread": 10},
+        signals=4,
+        fills=0,
+        parameter_hash="spread-no-fill",
+    )
+    _insert_sweep(
+        storage,
+        strategy="already_hit",
+        mode="taker",
+        params={"max_yes_ask_after_hit": 95},
+        signals=10,
+        fills=10,
+        gross_pnl=5.0,
+        fees=8.0,
+        net_pnl=-3.0,
+        parameter_hash="gross-positive-net-negative",
+        summary={"average_edge_cents": 4.0},
+    )
+    _insert_sweep(
+        storage,
+        strategy="already_hit",
+        mode="taker",
+        params={"max_yes_ask_after_hit": 97},
+        signals=5,
+        fills=5,
+        gross_pnl=50.0,
+        fees=5.0,
+        net_pnl=45.0,
+        win_rate=0.8,
+        robustness_verdict="preliminary only: fewer than 30 fills",
+        parameter_hash="low-sample-positive",
+        summary={"average_edge_cents": 9.0},
+    )
+    _insert_sweep(
+        storage,
+        strategy="wide_spread_passive",
+        mode="conservative_passive",
+        params={"min_spread": 8},
+        signals=40,
+        fills=40,
+        gross_pnl=100.0,
+        fees=10.0,
+        net_pnl=90.0,
+        win_rate=0.6,
+        robustness_verdict="rejected: fails 1-cent worse fills",
+        parameter_hash="adverse-positive",
+        summary={"average_edge_cents": 8.0, "robustness": {"verdict": "rejected: fails 1-cent worse fills"}},
+        trades=[{"future_price_edge_cents": -4.0}, {"future_price_edge_cents": -2.0}],
+    )
+
+    payload = RecordedSweepAttributionReporter(storage).report(last_days=7, label_quality="primary").payload
+
+    assert payload["verdict"] == "NO_PAPER_EDGE_FOUND"
+    assert payload["strategy_variants_tested"] == 5
+    assert payload["variants_with_trades"] == 3
+    assert payload["variants_with_zero_trades"] == 2
+    assert payload["variants_blocked_by_no_signal"] == 1
+    assert payload["variants_blocked_by_spread_liquidity"] == 1
+    assert payload["variants_blocked_by_missing_future_mid_validation"] == 3
+    assert payload["variants_blocked_by_too_few_observations"] == 2
+    assert payload["variants_with_positive_gross_edge_but_negative_after_costs"] == 1
+    assert payload["variants_with_positive_apparent_edge_but_too_few_samples"] == 1
+    assert payload["variants_with_too_much_adverse_selection"] == 1
+    assert payload["validate_signals"]["empty_reason"].startswith("no_backtest_trades_in_window")
+    low_sample = payload["top_tables"]["best_net_edge_but_under_sample_threshold"][0]
+    assert low_sample["primary_blocker"] == "too_few_observations"
+    assert low_sample["net_pnl"] == 45.0
+    adverse = payload["top_tables"]["highest_adverse_selection"][0]
+    assert adverse["primary_blocker"] == "too_much_adverse_selection"
+    assert "too_much_adverse_selection" in adverse["blocker_flags"]
+
+
+def test_validate_signals_empty_output_explains_missing_rows(tmp_path):
+    storage = _storage(tmp_path)
+    result = SignalValidator(storage).validate(last_days=7)
+
+    assert result.summary_by_strategy == []
+    assert result.empty_reason.startswith("no_backtest_trades_in_window")
+    assert "No validation rows: no_backtest_trades_in_window" in result.to_text()
 
 
 def test_liquidity_future_mid_handles_mixed_timezone_timestamps():
@@ -207,6 +352,65 @@ def test_readiness_distinguishes_missing_sweeps_from_no_edge(tmp_path, monkeypat
     result = TradingReadiness(storage).evaluate(last_days=7)
     assert result.status == "NOT_READY_ANALYSIS_NOT_RUN"
     assert result.next_command == "python main.py sweep-recorded --last-days 7"
+
+
+def test_trading_readiness_text_uses_repo_local_python_shim(tmp_path, monkeypatch):
+    import research.trading_readiness as tr_mod
+    monkeypatch.setattr(tr_mod, "_load_market_making_summary", lambda path=None: {})
+    storage = _storage(tmp_path)
+    storage.upsert_recorded_orderbook_replay_snapshot(
+        {
+            "market_ticker": "M",
+            "event_ticker": "E",
+            "ts": datetime.now(timezone.utc),
+            "weather_feature_source": "recorded_live_asof",
+        }
+    )
+    result = TradingReadiness(storage).evaluate(last_days=7)
+    assert result.next_command.startswith("python main.py")
+    text = result.to_text()
+    assert r"Next command: .\python.cmd main.py sweep-recorded --last-days 7" in text
+
+
+def test_recorded_backtester_excludes_post_day_rows_when_close_time_missing(tmp_path):
+    storage = _storage(tmp_path)
+    storage.init_db()
+    base = {
+        "market_ticker": "KXHIGHNY-26MAY20-T70",
+        "event_ticker": "E1",
+        "city": "New York",
+        "station_code": "KNYC",
+        "local_date": "2026-05-20",
+        "variable_type": "high_temp",
+        "contract_type": "threshold_above",
+        "threshold": 70,
+        "comparator": "gt",
+        "yes_best_bid": 40,
+        "yes_best_ask": 42,
+        "no_best_bid": 58,
+        "no_best_ask": 60,
+        "yes_mid": 41,
+        "settlement_confidence": 0.95,
+        "settlement_source_type": "nws_daily_climate_report",
+        "settlement_value": 75,
+        "yes_result": 1,
+        "data_quality_score": 0.95,
+        "minutes_to_close": None,
+        "minutes_to_settlement": None,
+    }
+    storage.upsert_recorded_orderbook_replay_snapshot({**base, "ts": datetime(2026, 5, 20, 18, tzinfo=timezone.utc)})
+    storage.upsert_recorded_orderbook_replay_snapshot({**base, "ts": datetime(2026, 5, 21, 1, tzinfo=timezone.utc)})
+
+    snapshots = RecordedOrderbookBacktester(storage)._load_snapshots(
+        start=date(2026, 5, 20),
+        end=date(2026, 5, 21),
+        last_days=None,
+        label_quality="primary",
+        min_snapshots_per_market=0,
+    )
+
+    assert len(snapshots) == 1
+    assert str(snapshots.iloc[0]["ts"]).startswith("2026-05-20")
 
 
 def test_market_making_trade_fill_uses_trade_prints_for_yes_and_no():
@@ -1831,6 +2035,261 @@ def test_trading_readiness_next_command_basket_with_live_candidate(tmp_path, mon
     result = TradingReadiness(storage).evaluate(last_days=30)
     assert "paper-market-making-basket" in result.next_command
     assert "--max-targets 5" in result.next_command
+
+
+def test_weather_ops_status_empty_db_reports_red_verdict_and_next_commands(tmp_path):
+    storage = _storage(tmp_path)
+    storage.init_db()
+    result = ProjectMaintenance(storage).weather_ops_status(last_days=7)
+    payload = result.payload
+    assert payload["verdict"] == "RED_BROKEN_OR_NO_DATA"
+    assert payload["orderbook_recorder"]["status"] == "MISSING"
+    assert payload["weather_observations"]["status"] == "MISSING"
+    assert payload["weather_forecasts"]["status"] == "MISSING"
+    assert payload["replay_coverage"]["status"] == "MISSING"
+    assert payload["settlement_labels"]["status"] == "MISSING"
+    assert payload["paper_market_making_evidence"]["status"] == "NO_PAPER_QUOTES"
+    assert payload["trading_readiness"]["status"].startswith("NOT_READY")
+    next_commands = payload["next_commands"]
+    assert any("record-orderbooks" in cmd for cmd in next_commands)
+    assert any("record-weather-observations" in cmd for cmd in next_commands)
+    assert any("record-weather-forecasts" in cmd for cmd in next_commands)
+    assert "python main.py build-exact-settlements --weather-only" not in next_commands
+    safety = payload["safety"]
+    assert "DISABLED" in safety["live_trading"]
+    assert "Unchanged" in safety["no_lookahead_protection"]
+    assert "NOT_USED" in safety["midpoint_as_executable"]
+
+
+def test_weather_ops_status_amber_when_collectors_fresh_but_no_replay(tmp_path):
+    from datetime import timedelta as _timedelta
+    from sqlalchemy import text as _text
+    storage = _storage(tmp_path)
+    storage.init_db()
+    now = datetime.now(timezone.utc)
+    fresh = (now - _timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    with storage.engine.begin() as conn:
+        conn.execute(_text(
+            "INSERT INTO orderbook_snapshots_live (market_ticker, ts, yes_best_bid, yes_best_ask, no_best_bid, no_best_ask, created_at) "
+            "VALUES ('KXTEST-FRESH', :ts, 40, 42, 58, 60, :ts)"
+        ), {"ts": fresh})
+        conn.execute(_text(
+            "INSERT INTO weather_observation_snapshots_live (station_code, ts_observed, ts_recorded, raw_json, created_at) "
+            "VALUES ('KNYC', :ts, :ts, '{}', :ts)"
+        ), {"ts": fresh})
+        conn.execute(_text(
+            "INSERT INTO weather_forecast_snapshots_live (station_code, forecast_valid_start, ts_recorded, raw_json, created_at) "
+            "VALUES ('KNYC', :ts, :ts, '{}', :ts)"
+        ), {"ts": fresh})
+    result = ProjectMaintenance(storage).weather_ops_status(last_days=7)
+    payload = result.payload
+    assert payload["orderbook_recorder"]["status"] == "FRESH"
+    assert payload["weather_observations"]["status"] == "FRESH"
+    assert payload["weather_forecasts"]["status"] == "FRESH"
+    assert payload["replay_coverage"]["status"] == "MISSING"
+    assert payload["settlement_labels"]["status"] == "MISSING"
+    assert payload["verdict"] == "AMBER_COLLECTING_NEEDS_LABELS_OR_REPLAY"
+    next_commands = payload["next_commands"]
+    assert any("build-recorded-replay" in cmd for cmd in next_commands)
+
+
+def test_weather_ops_status_never_marks_paper_ready_without_strong_evidence(tmp_path):
+    storage = _storage(tmp_path)
+    storage.init_db()
+    result = ProjectMaintenance(storage).weather_ops_status(last_days=7)
+    assert result.payload["verdict"] != "GREEN_PAPER_READY"
+    assert result.payload["future_mid_validation"]["strength"] != "STRONG"
+    assert result.payload["safety"]["real_money_justification"].startswith("NONE")
+
+
+def test_weather_ops_status_next_commands_only_use_runnable_cli_flags(tmp_path):
+    import shlex
+    from datetime import timedelta as _timedelta
+    from sqlalchemy import text as _text
+    from main import build_parser
+
+    parser = build_parser()
+
+    def _assert_runnable(commands):
+        for raw in commands:
+            tokens = shlex.split(raw)
+            assert tokens[:2] == ["python", "main.py"], f"unexpected prefix: {raw!r}"
+            try:
+                parser.parse_args(tokens[2:])
+            except SystemExit as exc:
+                raise AssertionError(f"weather_ops_status suggested unrunnable command: {raw!r}") from exc
+
+    empty_storage = Storage(replace(settings, database_url=f"sqlite:///{tmp_path / 'empty.db'}"))
+    empty_storage.init_db()
+    empty_result = ProjectMaintenance(empty_storage).weather_ops_status(last_days=7)
+    _assert_runnable(empty_result.payload["next_commands"])
+
+    fresh_storage = Storage(replace(settings, database_url=f"sqlite:///{tmp_path / 'fresh.db'}"))
+    fresh_storage.init_db()
+    now = datetime.now(timezone.utc)
+    fresh = (now - _timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    with fresh_storage.engine.begin() as conn:
+        conn.execute(_text(
+            "INSERT INTO orderbook_snapshots_live (market_ticker, ts, yes_best_bid, yes_best_ask, no_best_bid, no_best_ask, created_at) "
+            "VALUES ('KXTEST-FRESH', :ts, 40, 42, 58, 60, :ts)"
+        ), {"ts": fresh})
+        conn.execute(_text(
+            "INSERT INTO weather_observation_snapshots_live (station_code, ts_observed, ts_recorded, raw_json, created_at) "
+            "VALUES ('KNYC', :ts, :ts, '{}', :ts)"
+        ), {"ts": fresh})
+        conn.execute(_text(
+            "INSERT INTO weather_forecast_snapshots_live (station_code, forecast_valid_start, ts_recorded, raw_json, created_at) "
+            "VALUES ('KNYC', :ts, :ts, '{}', :ts)"
+        ), {"ts": fresh})
+    fresh_result = ProjectMaintenance(fresh_storage).weather_ops_status(last_days=7)
+    _assert_runnable(fresh_result.payload["next_commands"])
+
+
+def test_weather_ops_status_runbook_commands_use_python_cmd_shim_and_are_categorized(tmp_path):
+    import shlex
+    from main import build_parser
+
+    storage = _storage(tmp_path)
+    storage.init_db()
+    payload = ProjectMaintenance(storage).weather_ops_status(last_days=7).payload
+    runbook = payload["runbook_commands"]
+    expected_sections = {
+        "read_only_checks",
+        "safe_idempotent_builders",
+        "analysis_and_sweeps",
+        "continuous_background_collection",
+        "caution_research_only_paper",
+        "never_run_casually",
+        "on_env_breakage",
+    }
+    assert set(runbook.keys()) == expected_sections
+    for section in expected_sections:
+        assert isinstance(runbook[section], list)
+        assert runbook[section], f"empty runbook section: {section}"
+
+    parser = build_parser()
+    for section, commands in runbook.items():
+        for raw in commands:
+            tokens = shlex.split(raw, posix=False)
+            if section == "on_env_breakage" and tokens[0].lower().endswith("setup-dev.ps1"):
+                continue
+            assert tokens[0] == r".\python.cmd", f"{section!r} command missing .\\python.cmd shim: {raw!r}"
+            if len(tokens) >= 3 and tokens[1].lower().endswith("main.py"):
+                cli_args = tokens[2:]
+                if "<TICKER>" in cli_args:
+                    continue
+                try:
+                    parser.parse_args(cli_args)
+                except SystemExit as exc:
+                    raise AssertionError(f"{section!r} suggested unrunnable command: {raw!r}") from exc
+
+    assert payload["runbook_doc"] == "docs/WEATHER_OPERATOR_RUNBOOK.md"
+
+
+def test_weather_ops_status_from_runbook_rendering_has_operator_sections_and_runnable_commands(tmp_path):
+    import shlex
+    from main import build_parser
+    from maintenance import render_weather_runbook_commands
+
+    storage = _storage(tmp_path)
+    storage.init_db()
+    payload = ProjectMaintenance(storage).weather_ops_status(last_days=7).payload
+    text = render_weather_runbook_commands(payload["runbook_commands"])
+
+    headers = [
+        "CONTINUOUS COLLECTORS",
+        "EVERY FEW HOURS",
+        "DAILY",
+        "WEEKLY",
+        "SWITCHING COMPUTERS",
+        "MINIMUM MAINTENANCE LOOP",
+        "NEVER RUN CASUALLY",
+    ]
+    for header in headers:
+        assert header in text
+
+    assert r".\python.cmd" in text
+    assert r".\pytest.cmd" in text
+    assert "python main.py" not in text
+
+    parser = build_parser()
+    parsed = parser.parse_args(["weather-ops-status", "--last-days", "7", "--from-runbook"])
+    assert parsed.command == "weather-ops-status"
+    assert parsed.from_runbook is True
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        command = stripped[2:]
+        tokens = shlex.split(command, posix=False)
+        if not tokens or tokens[0] in {r".\pytest.cmd", r".\scripts\setup-dev.ps1"}:
+            continue
+        if tokens[0] != r".\python.cmd" or len(tokens) < 2 or not tokens[1].lower().endswith("main.py"):
+            continue
+        cli_args = tokens[2:]
+        if "<TICKER>" in cli_args:
+            continue
+        try:
+            parser.parse_args(cli_args)
+        except SystemExit as exc:
+            raise AssertionError(f"runbook rendered unrunnable command: {command!r}") from exc
+
+
+def test_weather_data_audit_identifies_active_historical_and_freshest_dbs(tmp_path, monkeypatch):
+    active = tmp_path / "active.db"
+    archive = tmp_path / "archive.db"
+    _make_audit_db(
+        active,
+        {
+            "orderbook_snapshots_live": ("ts", ["2026-05-20 12:00:00"]),
+            "weather_observation_snapshots_live": ("ts_recorded", ["2026-05-20 12:01:00"]),
+            "weather_forecast_snapshots_live": ("ts_recorded", ["2026-05-20 12:02:00"]),
+        },
+    )
+    _make_audit_db(
+        archive,
+        {
+            "orderbook_snapshots_live": ("ts", ["2026-05-18 12:00:00", "2026-05-25 12:00:00"]),
+            "weather_observation_snapshots_live": ("ts_recorded", ["2026-05-25 12:01:00"]),
+            "weather_forecast_snapshots_live": ("ts_recorded", ["2026-05-25 12:02:00"]),
+            "historical_trades": ("ts", ["2026-05-25 12:03:00", "2026-05-25 12:04:00"]),
+            "settlement_labels": ("created_at", ["2026-05-25 13:00:00"]),
+            "recorded_orderbook_replay_snapshots": ("ts", ["2026-05-25 13:01:00"]),
+            "recorded_strategy_sweeps": ("ts", ["2026-05-25 13:02:00"]),
+        },
+    )
+    monkeypatch.setattr("maintenance.settings", replace(settings, database_url=f"sqlite:///{active}"))
+
+    payload = ProjectMaintenance().weather_data_audit(search_roots=[tmp_path]).payload
+
+    assert payload["active_configured_db"] == str(active.resolve())
+    assert payload["discovered_db_count"] == 2
+    assert payload["summary"]["best_historical_db_candidate"]["path"] == str(archive.resolve())
+    assert payload["summary"]["freshest_db_candidate"]["path"] == str(archive.resolve())
+    assert payload["summary"]["likely_wrong_path_detected"] == "true"
+    active_report = next(row for row in payload["databases"] if row["path"] == str(active.resolve()))
+    archive_report = next(row for row in payload["databases"] if row["path"] == str(archive.resolve()))
+    assert active_report["is_active_configured_db"] is True
+    assert active_report["settlement_label_count"] == 0
+    assert archive_report["settlement_label_count"] == 1
+    assert archive_report["replay_row_count"] == 1
+    assert payload["safety"]["read_only"] is True
+
+
+def test_weather_data_audit_handles_non_sqlite_file_gracefully(tmp_path, monkeypatch):
+    active = tmp_path / "active.db"
+    active.write_text("not sqlite", encoding="utf-8")
+    monkeypatch.setattr("maintenance.settings", replace(settings, database_url=f"sqlite:///{active}"))
+
+    payload = ProjectMaintenance().weather_data_audit(search_roots=[tmp_path]).payload
+
+    assert payload["discovered_db_count"] == 1
+    db = payload["databases"][0]
+    assert db["path"] == str(active.resolve())
+    assert db["sqlite_openable"] is False
+    assert db["warnings"]
+    assert payload["safety"]["no_database_mutation"] is True
 
 
 def test_project_status_includes_stale_strategy_sweeps(tmp_path):

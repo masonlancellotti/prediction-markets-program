@@ -12,10 +12,24 @@ from parsing.rule_parser import (
 from parsing.weather_contract import PARSER_VERSION, WeatherContract
 
 
+OUT_OF_SCOPE_COMBO_PREFIXES = (
+    "KXMVESPORTSMULTIGAMEEXTENDED",
+    "KXMVECROSSCATEGORY",
+    "KXMVE",
+)
+
+
+def is_out_of_scope_combo_ticker(ticker: str | None) -> bool:
+    normalized = str(ticker or "").upper()
+    return normalized.startswith(OUT_OF_SCOPE_COMBO_PREFIXES)
+
+
 class WeatherMarketParser:
     """Parse Kalshi weather market metadata into a tradability-gated contract."""
 
     def parse(self, market: dict) -> WeatherContract:
+        ticker = str(market.get("ticker") or "")
+        event_ticker = str(market.get("event_ticker") or "")
         title = str(market.get("title") or "")
         parts = [
             title,
@@ -32,6 +46,27 @@ class WeatherMarketParser:
             for key in ("rules_primary", "rules_secondary")
             if market.get(key)
         )
+
+        if is_out_of_scope_combo_ticker(ticker):
+            return WeatherContract(
+                event_ticker=event_ticker,
+                market_ticker=ticker,
+                title=title,
+                rules=rules,
+                local_date=infer_local_date(market, text),
+                variable_type="unknown",
+                contract_type="unknown",
+                comparator="unknown",
+                parser_version=PARSER_VERSION,
+                parse_confidence=0.0,
+                station_confidence=0.0,
+                is_tradable=False,
+                warnings=[
+                    "not_weather_or_out_of_scope",
+                    "unsupported_market_format",
+                    "station inference disabled for non-weather combo market",
+                ],
+            )
 
         warnings: list[str] = []
         variable_type, variable_warnings = detect_variable(text)
@@ -96,8 +131,8 @@ class WeatherMarketParser:
         )
 
         return WeatherContract(
-            event_ticker=str(market.get("event_ticker") or ""),
-            market_ticker=str(market.get("ticker") or ""),
+            event_ticker=event_ticker,
+            market_ticker=ticker,
             title=title,
             rules=rules,
             city=city,

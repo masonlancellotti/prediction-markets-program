@@ -51,3 +51,40 @@ def test_parse_temperature_range_bucket_market():
     assert contract.threshold is None
     assert contract.comparator == "unknown"
     assert contract.is_tradable
+
+
+def test_multivariate_combo_prefix_disables_weather_station_inference_for_player_name():
+    market = {
+        "ticker": "KXMVESPORTSMULTIGAMEEXTENDED-S20265B765FD9D82-69E1FF62A1B",
+        "event_ticker": "KXMVESPORTSMULTIGAMEEXTENDED-S20265B765FD9D82",
+        "title": "yes Ryan Weathers: 4+,yes Aaron Judge: 1+,yes Over 8.5 runs scored",
+        "occurrence_datetime": "2026-05-24T12:00:00Z",
+    }
+
+    contract = WeatherMarketParser().parse(market)
+
+    assert contract.variable_type == "unknown"
+    assert contract.contract_type == "unknown"
+    assert contract.city is None
+    assert contract.station_code is None
+    assert contract.station_confidence == 0
+    assert not contract.is_tradable
+    assert "not_weather_or_out_of_scope" in contract.warnings
+    assert "station inference disabled for non-weather combo market" in contract.warnings
+
+
+def test_cross_category_combo_prefix_does_not_infer_city_team_names_as_weather_stations():
+    market = {
+        "ticker": "KXMVECROSSCATEGORY-S202664A08EF748B-32EA149A12D",
+        "event_ticker": "KXMVECROSSCATEGORY-S202664A08EF748B",
+        "title": "yes New York Y,yes Philadelphia,yes Miami,yes Aaron Judge: 1+,yes Ryan Weathers: 3+",
+        "occurrence_datetime": "2026-05-24T12:00:00Z",
+    }
+
+    contract = WeatherMarketParser().parse(market)
+
+    assert contract.city is None
+    assert contract.station_code is None
+    assert contract.variable_type == "unknown"
+    assert contract.contract_type == "unknown"
+    assert "unsupported_market_format" in contract.warnings

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 from data.nws_climate_report_client import NWSClimateReportClient
 from data.storage import Storage
@@ -18,9 +19,27 @@ class SettlementBuildResult:
     labels: int
     skipped: int
     warnings: list[str]
+    processed: int = 0
+    errors: int = 0
+    source_requests: int = 0
+    cache_hits: int = 0
+    rate_limited: int = 0
+    skipped_due_to_rate_limit: int = 0
+    source_errors: int = 0
 
     def to_dict(self) -> dict:
-        return {"labels": self.labels, "skipped": self.skipped, "warnings": self.warnings}
+        return {
+            "labels": self.labels,
+            "skipped": self.skipped,
+            "processed": self.processed,
+            "errors": self.errors,
+            "source_requests": self.source_requests,
+            "cache_hits": self.cache_hits,
+            "rate_limited": self.rate_limited,
+            "skipped_due_to_rate_limit": self.skipped_due_to_rate_limit,
+            "source_errors": self.source_errors,
+            "warnings": self.warnings,
+        }
 
 
 class WeatherSettlementLoader:
@@ -29,22 +48,59 @@ class WeatherSettlementLoader:
         self.weather_client = weather_client or WeatherClient()
         self.climate_client = NWSClimateReportClient(storage=self.storage)
         self.mapper = StationMapper()
+        self._source_cache: dict[tuple[str, str, str], Any] = {}
+        self._rate_limited_observation_keys: set[tuple[str, str, str]] = set()
+        self._source_stats = _empty_source_stats()
 
-    def build_settlements(self, start: date | None = None, end: date | None = None, market_ticker: str | None = None) -> SettlementBuildResult:
+    def build_settlements(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+        market_ticker: str | None = None,
+        limit: int | None = None,
+        progress_interval: int = 25,
+    ) -> SettlementBuildResult:
         self.storage.init_db()
+        self._reset_source_tracking()
         contracts = self._contracts(start, end, market_ticker)
+        if limit is not None and limit > 0:
+            contracts = contracts[:limit]
         labels = 0
         skipped = 0
+        processed = 0
+        errors = 0
         warnings: list[str] = []
+        total = len(contracts)
+        print(f"build-exact-settlements start total={total} limit={limit}", flush=True)
         for contract in contracts:
-            row = self._label_contract(contract)
+            processed += 1
+            try:
+                row = self._label_contract(contract)
+            except Exception as exc:
+                errors += 1
+                skipped += 1
+                warnings.append(f"{contract.market_ticker}: settlement label error: {type(exc).__name__}: {exc}")
+                if _should_print_progress(processed, total, progress_interval):
+                    _print_progress(processed, total, labels, skipped, errors)
+                continue
             if row is None:
                 skipped += 1
                 warnings.append(f"{contract.market_ticker}: no settlement label built")
+                if _should_print_progress(processed, total, progress_interval):
+                    _print_progress(processed, total, labels, skipped, errors)
                 continue
             self.storage.upsert_settlement_label(row)
             labels += 1
-        return SettlementBuildResult(labels=labels, skipped=skipped, warnings=warnings[:50])
+            if _should_print_progress(processed, total, progress_interval):
+                _print_progress(processed, total, labels, skipped, errors)
+        if total == 0 or not _should_print_progress(processed, total, progress_interval):
+            _print_progress(processed, total, labels, skipped, errors)
+        return SettlementBuildResult(labels=labels, skipped=skipped, processed=processed, errors=errors, warnings=warnings[:50], **self._source_stats)
+
+    def _reset_source_tracking(self) -> None:
+        self._source_cache = {}
+        self._rate_limited_observation_keys = set()
+        self._source_stats = _empty_source_stats()
 
     def _contracts(self, start: date | None, end: date | None, market_ticker: str | None) -> list[WeatherContract]:
         frame = self.storage.fetch_table("parsed_contracts", limit=100000)
@@ -83,8 +139,8 @@ class WeatherSettlementLoader:
         mapping = self.mapper.resolve(contract.city, contract.station_code)
         if mapping is None:
             return None
-        exact_report = self.climate_client.fetch_report(mapping.station_code, contract.local_date, persist=True)
-        observations = self.weather_client.historical_hourly_observations(mapping.station_code, contract.local_date, mapping.timezone)
+        exact_report = self._fetch_climate_report(mapping.station_code, contract.local_date)
+        observations = self._fetch_historical_hourly_observations(mapping.station_code, contract.local_date, mapping.timezone)
         temps = [obs.temp_f for obs in observations if obs.temp_f is not None]
         warnings: list[str] = ["Settlement computed from hourly station observations, may differ from final NWS climate report."]
         fallback_value: float | None = None
@@ -117,6 +173,10 @@ class WeatherSettlementLoader:
         warnings.append("Fallback label from hourly station observations, not exact NWS Daily Climate Report.")
         if exact_report.warnings:
             warnings.extend(exact_report.warnings)
+        observation_key = _source_key("historical_hourly_observations", mapping.station_code, contract.local_date)
+        if observation_key in self._rate_limited_observation_keys:
+            warnings.append("hourly observation source rate-limited; skipped fallback label")
+            return None
         if len(temps) < 3:
             warnings.append("fewer than 3 temperature observations available")
             return _label_row(contract, mapping.station_code, None, None, observations, 0.0, warnings)
@@ -149,6 +209,79 @@ class WeatherSettlementLoader:
             fallback_settlement_value=settlement_value,
             exact_vs_fallback_diff=None,
         )
+
+    def _fetch_climate_report(self, station_code: str, local_date: date):
+        key = _source_key("nws_daily_climate_report", station_code, local_date)
+        if key in self._source_cache:
+            self._source_stats["cache_hits"] += 1
+            return self._source_cache[key]
+        self._source_stats["source_requests"] += 1
+        try:
+            report = self.climate_client.fetch_report(station_code, local_date, persist=True)
+        except Exception:
+            self._source_stats["source_errors"] += 1
+            raise
+        self._source_cache[key] = report
+        return report
+
+    def _fetch_historical_hourly_observations(self, station_code: str, local_date: date, timezone_name: str) -> list[WeatherObservation]:
+        key = _source_key("historical_hourly_observations", station_code, local_date)
+        if key in self._source_cache:
+            self._source_stats["cache_hits"] += 1
+            return self._source_cache[key]
+        self._source_stats["source_requests"] += 1
+        before_rate_limited = _weather_stat_int(self.weather_client, "weather_api_rate_limited_total")
+        before_skipped_rate_limit = _weather_stat_int(self.weather_client, "weather_api_skipped_due_to_rate_limit_total")
+        try:
+            observations = self.weather_client.historical_hourly_observations(station_code, local_date, timezone_name)
+        except Exception:
+            self._source_stats["source_errors"] += 1
+            raise
+        rate_limited_delta = max(0, _weather_stat_int(self.weather_client, "weather_api_rate_limited_total") - before_rate_limited)
+        skipped_delta = max(0, _weather_stat_int(self.weather_client, "weather_api_skipped_due_to_rate_limit_total") - before_skipped_rate_limit)
+        self._source_stats["rate_limited"] += rate_limited_delta
+        self._source_stats["skipped_due_to_rate_limit"] += skipped_delta
+        if skipped_delta:
+            self._rate_limited_observation_keys.add(key)
+        self._source_cache[key] = observations
+        return observations
+
+
+def _should_print_progress(processed: int, total: int, progress_interval: int) -> bool:
+    interval = max(int(progress_interval or 25), 1)
+    return processed == total or processed == 1 or processed % interval == 0
+
+
+def _empty_source_stats() -> dict[str, int]:
+    return {
+        "source_requests": 0,
+        "cache_hits": 0,
+        "rate_limited": 0,
+        "skipped_due_to_rate_limit": 0,
+        "source_errors": 0,
+    }
+
+
+def _source_key(source: str, station_code: str, local_date: date) -> tuple[str, str, str]:
+    return (source, station_code.upper(), local_date.isoformat())
+
+
+def _weather_stat_int(weather_client: WeatherClient, key: str) -> int:
+    try:
+        return int(weather_client.stats.get(key, 0))  # type: ignore[union-attr]
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def _print_progress(processed: int, total: int, labels: int, skipped: int, errors: int) -> None:
+    print(
+        "build-exact-settlements progress "
+        f"processed={processed}/{total} "
+        f"labels_created_or_updated={labels} "
+        f"skipped={skipped} "
+        f"errors={errors}",
+        flush=True,
+    )
 
 
 def evaluate_condition(value: float, threshold: float, comparator: str) -> int:
