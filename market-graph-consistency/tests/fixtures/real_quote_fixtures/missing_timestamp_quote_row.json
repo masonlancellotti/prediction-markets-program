@@ -1,0 +1,17 @@
+{
+  "as_of": "2026-05-20T18:10:00+00:00",
+  "source_platform": "sx_bet",
+  "quote_rows": [
+    {
+      "market_id": "sx-bet-missing-timestamp-sample",
+      "source_platform": "sx_bet",
+      "title": "SX Bet missing timestamp sample",
+      "bid": 0.31,
+      "ask": 0.37,
+      "bid_size": 20,
+      "ask_size": 18,
+      "family": "rv_missing_timestamp_family",
+      "market_type": "sports_context"
+    }
+  ]
+}

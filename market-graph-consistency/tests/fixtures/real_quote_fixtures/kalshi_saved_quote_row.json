@@ -1,0 +1,20 @@
+{
+  "as_of": "2026-05-20T18:10:00+00:00",
+  "source_platform": "kalshi",
+  "rows": [
+    {
+      "ticker": "KXBTCSAMPLE-26JUN30-T120000",
+      "source_platform": "kalshi",
+      "title": "Kalshi BTC threshold sample",
+      "bid": 0.62,
+      "ask": 0.66,
+      "bid_size": 50,
+      "ask_size": 55,
+      "observed_at": "2026-05-20T18:05:00+00:00",
+      "family": "rv_btc_june_120k",
+      "market_type": "crypto_threshold",
+      "observable": "BTC_USD",
+      "window": "2026-06-30"
+    }
+  ]
+}

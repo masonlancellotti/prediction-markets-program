@@ -79,6 +79,12 @@ INPUT_REPORTS = {
 OPTIONAL_INPUT_REPORTS = {
     "platform_expansion_radar": "market_graph_platform_expansion_radar.json",
     "event_entity_ontology": "market_graph_event_entity_ontology.json",
+    "rv_diagnostic_relationship_edges": "rv_diagnostic_relationship_edges.json",
+    "rv_review_worklist": "rv_review_worklist.json",
+    "llm_graph_relationship_review_prompt": "llm_graph_relationship_review_prompt.md",
+    "graph_manual_relationship_evidence": "graph_manual_relationship_evidence.json",
+    "graph_manual_discovery_backlog": "graph_manual_discovery_backlog.json",
+    "llm_graph_manual_evidence_prompt": "llm_graph_manual_evidence_prompt.md",
 }
 UNIFORM_TIMESTAMP_STALE_BLOCKER = "uniform_fixture_or_snapshot_timestamps_no_skew_detectable"
 
@@ -95,6 +101,12 @@ def build_market_graph_ops_status_report(
     stale_lag_watchlist_report: dict[str, Any] | None = None,
     platform_expansion_radar_report: dict[str, Any] | None = None,
     event_entity_ontology_report: dict[str, Any] | None = None,
+    rv_diagnostic_relationship_edges_report: dict[str, Any] | None = None,
+    rv_review_worklist_report: dict[str, Any] | None = None,
+    llm_graph_relationship_review_status: dict[str, Any] | None = None,
+    graph_manual_relationship_evidence_report: dict[str, Any] | None = None,
+    graph_manual_discovery_backlog_report: dict[str, Any] | None = None,
+    llm_graph_manual_evidence_review_status: dict[str, Any] | None = None,
     input_blockers: list[str] | None = None,
 ) -> dict[str, Any]:
     signals = _list_from_report(trade_indicator_report, "signals")
@@ -176,6 +188,38 @@ def build_market_graph_ops_status_report(
         "freshness_buckets": freshness_buckets,
         "packet_kind_counts": packet_kind_counts,
     }
+    rv_relationship_summary = _rv_relationship_summary(
+        rv_diagnostic_relationship_edges_report,
+        rv_review_worklist_report,
+        llm_graph_relationship_review_status,
+    )
+    manual_evidence_summary = _manual_evidence_summary(
+        graph_manual_relationship_evidence_report,
+        graph_manual_discovery_backlog_report,
+        llm_graph_manual_evidence_review_status,
+    )
+    summary.update(
+        {
+            "manual_evidence_records_total": manual_evidence_summary["total_records"],
+            "manual_evidence_ready_for_rv_now": manual_evidence_summary["ready_for_rv_now"],
+            "manual_evidence_blocked_count": manual_evidence_summary["blocked_count"],
+            "manual_evidence_backlog_total": manual_evidence_summary["backlog_total"],
+            "manual_evidence_backlog_high_urgency": manual_evidence_summary["backlog_high_urgency"],
+            "llm_graph_manual_evidence_prompt_present": manual_evidence_summary["llm_prompt_present"],
+            "llm_graph_manual_evidence_schema_present": manual_evidence_summary["llm_schema_present"],
+            "rv_diagnostic_edges_total": rv_relationship_summary["edges_total"],
+            "rv_diagnostic_edges_basis_risk": rv_relationship_summary["edges_basis_risk"],
+            "rv_diagnostic_edges_near_exact_review": rv_relationship_summary["edges_near_exact_review"],
+            "rv_diagnostic_edges_structural": rv_relationship_summary["edges_structural"],
+            "rv_diagnostic_edges_weak_signal": rv_relationship_summary["edges_weak_signal"],
+            "rv_diagnostic_edges_reference_only": rv_relationship_summary["edges_reference_only"],
+            "rv_diagnostic_crypto_payoff_calendar_edges": rv_relationship_summary["crypto_payoff_calendar_edges"],
+            "rv_review_worklist_row_count": rv_relationship_summary["worklist_row_count"],
+            "rv_review_worklist_rv_can_inspect_now_count": rv_relationship_summary["worklist_rv_can_inspect_now_count"],
+            "llm_graph_relationship_review_prompt_present": rv_relationship_summary["llm_prompt_present"],
+            "llm_graph_relationship_review_schema_present": rv_relationship_summary["llm_schema_present"],
+        }
+    )
     report = {
         "diagnostic_only": True,
         "affects_evaluator_gates": False,
@@ -201,6 +245,9 @@ def build_market_graph_ops_status_report(
         "next_recommended_actions": _next_actions(
             blockers, summary, top_constraints, top_packets, platform_gap_rows, ontology_summary
         ),
+        "rv_relationship_summary": rv_relationship_summary,
+        "manual_evidence_summary": manual_evidence_summary,
+        "safety_summary": _safety_summary(),
     }
     validate_market_graph_ops_status_report(report)
     return report
@@ -220,6 +267,14 @@ def write_market_graph_ops_status_report(
     stale_lag_watchlist_path: Path | str | None = None,
     platform_expansion_radar_path: Path | str | None = None,
     event_entity_ontology_path: Path | str | None = None,
+    rv_diagnostic_relationship_edges_path: Path | str | None = None,
+    rv_review_worklist_path: Path | str | None = None,
+    llm_graph_relationship_review_prompt_path: Path | str | None = None,
+    llm_graph_relationship_review_schema_path: Path | str | None = None,
+    graph_manual_relationship_evidence_path: Path | str | None = None,
+    graph_manual_discovery_backlog_path: Path | str | None = None,
+    llm_graph_manual_evidence_prompt_path: Path | str | None = None,
+    llm_graph_manual_evidence_schema_path: Path | str | None = None,
 ) -> dict[str, Any]:
     inputs = {
         "trade_indicators": _load_optional_report(trade_indicators_path),
@@ -232,6 +287,24 @@ def write_market_graph_ops_status_report(
     optional_inputs = {
         "platform_expansion_radar": _load_optional_report(platform_expansion_radar_path),
         "event_entity_ontology": _load_optional_report(event_entity_ontology_path),
+        "rv_diagnostic_relationship_edges": _load_optional_report(rv_diagnostic_relationship_edges_path),
+        "rv_review_worklist": _load_optional_report(rv_review_worklist_path),
+        "graph_manual_relationship_evidence": _load_optional_report(graph_manual_relationship_evidence_path),
+        "graph_manual_discovery_backlog": _load_optional_report(graph_manual_discovery_backlog_path),
+    }
+    llm_status = {
+        "prompt_present": bool(llm_graph_relationship_review_prompt_path)
+        and Path(llm_graph_relationship_review_prompt_path).exists(),
+        "schema_present": bool(llm_graph_relationship_review_schema_path)
+        and Path(llm_graph_relationship_review_schema_path).exists(),
+    }
+    llm_manual_status = {
+        "prompt_present": bool(llm_graph_manual_evidence_prompt_path)
+        and Path(llm_graph_manual_evidence_prompt_path).exists(),
+        "schema_present": bool(llm_graph_manual_evidence_schema_path)
+        and Path(llm_graph_manual_evidence_schema_path).exists(),
+        "prompt_path": str(llm_graph_manual_evidence_prompt_path) if llm_graph_manual_evidence_prompt_path else None,
+        "schema_path": str(llm_graph_manual_evidence_schema_path) if llm_graph_manual_evidence_schema_path else None,
     }
     blockers = [
         f"missing_input_report:{INPUT_REPORTS[key]}"
@@ -245,6 +318,22 @@ def write_market_graph_ops_status_report(
         blockers.append(f"missing_optional_input_report:{OPTIONAL_INPUT_REPORTS['platform_expansion_radar']}")
     if event_entity_ontology_path is not None and optional_inputs["event_entity_ontology"] is None:
         blockers.append(f"missing_optional_input_report:{OPTIONAL_INPUT_REPORTS['event_entity_ontology']}")
+    if rv_diagnostic_relationship_edges_path is not None and optional_inputs["rv_diagnostic_relationship_edges"] is None:
+        blockers.append(
+            f"missing_optional_input_report:{OPTIONAL_INPUT_REPORTS['rv_diagnostic_relationship_edges']}"
+        )
+    if rv_review_worklist_path is not None and optional_inputs["rv_review_worklist"] is None:
+        blockers.append(
+            f"missing_optional_input_report:{OPTIONAL_INPUT_REPORTS['rv_review_worklist']}"
+        )
+    if graph_manual_relationship_evidence_path is not None and optional_inputs["graph_manual_relationship_evidence"] is None:
+        blockers.append(
+            f"missing_optional_input_report:{OPTIONAL_INPUT_REPORTS['graph_manual_relationship_evidence']}"
+        )
+    if graph_manual_discovery_backlog_path is not None and optional_inputs["graph_manual_discovery_backlog"] is None:
+        blockers.append(
+            f"missing_optional_input_report:{OPTIONAL_INPUT_REPORTS['graph_manual_discovery_backlog']}"
+        )
     report = build_market_graph_ops_status_report(
         snapshot_id=snapshot_id,
         as_of=as_of,
@@ -256,6 +345,12 @@ def write_market_graph_ops_status_report(
         stale_lag_watchlist_report=inputs["stale_lag_watchlist"],
         platform_expansion_radar_report=optional_inputs["platform_expansion_radar"],
         event_entity_ontology_report=optional_inputs["event_entity_ontology"],
+        rv_diagnostic_relationship_edges_report=optional_inputs["rv_diagnostic_relationship_edges"],
+        rv_review_worklist_report=optional_inputs["rv_review_worklist"],
+        llm_graph_relationship_review_status=llm_status,
+        graph_manual_relationship_evidence_report=optional_inputs["graph_manual_relationship_evidence"],
+        graph_manual_discovery_backlog_report=optional_inputs["graph_manual_discovery_backlog"],
+        llm_graph_manual_evidence_review_status=llm_manual_status,
         input_blockers=blockers,
     )
     markdown = render_market_graph_ops_status_markdown(report)
@@ -308,9 +403,31 @@ def validate_market_graph_ops_status_report(report: dict[str, Any]) -> None:
         "bridge_blocked_missing_probability_inputs_count",
         "bridge_blocked_missing_state_family_count",
         "bridge_blocked_unsupported_constraint_type_count",
+        "rv_diagnostic_edges_total",
+        "rv_diagnostic_edges_basis_risk",
+        "rv_diagnostic_edges_near_exact_review",
+        "rv_diagnostic_edges_structural",
+        "rv_diagnostic_edges_weak_signal",
+        "rv_diagnostic_edges_reference_only",
+        "rv_diagnostic_crypto_payoff_calendar_edges",
+        "rv_review_worklist_row_count",
+        "rv_review_worklist_rv_can_inspect_now_count",
+        "manual_evidence_records_total",
+        "manual_evidence_ready_for_rv_now",
+        "manual_evidence_blocked_count",
+        "manual_evidence_backlog_total",
+        "manual_evidence_backlog_high_urgency",
     ]:
         if not isinstance(summary.get(key), int) or isinstance(summary.get(key), bool):
             raise SchemaValidationError(f"summary.{key} must be an integer")
+    for key in (
+        "llm_graph_relationship_review_prompt_present",
+        "llm_graph_relationship_review_schema_present",
+        "llm_graph_manual_evidence_prompt_present",
+        "llm_graph_manual_evidence_schema_present",
+    ):
+        if not isinstance(summary.get(key), bool):
+            raise SchemaValidationError(f"summary.{key} must be a boolean")
     freshness_buckets = summary.get("freshness_buckets")
     if not isinstance(freshness_buckets, dict):
         raise SchemaValidationError("summary.freshness_buckets must be an object")
@@ -404,6 +521,70 @@ def render_market_graph_ops_status_markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## RV Packet Kinds", ""])
     for kind in PACKET_KINDS:
         lines.append(f"- `{kind}`: {summary['packet_kind_counts'].get(kind, 0)}")
+    rv_relationship_summary = report.get("rv_relationship_summary") or {}
+    lines.extend([
+        "",
+        "## RV Relationship Layer",
+        "",
+        f"- Diagnostic only: `{str(rv_relationship_summary.get('diagnostic_only', True)).lower()}`",
+        f"- Total RV-ingested edges: {rv_relationship_summary.get('edges_total', 0)}",
+        f"- Basis-risk edges: {rv_relationship_summary.get('edges_basis_risk', 0)}",
+        f"- Near-exact review edges: {rv_relationship_summary.get('edges_near_exact_review', 0)}",
+        f"- Structural edges: {rv_relationship_summary.get('edges_structural', 0)}",
+        f"- Weak-signal edges: {rv_relationship_summary.get('edges_weak_signal', 0)}",
+        f"- Reference-only edges: {rv_relationship_summary.get('edges_reference_only', 0)}",
+        f"- Crypto payoff-calendar edges: {rv_relationship_summary.get('crypto_payoff_calendar_edges', 0)}",
+        f"- Graph-to-RV worklist rows: {rv_relationship_summary.get('worklist_row_count', 0)}",
+        f"- Worklist rows RV can inspect now: {rv_relationship_summary.get('worklist_rv_can_inspect_now_count', 0)}",
+        f"- LLM prompt present: {str(rv_relationship_summary.get('llm_prompt_present', False)).lower()}",
+        f"- LLM schema present: {str(rv_relationship_summary.get('llm_schema_present', False)).lower()}",
+    ])
+    top_manual = rv_relationship_summary.get("top_manual_discovery_priority")
+    if isinstance(top_manual, dict) and top_manual.get("family"):
+        lines.append(
+            f"- Top manual discovery target: `{top_manual.get('family')}` — {top_manual.get('reason', '')}"
+        )
+    if rv_relationship_summary.get("top_blockers"):
+        lines.extend(["", "### RV relationship top blockers", "", "| Blocker | Count |", "| --- | --- |"])
+        for entry in rv_relationship_summary["top_blockers"]:
+            lines.append(f"| `{entry.get('blocker')}` | {entry.get('count')} |")
+    manual_summary = report.get("manual_evidence_summary") or {}
+    lines.extend([
+        "",
+        "## Manual Evidence Layer",
+        "",
+        f"- Diagnostic only: `{str(manual_summary.get('diagnostic_only', True)).lower()}`",
+        f"- Manual evidence records: {manual_summary.get('total_records', 0)}",
+        f"- Records ready for RV source-review: {manual_summary.get('ready_for_rv_now', 0)}",
+        f"- Records blocked on manual evidence: {manual_summary.get('blocked_count', 0)}",
+        f"- Manual discovery backlog items: {manual_summary.get('backlog_total', 0)}",
+        f"- HIGH-urgency backlog items: {manual_summary.get('backlog_high_urgency', 0)}",
+        f"- Top vertical by manual work: `{manual_summary.get('top_vertical_by_manual_work') or 'none'}`",
+        f"- LLM manual-evidence prompt present: {str(manual_summary.get('llm_prompt_present', False)).lower()}",
+        f"- LLM manual-evidence schema present: {str(manual_summary.get('llm_schema_present', False)).lower()}",
+    ])
+    if manual_summary.get("top_blockers"):
+        lines.extend(["", "### Manual evidence top blockers", "", "| Blocker | Count |", "| --- | --- |"])
+        for entry in manual_summary["top_blockers"]:
+            lines.append(f"| `{entry.get('blocker')}` | {entry.get('count')} |")
+    if manual_summary.get("records_by_vertical"):
+        lines.extend(["", "### Manual evidence records by vertical", "", "| Vertical | Count |", "| --- | --- |"])
+        for entry in manual_summary["records_by_vertical"]:
+            lines.append(f"| `{entry.get('vertical')}` | {entry.get('count')} |")
+    safety = report.get("safety_summary") or {}
+    if safety:
+        lines.extend([
+            "",
+            "## Safety Summary",
+            "",
+            f"- Diagnostic only: `{str(safety.get('diagnostic_only', True)).lower()}`",
+            f"- Affects evaluator gates: `{str(safety.get('affects_evaluator_gates', False)).lower()}`",
+            f"- Graph emits evaluator input: `{str(safety.get('graph_emits_evaluator_input', False)).lower()}`",
+            f"- Graph can create candidate pair: `{str(safety.get('graph_can_create_candidate_pair', False)).lower()}`",
+            f"- Graph can claim exact payoff: `{str(safety.get('graph_can_claim_exact_payoff', False)).lower()}`",
+            f"- LLM advisory only: `{str(safety.get('llm_advisory_only', True)).lower()}`",
+            f"- RV relationship layer diagnostic only: `{str(safety.get('rv_relationship_layer_diagnostic_only', True)).lower()}`",
+        ])
     lines.extend([
         "",
         "## Next Recommended Actions",
@@ -1202,6 +1383,165 @@ def _md(value: Any) -> str:
     if value is None:
         return ""
     return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def _rv_relationship_summary(
+    rv_edges_report: dict[str, Any] | None,
+    rv_worklist_report: dict[str, Any] | None,
+    llm_status: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Roll up the RV-diagnostic relationship surfaces for the ops radar.
+
+    Returns a self-contained block so the daily operator surface can show
+    relationship counts, crypto payoff-calendar edge counts, worklist
+    rows, and LLM prompt readiness without re-reading the source files.
+    """
+
+    summary = {
+        "edges_total": 0,
+        "edges_basis_risk": 0,
+        "edges_near_exact_review": 0,
+        "edges_structural": 0,
+        "edges_weak_signal": 0,
+        "edges_reference_only": 0,
+        "crypto_payoff_calendar_edges": 0,
+        "worklist_row_count": 0,
+        "worklist_rv_can_inspect_now_count": 0,
+        "top_blockers": [],
+        "top_manual_discovery_priority": None,
+        "llm_prompt_present": bool(llm_status.get("prompt_present")) if isinstance(llm_status, dict) else False,
+        "llm_schema_present": bool(llm_status.get("schema_present")) if isinstance(llm_status, dict) else False,
+        "diagnostic_only": True,
+        "affects_evaluator_gates": False,
+    }
+    if isinstance(rv_edges_report, dict):
+        edge_summary = rv_edges_report.get("summary") if isinstance(rv_edges_report.get("summary"), dict) else {}
+        summary["edges_total"] = int(edge_summary.get("total_edges") or 0)
+        for entry in edge_summary.get("edges_by_family") or []:
+            if not isinstance(entry, dict):
+                continue
+            family = entry.get("relationship_family")
+            count = entry.get("count")
+            if not isinstance(count, int):
+                continue
+            if family == "basis_risk":
+                summary["edges_basis_risk"] = count
+            elif family == "near_exact_review":
+                summary["edges_near_exact_review"] = count
+            elif family == "structural":
+                summary["edges_structural"] = count
+            elif family == "weak_signal":
+                summary["edges_weak_signal"] = count
+            elif family == "reference_only":
+                summary["edges_reference_only"] = count
+        crypto_section = rv_edges_report.get("core_trio_crypto_section")
+        if isinstance(crypto_section, dict) and isinstance(crypto_section.get("edge_count"), int):
+            summary["crypto_payoff_calendar_edges"] = crypto_section["edge_count"]
+        top_blockers = edge_summary.get("top_blockers") if isinstance(edge_summary.get("top_blockers"), list) else []
+        summary["top_blockers"] = [
+            {"blocker": entry.get("blocker"), "count": entry.get("count")}
+            for entry in top_blockers[:5]
+            if isinstance(entry, dict) and isinstance(entry.get("blocker"), str)
+        ]
+        priorities = rv_edges_report.get("manual_discovery_priorities")
+        if isinstance(priorities, list):
+            for priority in priorities:
+                if isinstance(priority, dict) and priority.get("priority") == "HIGH":
+                    summary["top_manual_discovery_priority"] = {
+                        "family": priority.get("family"),
+                        "reason": priority.get("reason"),
+                    }
+                    break
+            if summary["top_manual_discovery_priority"] is None and priorities:
+                first = priorities[0]
+                if isinstance(first, dict):
+                    summary["top_manual_discovery_priority"] = {
+                        "family": first.get("family"),
+                        "reason": first.get("reason"),
+                    }
+    if isinstance(rv_worklist_report, dict):
+        worklist_summary = rv_worklist_report.get("summary") if isinstance(rv_worklist_report.get("summary"), dict) else {}
+        summary["worklist_row_count"] = int(worklist_summary.get("total_rows") or 0)
+        rows = rv_worklist_report.get("rows")
+        if isinstance(rows, list):
+            summary["worklist_rv_can_inspect_now_count"] = sum(
+                1 for row in rows if isinstance(row, dict) and row.get("rv_can_inspect_now")
+            )
+    return summary
+
+
+def _safety_summary() -> dict[str, Any]:
+    return {
+        "diagnostic_only": True,
+        "affects_evaluator_gates": False,
+        "graph_emits_evaluator_input": False,
+        "graph_can_create_candidate_pair": False,
+        "graph_can_claim_exact_payoff": False,
+        "llm_advisory_only": True,
+        "allowed_actions": list(DIAGNOSTIC_HINT_ACTIONS),
+        "rv_relationship_layer_diagnostic_only": True,
+        "manual_evidence_layer_diagnostic_only": True,
+    }
+
+
+def _manual_evidence_summary(
+    evidence_report: dict[str, Any] | None,
+    backlog_report: dict[str, Any] | None,
+    llm_status: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Roll up the manual-evidence inventory + backlog for the daily radar."""
+
+    summary: dict[str, Any] = {
+        "total_records": 0,
+        "ready_for_rv_now": 0,
+        "blocked_count": 0,
+        "records_by_vertical": [],
+        "top_blockers": [],
+        "top_vertical_by_manual_work": None,
+        "backlog_total": 0,
+        "backlog_high_urgency": 0,
+        "backlog_by_vertical": [],
+        "llm_prompt_present": bool(llm_status.get("prompt_present")) if isinstance(llm_status, dict) else False,
+        "llm_schema_present": bool(llm_status.get("schema_present")) if isinstance(llm_status, dict) else False,
+        "llm_prompt_path": llm_status.get("prompt_path") if isinstance(llm_status, dict) else None,
+        "llm_schema_path": llm_status.get("schema_path") if isinstance(llm_status, dict) else None,
+        "diagnostic_only": True,
+        "affects_evaluator_gates": False,
+    }
+    if isinstance(evidence_report, dict):
+        evidence_summary = evidence_report.get("summary") if isinstance(evidence_report.get("summary"), dict) else {}
+        summary["total_records"] = int(evidence_summary.get("total_records") or 0)
+        summary["ready_for_rv_now"] = int(evidence_summary.get("ready_for_rv_now") or 0)
+        summary["blocked_count"] = int(evidence_summary.get("blocked_on_manual_evidence") or 0)
+        records_by_vertical = evidence_summary.get("records_by_vertical")
+        if isinstance(records_by_vertical, list):
+            summary["records_by_vertical"] = [
+                {"vertical": entry.get("vertical"), "count": entry.get("count")}
+                for entry in records_by_vertical
+                if isinstance(entry, dict)
+            ]
+            if summary["records_by_vertical"]:
+                summary["top_vertical_by_manual_work"] = summary["records_by_vertical"][0]["vertical"]
+        top_blockers = evidence_summary.get("top_blockers")
+        if isinstance(top_blockers, list):
+            summary["top_blockers"] = [
+                {"blocker": entry.get("blocker"), "count": entry.get("count")}
+                for entry in top_blockers[:5]
+                if isinstance(entry, dict)
+            ]
+    if isinstance(backlog_report, dict):
+        backlog_summary = backlog_report.get("summary") if isinstance(backlog_report.get("summary"), dict) else {}
+        summary["backlog_total"] = int(backlog_summary.get("total_items") or 0)
+        urgency = backlog_summary.get("by_urgency") if isinstance(backlog_summary.get("by_urgency"), dict) else {}
+        summary["backlog_high_urgency"] = int(urgency.get("HIGH") or 0)
+        backlog_vertical = backlog_summary.get("by_vertical")
+        if isinstance(backlog_vertical, list):
+            summary["backlog_by_vertical"] = [
+                {"vertical": entry.get("vertical"), "count": entry.get("count")}
+                for entry in backlog_vertical
+                if isinstance(entry, dict)
+            ]
+    return summary
 
 
 __all__ = [

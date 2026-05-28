@@ -1,0 +1,785 @@
+{
+  "source_snapshot_id": "fixture-payoff-state-001",
+  "as_of": "2026-05-20T18:00:00+00:00",
+  "markets": [
+    {
+      "market_id": "fixture_payoff:feasible_exh_red",
+      "venue": "fixture_payoff",
+      "title": "Feasible exhaustive: Red",
+      "canonical_text": "The exhaustive fixture color is red.",
+      "resolution_criteria": "Resolves yes if the exhaustive fixture color is red.",
+      "resolution_date": "2026-09-01",
+      "entities": ["Fixture Exhaustive"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_color_oracle",
+      "yes_price": 0.34,
+      "no_price": 0.66,
+      "bid": 0.33,
+      "ask": 0.35,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_feasible_exhaustive",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Feasible three-way exhaustive color fixture.",
+        "payoff_state_states": [
+          {"state_id": "red", "state_description": "Color result is red", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "blue", "state_description": "Color result is blue", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "green", "state_description": "Color result is green", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"red": 1, "blue": 0, "green": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "color_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:feasible_exh_blue",
+      "venue": "fixture_payoff",
+      "title": "Feasible exhaustive: Blue",
+      "canonical_text": "The exhaustive fixture color is blue.",
+      "resolution_criteria": "Resolves yes if the exhaustive fixture color is blue.",
+      "resolution_date": "2026-09-01",
+      "entities": ["Fixture Exhaustive"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_color_oracle",
+      "yes_price": 0.34,
+      "no_price": 0.66,
+      "bid": 0.33,
+      "ask": 0.35,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_feasible_exhaustive",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Feasible three-way exhaustive color fixture.",
+        "payoff_state_states": [
+          {"state_id": "red", "state_description": "Color result is red", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "blue", "state_description": "Color result is blue", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "green", "state_description": "Color result is green", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"red": 0, "blue": 1, "green": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "color_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:feasible_exh_green",
+      "venue": "fixture_payoff",
+      "title": "Feasible exhaustive: Green",
+      "canonical_text": "The exhaustive fixture color is green.",
+      "resolution_criteria": "Resolves yes if the exhaustive fixture color is green.",
+      "resolution_date": "2026-09-01",
+      "entities": ["Fixture Exhaustive"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_color_oracle",
+      "yes_price": 0.31,
+      "no_price": 0.69,
+      "bid": 0.30,
+      "ask": 0.32,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_feasible_exhaustive",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Feasible three-way exhaustive color fixture.",
+        "payoff_state_states": [
+          {"state_id": "red", "state_description": "Color result is red", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "blue", "state_description": "Color result is blue", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "green", "state_description": "Color result is green", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"red": 0, "blue": 0, "green": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "color_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:infeasible_exh_red",
+      "venue": "fixture_payoff",
+      "title": "Infeasible exhaustive: Red",
+      "canonical_text": "The second exhaustive fixture color is red.",
+      "resolution_criteria": "Resolves yes if the second exhaustive fixture color is red.",
+      "resolution_date": "2026-09-02",
+      "entities": ["Fixture Exhaustive Bad"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_color_oracle",
+      "yes_price": 0.52,
+      "no_price": 0.48,
+      "bid": 0.51,
+      "ask": 0.53,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_infeasible_exhaustive",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Infeasible three-way exhaustive fixture where prices sum above one.",
+        "payoff_state_states": [
+          {"state_id": "red", "state_description": "Color result is red", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "blue", "state_description": "Color result is blue", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "green", "state_description": "Color result is green", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"red": 1, "blue": 0, "green": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "color_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:infeasible_exh_blue",
+      "venue": "fixture_payoff",
+      "title": "Infeasible exhaustive: Blue",
+      "canonical_text": "The second exhaustive fixture color is blue.",
+      "resolution_criteria": "Resolves yes if the second exhaustive fixture color is blue.",
+      "resolution_date": "2026-09-02",
+      "entities": ["Fixture Exhaustive Bad"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_color_oracle",
+      "yes_price": 0.46,
+      "no_price": 0.54,
+      "bid": 0.45,
+      "ask": 0.47,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_infeasible_exhaustive",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Infeasible three-way exhaustive fixture where prices sum above one.",
+        "payoff_state_states": [
+          {"state_id": "red", "state_description": "Color result is red", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "blue", "state_description": "Color result is blue", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "green", "state_description": "Color result is green", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"red": 0, "blue": 1, "green": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "color_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:infeasible_exh_green",
+      "venue": "fixture_payoff",
+      "title": "Infeasible exhaustive: Green",
+      "canonical_text": "The second exhaustive fixture color is green.",
+      "resolution_criteria": "Resolves yes if the second exhaustive fixture color is green.",
+      "resolution_date": "2026-09-02",
+      "entities": ["Fixture Exhaustive Bad"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_color_oracle",
+      "yes_price": 0.32,
+      "no_price": 0.68,
+      "bid": 0.31,
+      "ask": 0.33,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_infeasible_exhaustive",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Infeasible three-way exhaustive fixture where prices sum above one.",
+        "payoff_state_states": [
+          {"state_id": "red", "state_description": "Color result is red", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "blue", "state_description": "Color result is blue", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "green", "state_description": "Color result is green", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"red": 0, "blue": 0, "green": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "color_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:mutex_oversum_alpha",
+      "venue": "fixture_payoff",
+      "title": "Mutex oversum: Alpha",
+      "canonical_text": "Mutually exclusive fixture outcome alpha occurs.",
+      "resolution_criteria": "Resolves yes if alpha occurs.",
+      "resolution_date": "2026-09-03",
+      "entities": ["Fixture Mutex Bad"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_mutex_oracle",
+      "yes_price": 0.50,
+      "no_price": 0.50,
+      "bid": 0.49,
+      "ask": 0.51,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_mutex_oversum",
+        "payoff_state_family_type": "mutually_exclusive_group",
+        "payoff_state_family_description": "Mutually exclusive fixture group whose prices sum above one.",
+        "payoff_state_states": [
+          {"state_id": "alpha", "state_description": "Outcome alpha occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "beta", "state_description": "Outcome beta occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "gamma", "state_description": "Outcome gamma occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "none", "state_description": "No outcome occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"alpha": 1, "beta": 0, "gamma": 0, "none": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "mutex_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:mutex_oversum_beta",
+      "venue": "fixture_payoff",
+      "title": "Mutex oversum: Beta",
+      "canonical_text": "Mutually exclusive fixture outcome beta occurs.",
+      "resolution_criteria": "Resolves yes if beta occurs.",
+      "resolution_date": "2026-09-03",
+      "entities": ["Fixture Mutex Bad"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_mutex_oracle",
+      "yes_price": 0.42,
+      "no_price": 0.58,
+      "bid": 0.41,
+      "ask": 0.43,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_mutex_oversum",
+        "payoff_state_family_type": "mutually_exclusive_group",
+        "payoff_state_family_description": "Mutually exclusive fixture group whose prices sum above one.",
+        "payoff_state_states": [
+          {"state_id": "alpha", "state_description": "Outcome alpha occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "beta", "state_description": "Outcome beta occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "gamma", "state_description": "Outcome gamma occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "none", "state_description": "No outcome occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"alpha": 0, "beta": 1, "gamma": 0, "none": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "mutex_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:mutex_oversum_gamma",
+      "venue": "fixture_payoff",
+      "title": "Mutex oversum: Gamma",
+      "canonical_text": "Mutually exclusive fixture outcome gamma occurs.",
+      "resolution_criteria": "Resolves yes if gamma occurs.",
+      "resolution_date": "2026-09-03",
+      "entities": ["Fixture Mutex Bad"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_mutex_oracle",
+      "yes_price": 0.30,
+      "no_price": 0.70,
+      "bid": 0.29,
+      "ask": 0.31,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_mutex_oversum",
+        "payoff_state_family_type": "mutually_exclusive_group",
+        "payoff_state_family_description": "Mutually exclusive fixture group whose prices sum above one.",
+        "payoff_state_states": [
+          {"state_id": "alpha", "state_description": "Outcome alpha occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "beta", "state_description": "Outcome beta occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "gamma", "state_description": "Outcome gamma occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "none", "state_description": "No outcome occurs", "exhaustive_membership": false, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"alpha": 0, "beta": 0, "gamma": 1, "none": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "mutex_oracle_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:child_parent_child",
+      "venue": "fixture_payoff",
+      "title": "Child parent violation: child",
+      "canonical_text": "The narrower child outcome occurs.",
+      "resolution_criteria": "Resolves yes if the narrower child outcome occurs.",
+      "resolution_date": "2026-09-04",
+      "entities": ["Fixture Child Parent"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_chain_oracle",
+      "yes_price": 0.70,
+      "no_price": 0.30,
+      "bid": 0.69,
+      "ask": 0.71,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_child_parent_violation",
+        "payoff_state_family_type": "child_parent_chain",
+        "payoff_state_family_description": "Child outcome priced above parent outcome.",
+        "payoff_state_role": "child",
+        "payoff_state_states": [
+          {"state_id": "neither", "state_description": "Neither boundary cleared", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "parent_only", "state_description": "Parent boundary cleared but child not", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "child_and_parent", "state_description": "Child boundary cleared (implies parent)", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"neither": 0, "parent_only": 0, "child_and_parent": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "boundary_definition"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:child_parent_parent",
+      "venue": "fixture_payoff",
+      "title": "Child parent violation: parent",
+      "canonical_text": "The broader parent outcome occurs.",
+      "resolution_criteria": "Resolves yes if the broader parent outcome occurs.",
+      "resolution_date": "2026-09-04",
+      "entities": ["Fixture Child Parent"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_chain_oracle",
+      "yes_price": 0.55,
+      "no_price": 0.45,
+      "bid": 0.54,
+      "ask": 0.56,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_child_parent_violation",
+        "payoff_state_family_type": "child_parent_chain",
+        "payoff_state_family_description": "Child outcome priced above parent outcome.",
+        "payoff_state_role": "parent",
+        "payoff_state_states": [
+          {"state_id": "neither", "state_description": "Neither boundary cleared", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "parent_only", "state_description": "Parent boundary cleared but child not", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "child_and_parent", "state_description": "Child boundary cleared (implies parent)", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"neither": 0, "parent_only": 1, "child_and_parent": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "boundary_definition"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:threshold_ladder_100",
+      "venue": "fixture_payoff",
+      "title": "Threshold ladder above 100",
+      "canonical_text": "The threshold ladder metric is above 100.",
+      "resolution_criteria": "Resolves yes if the threshold ladder metric is above 100.",
+      "resolution_date": "2026-09-05",
+      "entities": ["Fixture Threshold"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_threshold_oracle",
+      "yes_price": 0.34,
+      "no_price": 0.66,
+      "bid": 0.33,
+      "ask": 0.35,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_threshold_ladder_violation",
+        "payoff_state_family_type": "threshold_ladder",
+        "payoff_state_family_description": "Threshold ladder where stricter price exceeds looser price.",
+        "payoff_state_threshold": 100,
+        "payoff_state_states": [
+          {"state_id": "below_100", "state_description": "Metric below 100", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "100_to_119", "state_description": "Metric in 100-119", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "120_to_139", "state_description": "Metric in 120-139", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "140_plus", "state_description": "Metric at or above 140", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"below_100": 0, "100_to_119": 1, "120_to_139": 1, "140_plus": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "metric_definition"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:threshold_ladder_120",
+      "venue": "fixture_payoff",
+      "title": "Threshold ladder above 120",
+      "canonical_text": "The threshold ladder metric is above 120.",
+      "resolution_criteria": "Resolves yes if the threshold ladder metric is above 120.",
+      "resolution_date": "2026-09-05",
+      "entities": ["Fixture Threshold"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_threshold_oracle",
+      "yes_price": 0.42,
+      "no_price": 0.58,
+      "bid": 0.41,
+      "ask": 0.43,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_threshold_ladder_violation",
+        "payoff_state_family_type": "threshold_ladder",
+        "payoff_state_family_description": "Threshold ladder where stricter price exceeds looser price.",
+        "payoff_state_threshold": 120,
+        "payoff_state_states": [
+          {"state_id": "below_100", "state_description": "Metric below 100", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "100_to_119", "state_description": "Metric in 100-119", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "120_to_139", "state_description": "Metric in 120-139", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "140_plus", "state_description": "Metric at or above 140", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"below_100": 0, "100_to_119": 0, "120_to_139": 1, "140_plus": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "metric_definition"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:threshold_ladder_140",
+      "venue": "fixture_payoff",
+      "title": "Threshold ladder above 140",
+      "canonical_text": "The threshold ladder metric is above 140.",
+      "resolution_criteria": "Resolves yes if the threshold ladder metric is above 140.",
+      "resolution_date": "2026-09-05",
+      "entities": ["Fixture Threshold"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_threshold_oracle",
+      "yes_price": 0.55,
+      "no_price": 0.45,
+      "bid": 0.54,
+      "ask": 0.56,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_threshold_ladder_violation",
+        "payoff_state_family_type": "threshold_ladder",
+        "payoff_state_family_description": "Threshold ladder where stricter price exceeds looser price.",
+        "payoff_state_threshold": 140,
+        "payoff_state_states": [
+          {"state_id": "below_100", "state_description": "Metric below 100", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "100_to_119", "state_description": "Metric in 100-119", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "120_to_139", "state_description": "Metric in 120-139", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "140_plus", "state_description": "Metric at or above 140", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"below_100": 0, "100_to_119": 0, "120_to_139": 0, "140_plus": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "metric_definition"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:range_overlap_low",
+      "venue": "fixture_payoff",
+      "title": "Range overlap: low bucket",
+      "canonical_text": "Fixture range bucket spans 0 to 10.",
+      "resolution_criteria": "Resolves yes if the metric falls within 0 to 10.",
+      "resolution_date": "2026-09-06",
+      "entities": ["Fixture Range Overlap"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_range_oracle",
+      "yes_price": 0.30,
+      "no_price": 0.70,
+      "bid": 0.29,
+      "ask": 0.31,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_range_partition_overlap",
+        "payoff_state_family_type": "range_bucket_partition",
+        "payoff_state_family_description": "Three range buckets with overlapping coverage between two adjacent buckets.",
+        "payoff_state_range": [0, 10],
+        "payoff_state_states": [
+          {"state_id": "low", "state_description": "Metric in 0-10", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "mid", "state_description": "Metric in 5-20", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "high", "state_description": "Metric in 20-30", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"low": 1, "mid": 0, "high": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "bucket_boundary_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:range_overlap_mid",
+      "venue": "fixture_payoff",
+      "title": "Range overlap: mid bucket",
+      "canonical_text": "Fixture range bucket spans 5 to 20.",
+      "resolution_criteria": "Resolves yes if the metric falls within 5 to 20.",
+      "resolution_date": "2026-09-06",
+      "entities": ["Fixture Range Overlap"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_range_oracle",
+      "yes_price": 0.40,
+      "no_price": 0.60,
+      "bid": 0.39,
+      "ask": 0.41,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_range_partition_overlap",
+        "payoff_state_family_type": "range_bucket_partition",
+        "payoff_state_family_description": "Three range buckets with overlapping coverage between two adjacent buckets.",
+        "payoff_state_range": [5, 20],
+        "payoff_state_states": [
+          {"state_id": "low", "state_description": "Metric in 0-10", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "mid", "state_description": "Metric in 5-20", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "high", "state_description": "Metric in 20-30", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"low": 0, "mid": 1, "high": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "bucket_boundary_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:range_overlap_high",
+      "venue": "fixture_payoff",
+      "title": "Range overlap: high bucket",
+      "canonical_text": "Fixture range bucket spans 20 to 30.",
+      "resolution_criteria": "Resolves yes if the metric falls within 20 to 30.",
+      "resolution_date": "2026-09-06",
+      "entities": ["Fixture Range Overlap"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_range_oracle",
+      "yes_price": 0.30,
+      "no_price": 0.70,
+      "bid": 0.29,
+      "ask": 0.31,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_range_partition_overlap",
+        "payoff_state_family_type": "range_bucket_partition",
+        "payoff_state_family_description": "Three range buckets with overlapping coverage between two adjacent buckets.",
+        "payoff_state_range": [20, 30],
+        "payoff_state_states": [
+          {"state_id": "low", "state_description": "Metric in 0-10", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "mid", "state_description": "Metric in 5-20", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "high", "state_description": "Metric in 20-30", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"low": 0, "mid": 0, "high": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "bucket_boundary_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:range_gap_low",
+      "venue": "fixture_payoff",
+      "title": "Range gap: low bucket",
+      "canonical_text": "Fixture range bucket spans 0 to 10.",
+      "resolution_criteria": "Resolves yes if the metric falls within 0 to 10.",
+      "resolution_date": "2026-09-07",
+      "entities": ["Fixture Range Gap"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_gap_oracle",
+      "yes_price": 0.32,
+      "no_price": 0.68,
+      "bid": 0.31,
+      "ask": 0.33,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_range_partition_gap",
+        "payoff_state_family_type": "range_bucket_partition",
+        "payoff_state_family_description": "Three range buckets with a coverage gap between two adjacent buckets.",
+        "payoff_state_range": [0, 10],
+        "payoff_state_states": [
+          {"state_id": "low", "state_description": "Metric in 0-10", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "mid", "state_description": "Metric in 15-20", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "high", "state_description": "Metric in 20-30", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"low": 1, "mid": 0, "high": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "bucket_boundary_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:range_gap_mid",
+      "venue": "fixture_payoff",
+      "title": "Range gap: mid bucket",
+      "canonical_text": "Fixture range bucket spans 15 to 20.",
+      "resolution_criteria": "Resolves yes if the metric falls within 15 to 20.",
+      "resolution_date": "2026-09-07",
+      "entities": ["Fixture Range Gap"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_gap_oracle",
+      "yes_price": 0.30,
+      "no_price": 0.70,
+      "bid": 0.29,
+      "ask": 0.31,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_range_partition_gap",
+        "payoff_state_family_type": "range_bucket_partition",
+        "payoff_state_family_description": "Three range buckets with a coverage gap between two adjacent buckets.",
+        "payoff_state_range": [15, 20],
+        "payoff_state_states": [
+          {"state_id": "low", "state_description": "Metric in 0-10", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "mid", "state_description": "Metric in 15-20", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "high", "state_description": "Metric in 20-30", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"low": 0, "mid": 1, "high": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "bucket_boundary_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:range_gap_high",
+      "venue": "fixture_payoff",
+      "title": "Range gap: high bucket",
+      "canonical_text": "Fixture range bucket spans 20 to 30.",
+      "resolution_criteria": "Resolves yes if the metric falls within 20 to 30.",
+      "resolution_date": "2026-09-07",
+      "entities": ["Fixture Range Gap"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_gap_oracle",
+      "yes_price": 0.30,
+      "no_price": 0.70,
+      "bid": 0.29,
+      "ask": 0.31,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_range_partition_gap",
+        "payoff_state_family_type": "range_bucket_partition",
+        "payoff_state_family_description": "Three range buckets with a coverage gap between two adjacent buckets.",
+        "payoff_state_range": [20, 30],
+        "payoff_state_states": [
+          {"state_id": "low", "state_description": "Metric in 0-10", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "mid", "state_description": "Metric in 15-20", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "high", "state_description": "Metric in 20-30", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"low": 0, "mid": 0, "high": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "bucket_boundary_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:ambiguous_one",
+      "venue": "fixture_payoff",
+      "title": "Ambiguous fixture market one",
+      "canonical_text": "Ambiguous fixture market with no declared states.",
+      "resolution_criteria": "Resolves from unspecified fixture metadata.",
+      "resolution_date": "2026-09-08",
+      "entities": ["Fixture Ambiguous"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_ambiguous_oracle",
+      "yes_price": 0.33,
+      "no_price": 0.67,
+      "bid": 0.32,
+      "ask": 0.34,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_ambiguous_missing_states",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Fixture family whose state definitions and payoffs are intentionally missing."
+      }
+    },
+    {
+      "market_id": "fixture_payoff:ambiguous_two",
+      "venue": "fixture_payoff",
+      "title": "Ambiguous fixture market two",
+      "canonical_text": "Ambiguous fixture market with no declared states.",
+      "resolution_criteria": "Resolves from unspecified fixture metadata.",
+      "resolution_date": "2026-09-08",
+      "entities": ["Fixture Ambiguous"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_ambiguous_oracle",
+      "yes_price": 0.33,
+      "no_price": 0.67,
+      "bid": 0.32,
+      "ask": 0.34,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_ambiguous_missing_states",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Fixture family whose state definitions and payoffs are intentionally missing."
+      }
+    },
+    {
+      "market_id": "fixture_payoff:ambiguous_three",
+      "venue": "fixture_payoff",
+      "title": "Ambiguous fixture market three",
+      "canonical_text": "Ambiguous fixture market with no declared states.",
+      "resolution_criteria": "Resolves from unspecified fixture metadata.",
+      "resolution_date": "2026-09-08",
+      "entities": ["Fixture Ambiguous"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_ambiguous_oracle",
+      "yes_price": 0.33,
+      "no_price": 0.67,
+      "bid": 0.32,
+      "ask": 0.34,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_ambiguous_missing_states",
+        "payoff_state_family_type": "exhaustive_group",
+        "payoff_state_family_description": "Fixture family whose state definitions and payoffs are intentionally missing."
+      }
+    },
+    {
+      "market_id": "fixture_payoff:complement_yes",
+      "venue": "fixture_payoff",
+      "title": "Complement pair: yes",
+      "canonical_text": "The complement event resolves yes.",
+      "resolution_criteria": "Resolves yes if the complement event resolves yes.",
+      "resolution_date": "2026-09-09",
+      "entities": ["Fixture Complement"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_complement_oracle",
+      "yes_price": 0.63,
+      "no_price": 0.37,
+      "bid": 0.62,
+      "ask": 0.64,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_complement_inconsistency",
+        "payoff_state_family_type": "complement_pair",
+        "payoff_state_family_description": "Complement pair whose summed probability deviates from one beyond tolerance.",
+        "payoff_state_role": "yes_side",
+        "payoff_state_side": "YES",
+        "payoff_state_states": [
+          {"state_id": "event_yes", "state_description": "The event resolves yes", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "event_no", "state_description": "The event resolves no", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"event_yes": 1, "event_no": 0},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "tie_or_cancellation_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:complement_no",
+      "venue": "fixture_payoff",
+      "title": "Complement pair: no",
+      "canonical_text": "The complement event resolves no.",
+      "resolution_criteria": "Resolves yes if the complement event resolves no.",
+      "resolution_date": "2026-09-09",
+      "entities": ["Fixture Complement"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_complement_oracle",
+      "yes_price": 0.50,
+      "no_price": 0.50,
+      "bid": 0.49,
+      "ask": 0.51,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_complement_inconsistency",
+        "payoff_state_family_type": "complement_pair",
+        "payoff_state_family_description": "Complement pair whose summed probability deviates from one beyond tolerance.",
+        "payoff_state_role": "no_side",
+        "payoff_state_side": "NO",
+        "payoff_state_states": [
+          {"state_id": "event_yes", "state_description": "The event resolves yes", "exhaustive_membership": true, "mutual_exclusion_membership": true},
+          {"state_id": "event_no", "state_description": "The event resolves no", "exhaustive_membership": true, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"event_yes": 0, "event_no": 1},
+        "payoff_state_required_evidence_fields": ["settlement_source", "settlement_window", "tie_or_cancellation_rules"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:formula_cluster_btc_a",
+      "venue": "fixture_payoff",
+      "title": "Typed formula cluster BTC above 120k",
+      "canonical_text": "BTC fixture above 120000 on 2026-06-30.",
+      "resolution_criteria": "Resolves yes if BTC fixture index closes above 120000 on 2026-06-30.",
+      "resolution_date": "2026-06-30",
+      "entities": ["Fixture BTC"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_btc_index",
+      "yes_price": 0.42,
+      "no_price": 0.58,
+      "bid": 0.41,
+      "ask": 0.43,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_formula_cluster_btc_120k_2026_06_30",
+        "payoff_state_family_type": "formula_cluster_exact",
+        "payoff_state_family_description": "Typed BTC formula cluster requiring exact-key manual review.",
+        "payoff_state_states": [
+          {"state_id": "btc_above_120k_on_2026_06_30", "state_description": "BTC closes above 120000 on 2026-06-30", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "btc_not_above_120k_on_2026_06_30", "state_description": "BTC closes at or below 120000 on 2026-06-30", "exhaustive_membership": false, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"btc_above_120k_on_2026_06_30": 1, "btc_not_above_120k_on_2026_06_30": 0},
+        "payoff_state_required_evidence_fields": ["family", "asset", "source", "date", "comparator", "threshold", "units"]
+      }
+    },
+    {
+      "market_id": "fixture_payoff:formula_cluster_btc_b",
+      "venue": "fixture_payoff",
+      "title": "Typed formula cluster BTC above 120k (second venue)",
+      "canonical_text": "BTC fixture above 120000 on 2026-06-30 (second venue).",
+      "resolution_criteria": "Resolves yes if BTC fixture index closes above 120000 on 2026-06-30.",
+      "resolution_date": "2026-06-30",
+      "entities": ["Fixture BTC"],
+      "themes": ["fixture", "payoff-state"],
+      "settlement_source": "fixture_btc_index",
+      "yes_price": 0.43,
+      "no_price": 0.57,
+      "bid": 0.42,
+      "ask": 0.44,
+      "volume_24h": 100.0,
+      "liquidity_score": 0.5,
+      "raw": {
+        "payoff_state_family_id": "payoff_formula_cluster_btc_120k_2026_06_30",
+        "payoff_state_family_type": "formula_cluster_exact",
+        "payoff_state_family_description": "Typed BTC formula cluster requiring exact-key manual review.",
+        "payoff_state_states": [
+          {"state_id": "btc_above_120k_on_2026_06_30", "state_description": "BTC closes above 120000 on 2026-06-30", "exhaustive_membership": false, "mutual_exclusion_membership": true},
+          {"state_id": "btc_not_above_120k_on_2026_06_30", "state_description": "BTC closes at or below 120000 on 2026-06-30", "exhaustive_membership": false, "mutual_exclusion_membership": true}
+        ],
+        "payoff_state_payoffs": {"btc_above_120k_on_2026_06_30": 1, "btc_not_above_120k_on_2026_06_30": 0},
+        "payoff_state_required_evidence_fields": ["family", "asset", "source", "date", "comparator", "threshold", "units"]
+      }
+    }
+  ]
+}

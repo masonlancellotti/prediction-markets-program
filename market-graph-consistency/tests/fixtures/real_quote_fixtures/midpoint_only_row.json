@@ -1,0 +1,15 @@
+{
+  "as_of": "2026-05-20T18:10:00+00:00",
+  "source_platform": "polymarket",
+  "rows": [
+    {
+      "market_id": "polymarket-midpoint-only-sample",
+      "source_platform": "polymarket",
+      "title": "Polymarket midpoint only sample",
+      "midpoint": 0.57,
+      "observed_at": "2026-05-20T18:07:00+00:00",
+      "family": "rv_midpoint_only_family",
+      "market_type": "crypto_threshold"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "as_of": "2026-05-20T18:10:00+00:00",
+  "source_platform": "the_odds_api",
+  "quotes": [
+    {
+      "market_id": "odds-api-reference-btc-sample",
+      "source_platform": "the_odds_api",
+      "title": "The Odds API reference BTC sample",
+      "bid": 0.51,
+      "ask": 0.55,
+      "bid_size": 10,
+      "ask_size": 12,
+      "observed_at": "2026-05-20T18:08:00+00:00",
+      "family": "rv_btc_june_120k",
+      "market_type": "reference_only_context",
+      "reference_only": true,
+      "observable": "BTC_USD",
+      "window": "2026-06-30"
+    }
+  ]
+}

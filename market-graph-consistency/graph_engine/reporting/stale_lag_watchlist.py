@@ -295,7 +295,13 @@ def _build_pair_row(
     right_age = _quote_age_seconds(snapshot, right)
     left_probability, left_probability_blockers = _node_probability(left)
     right_probability, right_probability_blockers = _node_probability(right)
-    blockers = set(evidence_blockers + left_probability_blockers + right_probability_blockers)
+    blockers = set(
+        evidence_blockers
+        + left_probability_blockers
+        + right_probability_blockers
+        + _source_blockers(left)
+        + _source_blockers(right)
+    )
     stale_node, related_node = left, right
     quote_age_seconds = left_age
     related_age_seconds = right_age
@@ -528,7 +534,7 @@ def _quote_age_seconds(snapshot: GraphSnapshot, node: MarketNode) -> int | None:
 
 
 def _node_probability(node: MarketNode) -> tuple[float | None, list[str]]:
-    blockers: list[str] = []
+    blockers: list[str] = _source_blockers(node)
     if _uses_midpoint_or_synthetic(node):
         blockers.append("non_actionable_probability_input")
     if node.yes_price is not None:
@@ -538,6 +544,19 @@ def _node_probability(node: MarketNode) -> tuple[float | None, list[str]]:
         blockers.append("non_actionable_probability_input")
         return (float(node.bid) + float(node.ask)) / 2.0, blockers
     return None, blockers
+
+
+def _source_blockers(node: MarketNode) -> list[str]:
+    blockers = _string_list(node.raw.get("review_blockers"))
+    if node.reference_only and "reference_only_source" not in blockers:
+        blockers.append("reference_only_source")
+    return blockers
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, int, float))]
 
 
 def _uses_midpoint_or_synthetic(node: MarketNode) -> bool:

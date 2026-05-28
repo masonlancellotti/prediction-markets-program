@@ -596,6 +596,7 @@ def _probability_and_source(node: MarketNode) -> tuple[float | None, str]:
 def _price_blockers(snapshot: GraphSnapshot, nodes: list[MarketNode], *, stale_seconds: int) -> list[str]:
     blockers: list[str] = []
     for node in nodes:
+        blockers.extend(_source_blockers(node))
         probability, source = _probability_and_source(node)
         if probability is None:
             blockers.append("missing_probability_input")
@@ -612,9 +613,24 @@ def _price_blockers(snapshot: GraphSnapshot, nodes: list[MarketNode], *, stale_s
 
 
 def _quote_age_seconds(snapshot: GraphSnapshot, node: MarketNode) -> int | None:
+    if node.raw.get("quote_timestamp_missing") is True:
+        return None
     if node.as_of is None:
         return None
     return max(0, int((snapshot.as_of - node.as_of).total_seconds()))
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, int, float))]
+
+
+def _source_blockers(node: MarketNode) -> list[str]:
+    blockers = _string_list(node.raw.get("review_blockers"))
+    if node.reference_only and "reference_only_source" not in blockers:
+        blockers.append("reference_only_source")
+    return blockers
 
 
 def _confidence_tier(violated: bool, observed_gap: float, blockers: list[str]) -> str:

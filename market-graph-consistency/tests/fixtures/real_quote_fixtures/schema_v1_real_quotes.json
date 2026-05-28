@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "test-real-quote-fixture-001",
+  "as_of": "2026-05-20T18:10:00+00:00",
+  "venue": "fixture",
+  "normalized_markets": [
+    {
+      "market_id": "fixture:btc_over_140k_june",
+      "title": "BTC above 140k by June 30",
+      "yes_price": 0.61,
+      "no_price": 0.39,
+      "bid": 0.58,
+      "ask": 0.66,
+      "as_of": "2026-05-20T18:09:00+00:00",
+      "settlement_source": "fixture_btc_index",
+      "observable": "BTC_USD",
+      "window": "2026-06-30"
+    },
+    {
+      "market_id": "fixture:btc_over_120k_june",
+      "title": "BTC above 120k by June 30",
+      "yes_price": 0.42,
+      "no_price": 0.58,
+      "bid": 0.39,
+      "ask": 0.47,
+      "as_of": "2026-05-20T18:06:00+00:00",
+      "settlement_source": "fixture_btc_index",
+      "observable": "BTC_USD",
+      "window": "2026-06-30"
+    }
+  ]
+}

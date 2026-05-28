@@ -1,0 +1,21 @@
+{
+  "as_of": "2026-05-20T18:10:00+00:00",
+  "source_platform": "ibkr_forecastex",
+  "quote_diagnostics": [
+    {
+      "conid": "1001",
+      "source_platform": "ibkr_forecastex",
+      "exchange_venue": "ForecastEx",
+      "title": "ForecastEx BTC threshold sample",
+      "bid": 0.44,
+      "ask": 0.48,
+      "bid_size": 100,
+      "ask_size": 90,
+      "quote_timestamp": "2026-05-20T18:09:00+00:00",
+      "market_family": "rv_btc_june_120k",
+      "market_type": "crypto_threshold",
+      "observable": "BTC_USD",
+      "window": "2026-06-30"
+    }
+  ]
+}
