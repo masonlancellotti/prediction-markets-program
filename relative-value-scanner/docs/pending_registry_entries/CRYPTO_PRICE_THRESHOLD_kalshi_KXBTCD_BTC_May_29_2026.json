@@ -1,0 +1,51 @@
+{
+  "family": "CRYPTO_PRICE_THRESHOLD",
+  "leverage": 50,
+  "limitations": "<TODO: limitations>",
+  "output_file": "docs\\pending_registry_entries\\CRYPTO_PRICE_THRESHOLD_kalshi_KXBTCD_BTC_May_29_2026.json",
+  "registry_entry_skeleton": {
+    "applies_to_scope": {
+      "event_ticker_prefix": "KXBTCD",
+      "venue": "kalshi"
+    },
+    "canonical_source_kind": "crypto_index_official",
+    "canonical_source_url": "<TODO: canonical_source_url>",
+    "confidence": "<TODO: confidence>",
+    "entry_id": "<TODO: stable_entry_id>",
+    "evidence_quote_or_excerpt": "<TODO: evidence_quote_or_excerpt>",
+    "family": "CRYPTO_PRICE_THRESHOLD",
+    "limitations": "<TODO: limitations>",
+    "official_source_description": "Official crypto index source matching the venue rules price_source_index and measurement timestamp.",
+    "registry_version": "canonical_convention_registry_v0",
+    "review_until": "<TODO: review_until>",
+    "reviewed_at": "<TODO: reviewed_at>",
+    "reviewer": "<TODO: reviewer>",
+    "typed_key_requirements": {
+      "match": {
+        "asset": "BTC",
+        "measurement_date": "May 29, 2026"
+      },
+      "required": [
+        "asset",
+        "measurement_date"
+      ]
+    }
+  },
+  "registry_proposal_is_trust": false,
+  "reviewed": false,
+  "reviewer_must_validate": true,
+  "row_count": 50,
+  "safety": {
+    "affects_evaluator_gates": false,
+    "registry_file_modified": false,
+    "registry_proposal_is_trust": false,
+    "reviewed_registry_entry_created": false,
+    "reviewer_must_validate": true,
+    "saved_files_only": true
+  },
+  "schema_version": 1,
+  "scope_key": "CRYPTO_PRICE_THRESHOLD|kalshi|KXBTCD|BTC|May 29, 2026",
+  "source": "pending_registry_entry_skeleton_v1",
+  "source_url_candidate": "https://www.cfbenchmarks.com/data/indices/BRTI",
+  "source_url_candidate_status": "hint_unreviewed_must_validate_against_venue_rules"
+}

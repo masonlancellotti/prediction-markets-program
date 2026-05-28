@@ -203,6 +203,28 @@ This runs the read-only saved-file workflow for one target universe: Polymarket 
 
 The runner prints normalized counts, enrichment counts, pair count, evaluator action counts, top rejection reasons, and the exact `replay-paper-candidate-markouts` command to run later after separate later snapshots have been captured. It forwards evaluator review knobs such as `--max-settlement-delta-seconds`, `--min-net-gap`, `--min-top-of-book-size`, and `--accept-unit-mismatch` without changing their defaults. It does not sleep, trade, authenticate, score through `RelativeValueScanner`, use midpoint fills, claim profit, or emit `PAPER` / `POSSIBLE_ARB`.
 
+## Saved-File Structural Basket Dry Run
+
+```powershell
+python scan.py import-kalshi-event-metadata --source path\to\kxevt_2026_demo.json --destination-dir reports\kalshi_event_metadata
+python scan.py run-structural-basket-dry-run --snapshot reports\kalshi_orderbook_enriched_snapshot.json --metadata reports\kalshi_event_metadata\kxevt_2026_demo.json --summary-json-output reports\structural_basket_dry_run_summary.json --summary-markdown-output reports\structural_basket_dry_run_summary.md --enriched-snapshot-output reports\structural_basket_dry_run_enriched_snapshot.json --paper-fill-json-output reports\structural_basket_dry_run_paper_fill_journal.json --paper-fill-markdown-output reports\structural_basket_dry_run_paper_fill_journal.md
+```
+
+`run-structural-basket-dry-run` is the saved-file-only structural-basket pipeline. It runs every step on disk: audit Kalshi event metadata, join it into the saved snapshot, write the enriched snapshot, build the structural basket review, and then — only if at least one `STOP_FOR_REVIEW` row is surfaced — invoke `simulate-paper-fills` on those rows. If no `STOP_FOR_REVIEW` row exists (because metadata was missing/reference-only/title-only, quotes were stale, depth was insufficient, fees killed the gap, or the join could not match snapshot tickers), the paper-fill simulator is **not** invoked and the summary records `paper_simulation_skipped=true` with a structured `paper_simulation_skip_reason`. Pass `--skip-paper-fill-simulation` to suppress the simulator step even when the detector does surface review-only candidates.
+
+`STOP_FOR_REVIEW` is review/report-only. It never authorizes execution, never promotes a row to `PAPER_CANDIDATE`, and never weakens fee, depth, freshness, settlement, or exhaustiveness gates. The summary's `safety` block reasserts `saved_file_only=true`, `live_fetch_attempted=false`, `places_orders=false`, `auth_used=false`, `private_endpoints_used=false`, `secrets_read=false`, `paper_candidate_emitted=false`, and `stop_for_review_means_review_only=true` on every run.
+
+`import-kalshi-event-metadata` is the saved-file metadata acquisition spec. It reads one or more saved Kalshi event-metadata JSON files from disk, validates them through the existing audit normalizer, optionally copies them into a destination directory, and writes an importer report. It performs zero network I/O, never authenticates, never reads secrets, never calls private endpoints, and never invents live API details. The intended workflow is to save a JSON event-metadata payload to disk by hand (or via a separately-reviewed read-only acquisition tool), then run `import-kalshi-event-metadata` to validate and stage it before `run-structural-basket-dry-run` consumes it.
+
+For the first real dry run, the exact command sequence is:
+
+```powershell
+python scan.py import-kalshi-event-metadata --source path\to\your_event_metadata.json --destination-dir reports\kalshi_event_metadata
+python scan.py run-structural-basket-dry-run --snapshot reports\kalshi_orderbook_enriched_snapshot.json --metadata reports\kalshi_event_metadata\your_event_metadata.json
+```
+
+If the summary reports `stop_for_review_count: 0`, the dry run correctly stopped before paper simulation. Inspect `top_blockers` in the summary to see which gates failed and which artifact to fix next (commonly: real metadata files for the events present in the snapshot, fresher orderbook captures, or markets with deeper top-of-book).
+
 ## Action Ladder
 
 - `IGNORE`

@@ -1,0 +1,242 @@
+{
+  "registry_version": "canonical_convention_registry_v0",
+  "description": "Example manual registry for canonical standardized-family source conventions. Entries are saved-file-only reviewer assertions and never create trade, paper-candidate, or evaluator readiness by themselves.",
+  "entries": [
+    {
+      "registry_version": "canonical_convention_registry_v0",
+      "entry_id": "fed-fomc-federal-reserve-official-2026q2",
+      "family": "FED_FOMC",
+      "reviewer": "manual_registry_example_reviewer",
+      "reviewed_at": "2026-05-25T00:00:00+00:00",
+      "applies_to_scope": {
+        "venue": "kalshi",
+        "event_ticker_prefix": "KXFED"
+      },
+      "typed_key_requirements": {
+        "required": [
+          "meeting_date",
+          "rate_bound",
+          "threshold_percent",
+          "source_convention"
+        ],
+        "match": {
+          "source_convention": "federal_reserve_official_website"
+        }
+      },
+      "canonical_source_kind": "official_source_url",
+      "canonical_source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+      "evidence_quote_or_excerpt": {
+        "kind": "official_source_excerpt",
+        "text": "The Federal Reserve publishes FOMC meeting calendars and policy decisions on its official website."
+      },
+      "limitations": [
+        "Manual convention registry evidence only.",
+        "Typed keys must be extracted independently from saved market records.",
+        "Does not claim cross-venue same-payoff equivalence or tradability."
+      ],
+      "review_until": "2026-12-31",
+      "confidence": "high"
+    },
+    {
+      "registry_version": "canonical_convention_registry_v0",
+      "entry_id": "btc-brti-example-2026-05-25-86249-99-above",
+      "family": "CRYPTO_PRICE_THRESHOLD",
+      "reviewer": "manual_registry_example_reviewer",
+      "reviewed_at": "2026-05-25T00:00:00+00:00",
+      "applies_to_scope": {
+        "venue": "kalshi",
+        "event_ticker_prefix": "KXBTC"
+      },
+      "typed_key_requirements": {
+        "required": [
+          "asset",
+          "threshold_value",
+          "threshold_operator",
+          "measurement_date",
+          "price_source_index"
+        ],
+        "match": {
+          "asset": "BTC",
+          "threshold_value": 86249.99,
+          "threshold_operator": "above",
+          "measurement_date": "May 25, 2026",
+          "price_source_index": "brti"
+        }
+      },
+      "canonical_source_kind": "crypto_index_official",
+      "canonical_source_url": "https://www.cfbenchmarks.com/data/indices/BRTI",
+      "evidence_quote_or_excerpt": {
+        "kind": "official_source_excerpt",
+        "text": "CF Benchmarks publishes the Bitcoin Real Time Index as an official index methodology and data product."
+      },
+      "limitations": [
+        "This entry applies only to the exact typed-key values listed above.",
+        "Does not infer any title-only, graph, or LLM-derived keys."
+      ],
+      "review_until": "2026-06-30",
+      "confidence": "medium"
+    },
+    {
+      "registry_version": "canonical_convention_registry_v0",
+      "entry_id": "crypto-btc-kxbtd-2026-05-22-1700-edt-reviewed",
+      "family": "CRYPTO_PRICE_THRESHOLD",
+      "reviewer": "operator-manual-review",
+      "reviewed_at": "2026-05-25T00:00:00+00:00",
+      "review_status": "reviewed",
+      "applies_to_scope": {
+        "venue": "kalshi",
+        "event_ticker_prefix": "KXBTCD",
+        "event_ticker": "KXBTCD-26MAY2217",
+        "asset": "BTC",
+        "measurement_date": "2026-05-22",
+        "measurement_time": "17:00:00 America/New_York",
+        "measurement_time_utc": "2026-05-22T21:00:00Z",
+        "averaging_window_seconds": 60
+      },
+      "typed_key_requirements": {
+        "required": [
+          "asset",
+          "measurement_date",
+          "price_source_index"
+        ],
+        "match": {
+          "asset": "BTC",
+          "measurement_date": "May 22, 2026",
+          "price_source_index": "cf benchmarks"
+        }
+      },
+      "canonical_source_kind": "crypto_index_official",
+      "canonical_source_url": "https://kalshi-public-docs.s3.amazonaws.com/contract_terms/BTC.pdf",
+      "secondary_source_urls": [
+        "https://kalshi.com/markets/kxbtcd/bitcoin-price-abovebelow/kxbtcd-26may2217",
+        "https://www.cfbenchmarks.com/data/indices/BRTI"
+      ],
+      "source_title": "Kalshi BTC Contract Terms / KXBTCD-26MAY2217 event page / CF Benchmarks BRTI",
+      "official_source_description": "Reviewed Kalshi BTC contract terms and KXBTCD-26MAY2217 market page establish the BRTI 60-second pre-5:00 PM EDT settlement convention for this exact event scope.",
+      "evidence_quote_or_excerpt": {
+        "kind": "manual_review_paraphrase",
+        "source_urls": [
+          "https://kalshi-public-docs.s3.amazonaws.com/contract_terms/BTC.pdf",
+          "https://kalshi.com/markets/kxbtcd/bitcoin-price-abovebelow/kxbtcd-26may2217",
+          "https://www.cfbenchmarks.com/data/indices/BRTI"
+        ],
+        "text": "Kalshi BTC contract terms define the underlying as the USD spot price of one Bitcoin at the listed time using the simple average of the CF Bitcoin Real-Time Index, BRTI, for the 60 seconds immediately before that time. The terms name CF Benchmarks as Source Agency; the KXBTCD-26MAY2217 event page identifies May 22, 2026 at 5pm EDT; CF Benchmarks identifies BRTI as the CME CF Bitcoin Real Time Index calculated once per second and used as a settlement input for Kalshi event contracts. Revisions after expiration are not counted for expiration value."
+      },
+      "limitations": [
+        "Applies only to Kalshi KXBTCD-26MAY2217-* markets or markets whose reviewed event page lists the same date and 5:00 PM EDT time.",
+        "Do not apply the 5:00 PM EDT timestamp to every KXBTCD market.",
+        "Do not apply this entry to KXBTC or KXBTCD markets with other dates or times.",
+        "Do not assume Coinbase spot, Binance spot, or a single 5:00:00 tick.",
+        "Store and compare this convention as a 60-second pre-time BRTI average.",
+        "Flag exact tick-boundary handling for manual review when comparing raw second-level BRTI data.",
+        "Does not infer same-payoff equivalence, paper candidacy, execution readiness, or tradability."
+      ],
+      "review_until": "2026-06-01",
+      "confidence": "high"
+    },
+    {
+      "registry_version": "canonical_convention_registry_v0",
+      "entry_id": "nba-game-result-official-source-example-2026q2",
+      "family": "SPORTS_GAME_RESULT",
+      "reviewer": "manual_registry_example_reviewer",
+      "reviewed_at": "2026-05-25T00:00:00+00:00",
+      "applies_to_scope": {
+        "venue": "polymarket",
+        "event_slug_prefix": "nba-game-"
+      },
+      "typed_key_requirements": {
+        "required": [
+          "league",
+          "season",
+          "game_date",
+          "team_or_matchup",
+          "official_source_convention"
+        ],
+        "match": {
+          "league": "NBA",
+          "official_source_convention": "NBA_official"
+        }
+      },
+      "canonical_source_kind": "league_official_source",
+      "canonical_source_url": "https://www.nba.com/games",
+      "evidence_quote_or_excerpt": {
+        "kind": "official_source_excerpt",
+        "text": "NBA.com publishes official league game schedules and results."
+      },
+      "limitations": [
+        "Example sports game-result convention only.",
+        "Exact teams, season, and game date must be typed independently."
+      ],
+      "review_until": "2026-12-31",
+      "confidence": "medium"
+    },
+    {
+      "registry_version": "canonical_convention_registry_v0",
+      "entry_id": "nba-futures-championship-official-source-example-2026q2",
+      "family": "SPORTS_FUTURES_CHAMPIONSHIP",
+      "reviewer": "manual_registry_example_reviewer",
+      "reviewed_at": "2026-05-25T00:00:00+00:00",
+      "applies_to_scope": {
+        "venue": "kalshi",
+        "event_ticker_prefix": "KXNBA"
+      },
+      "typed_key_requirements": {
+        "required": [
+          "league",
+          "season",
+          "team",
+          "championship_or_event_name",
+          "official_source_convention"
+        ],
+        "match": {
+          "league": "NBA",
+          "official_source_convention": "NBA_official"
+        }
+      },
+      "canonical_source_kind": "league_official_source",
+      "canonical_source_url": "https://www.nba.com/playoffs",
+      "evidence_quote_or_excerpt": {
+        "kind": "official_source_excerpt",
+        "text": "NBA.com publishes official playoff and finals information for league championship outcomes."
+      },
+      "limitations": [
+        "Example sports championship convention only.",
+        "Does not settle cross-venue equivalence or create evaluator readiness."
+      ],
+      "review_until": "2026-12-31",
+      "confidence": "medium"
+    }
+  ],
+  "invalid_examples": [
+    {
+      "reason": "Rejected because scope is broad and evidence is title-only.",
+      "entry": {
+        "registry_version": "canonical_convention_registry_v0",
+        "entry_id": "invalid-title-only-global-example",
+        "family": "FED_FOMC",
+        "reviewer": "manual_registry_example_reviewer",
+        "reviewed_at": "2026-05-25",
+        "applies_to_scope": {
+          "venue": "kalshi",
+          "scope": "all"
+        },
+        "typed_key_requirements": {
+          "required": [
+            "meeting_date"
+          ]
+        },
+        "canonical_source_kind": "official_source_description",
+        "official_source_description": "Example invalid source.",
+        "evidence_quote_or_excerpt": {
+          "kind": "title_only",
+          "text": "Title-only match."
+        },
+        "limitations": [
+          "Invalid example."
+        ],
+        "review_until": "2026-12-31",
+        "confidence": "low"
+      }
+    }
+  ]
+}

@@ -11,6 +11,7 @@ from relative_value.models import (
     RelativeValueCandidate,
     SourceKind,
 )
+from relative_value.venue_identity import broker_route_fake_edge_blockers
 
 
 def _cap_action(action: Action, max_action: Action) -> Action:
@@ -131,6 +132,7 @@ def score_pair(
     config = config or ScannerConfig()
     match = assess_match(left, right, config)
     reasons = list(match.reasons)
+    broker_route_blockers = broker_route_fake_edge_blockers(left, right)
     gross_gap: Optional[float] = None
     fee_adjusted_gap: Optional[float] = None
     fees_applied: dict[str, float] = {}
@@ -145,7 +147,11 @@ def score_pair(
     if "both_sides_sportsbook_reference" in reference_reasons:
         direction += " (both sportsbook references)"
 
-    if match.match_confidence < config.min_watch_confidence:
+    if broker_route_blockers:
+        action = Action.IGNORE
+        reasons.extend(broker_route_blockers)
+        direction = f"broker route duplicate exchange {left.venue} vs {right.venue}"
+    elif match.match_confidence < config.min_watch_confidence:
         action = Action.IGNORE
         reasons.append("match confidence below watch threshold")
     elif not _both_executable_exchanges(left, right):

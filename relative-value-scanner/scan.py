@@ -44,7 +44,7 @@ from relative_value.paper_candidate_evaluator import (
     evaluate_paper_candidate_files,
 )
 from relative_value.provenance import build_fixture_scan_provenance, source_readiness_report
-from relative_value.reference_diagnostics import explain_reference_context_files
+from relative_value.reference_diagnostics import explain_reference_context_files, write_reference_odds_fv_files
 from relative_value.report import write_json_report, write_markdown_report
 from relative_value.scanner import RelativeValueScanner
 from relative_value.same_payoff_board import build_same_payoff_board_files
@@ -57,8 +57,121 @@ from relative_value.exact_market_expansion_plan import write_exact_market_expans
 from relative_value.platform_expansion_matrix import write_platform_expansion_matrix_files
 from relative_value.structural_basket_detector import build_structural_basket_review_report_files
 from relative_value.structural_manifest_scout import scout_structural_manifest_candidates_file
+from relative_value.kalshi_event_metadata import (
+    audit_kalshi_event_metadata_files,
+    join_kalshi_event_metadata_files,
+)
+from relative_value.kalshi_event_evidence_summary import write_kalshi_event_evidence_summary_files
 from relative_value.paper_fill_simulator import simulate_paper_fill_journal_files
 from relative_value.kalshi_native_groups import audit_kalshi_native_groups_file, kalshi_native_group_audit_paths
+from relative_value.structural_basket_dry_run import (
+    import_kalshi_event_metadata_files,
+    render_metadata_importer_markdown,
+    run_structural_basket_dry_run_files,
+)
+from relative_value.structural_basket_hunter import (
+    hunt_structural_basket_candidates_files,
+)
+from relative_value.cross_platform_opportunity_triage import (
+    write_cross_platform_opportunity_triage_files,
+)
+from relative_value.crypto_com_predict_cdna_saved_page_parser import (
+    write_crypto_com_predict_cdna_research_snapshot_file,
+)
+from relative_value.cdna_vs_kalshi_btc_basis_risk import write_cdna_vs_kalshi_btc_basis_risk_file
+from relative_value.normalized_markets_v0 import write_normalized_markets_v0_files
+from relative_value.quote_freshness_policy import DEFAULT_STALENESS_SECONDS
+from relative_value.settlement_evidence_burden import write_settlement_evidence_burden_files
+from relative_value.standardized_family_candidates import write_standardized_family_candidates_files
+from relative_value.canonical_convention_registry import build_canonical_convention_registry_audit
+from relative_value.canonical_registry_coverage import write_canonical_registry_coverage_files
+from relative_value.canonical_registry_expiry_audit import write_canonical_registry_expiry_audit_files
+from relative_value.cdna_crypto_basis_risk_scout import (
+    write_cdna_crypto_basis_risk_scout_files,
+)
+from relative_value.polymarket_taxonomy_shape_scout import (
+    write_polymarket_taxonomy_shape_scout_files,
+)
+from relative_value.polymarket_clob_taxonomy_refresh import (
+    DEFAULT_SHAPE_PRIORITY as POLYMARKET_CLOB_TAXONOMY_REFRESH_DEFAULT_SHAPE_PRIORITY,
+    write_polymarket_clob_taxonomy_refresh_files,
+)
+from relative_value.kalshi_crypto_typed_key_audit import (
+    _classify_shape as _kalshi_crypto_classify_shape,
+    _extract_asset as _kalshi_crypto_extract_asset,
+    _extract_comparator as _kalshi_crypto_extract_comparator,
+    _extract_settlement_source as _kalshi_crypto_extract_settlement_source,
+    _extract_target_datetime as _kalshi_crypto_extract_target_datetime,
+    _extract_threshold as _kalshi_crypto_extract_threshold,
+    write_kalshi_crypto_typed_key_audit_files,
+)
+from relative_value.crypto_peer_acquisition_plan import (
+    write_crypto_peer_acquisition_plan_files,
+)
+from relative_value.crypto_payoff_calendar_audit import (
+    write_crypto_payoff_calendar_audit_files,
+)
+from relative_value.crypto_manual_discovery_workbench import (
+    write_crypto_manual_discovery_workbench_files,
+)
+from relative_value.manual_evidence_requirements import (
+    write_manual_evidence_requirements_files,
+)
+from relative_value.polymarket_point_in_time_typed_key_audit import (
+    write_polymarket_point_in_time_typed_key_audit_files,
+)
+from relative_value.cross_venue_opportunity_scout import (
+    write_cross_venue_opportunity_scout_files,
+)
+from relative_value.core_trio_peer_coverage_audit import (
+    write_core_trio_peer_coverage_audit_files,
+)
+from relative_value.relative_value_ops_status import write_relative_value_ops_status_files
+from relative_value.existing_paper_candidate_audit import write_existing_paper_candidate_audit_files
+from relative_value.family_graduation import write_family_graduation_files
+from relative_value.ibkr_forecastex_readonly_access import (
+    DEFAULT_IBKR_FORECASTEX_BASE_URL,
+    DEFAULT_MAX_CONTRACT_INFO_REQUESTS,
+    DEFAULT_MAX_FOLLOWUP_ERRORS,
+    build_ibkr_forecastex_access_doctor,
+    write_ibkr_forecastex_access_doctor_file,
+    write_ibkr_forecastex_readonly_snapshot_file,
+)
+from relative_value.ibkr_forecastex_manual_memo import validate_ibkr_forecastex_manual_memo_file
+from relative_value.mlb_world_series_revival_status import write_mlb_world_series_revival_status_files
+from relative_value.platform_api_expansion import write_platform_api_expansion_files
+from relative_value.paper_readiness_probe import write_paper_readiness_probe_files
+from relative_value.polymarket_crypto_discovery_normalizer import write_polymarket_crypto_discovery_normalization_files
+from relative_value.polymarket_market_taxonomy import write_polymarket_market_universe_files
+from relative_value.polymarket_public_discovery import write_polymarket_crypto_discovery_files
+from relative_value.pending_registry_entries_plan import (
+    audit_pending_registry_entries_for_promotion,
+    write_pending_registry_entries_plan,
+)
+from relative_value.sx_bet_saved_adapter import write_sx_bet_saved_normalization_files
+from relative_value.sx_bet_sports_overlap import write_sx_bet_sports_overlap_files
+from relative_value.sx_bet_sports_typed_keys import write_sx_bet_sports_typed_keys_files
+from relative_value.sports_mlb_daily_residual_risk_scout import (
+    DEFAULT_MAX_QUOTE_AGE_SECONDS as MLB_DAILY_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    DEFAULT_MIN_AVAILABLE_NOTIONAL as MLB_DAILY_RESIDUAL_RISK_DEFAULT_MIN_AVAILABLE_NOTIONAL,
+    write_sports_mlb_daily_residual_risk_files,
+)
+from relative_value.sports_mlb_daily_game_evidence_collector import write_mlb_daily_game_evidence_files
+from relative_value.sports_mlb_world_series_evidence_compare import (
+    write_sports_mlb_world_series_evidence_compare_files,
+)
+from relative_value.sports_mlb_world_series_evidence_collector import write_mlb_world_series_evidence_files
+from relative_value.sports_mlb_world_series_residual_risk_scout import (
+    DEFAULT_MAX_QUOTE_AGE_SECONDS as MLB_WORLD_SERIES_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    DEFAULT_MIN_AVAILABLE_NOTIONAL as MLB_WORLD_SERIES_RESIDUAL_RISK_DEFAULT_MIN_AVAILABLE_NOTIONAL,
+    write_sports_mlb_world_series_residual_risk_files,
+)
+from relative_value.operator_arb_convergence_plan import write_operator_arb_convergence_plan_files
+from relative_value.stale_report_archive_plan import (
+    apply_stale_report_archive_plan,
+    write_stale_report_archive_plan_files,
+)
+from relative_value.venue_metadata_coverage import write_venue_metadata_coverage_files
 from venues.kalshi import (
     FixtureKalshiAdapter,
     KalshiMarketFilterOptions,
@@ -87,6 +200,11 @@ from venues.prophetx import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _default_canonical_registry_path() -> Path | None:
+    path = PROJECT_ROOT / "docs" / "example_canonical_convention_registry_v0.json"
+    return path if path.exists() else None
 
 
 def build_fixture_adapters(fixture_dir: Path) -> list[object]:
@@ -122,6 +240,137 @@ def main(argv: list[str] | None = None) -> int:
         help="Include markets with parseable end dates before the fetch timestamp.",
     )
 
+    polymarket_crypto_discovery_parser = subparsers.add_parser(
+        "discover-polymarket-crypto-markets",
+        help=(
+            "Explicit public no-auth Polymarket Gamma/CLOB read-only crypto threshold discovery. "
+            "Not part of the default scan and never creates candidate pairs."
+        ),
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_snapshots" / "polymarket_crypto",
+        help="Base directory for timestamped raw public discovery snapshots.",
+    )
+    polymarket_crypto_discovery_parser.add_argument("--limit", type=int, default=200)
+    polymarket_crypto_discovery_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    polymarket_crypto_discovery_parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=3,
+        help="Maximum offset pages to try per public endpoint pattern.",
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--include-books",
+        action="store_true",
+        help="Also call public CLOB book endpoints for discovered token IDs. Defaults off.",
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_crypto_discovery.json",
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_crypto_discovery.md",
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help=(
+            "Targeted public-no-auth search term passed to Gamma's `search=` query parameter, "
+            "e.g. \"bitcoin May 29, 2026\". When set, the broad TARGETED_SEARCH_TERMS list is skipped "
+            "in favor of this single query plus optional --queries-file entries."
+        ),
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--queries-file",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to a text file (one search term per line). Each non-blank, non-comment line "
+            "becomes an additional targeted Gamma search."
+        ),
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--asset",
+        type=str,
+        default=None,
+        help=(
+            "Optional client-side asset filter (BTC / ETH / SOL). Drops candidates whose title/question "
+            "does not mention the asset. No live private endpoints are called."
+        ),
+    )
+    polymarket_crypto_discovery_parser.add_argument(
+        "--target-date",
+        type=str,
+        default=None,
+        help=(
+            "Optional client-side target-date filter (e.g. 2026-05-29). Drops candidates whose title "
+            "does not contain a matching date rendering. Pure post-filter; never inferred."
+        ),
+    )
+    polymarket_crypto_normalize_parser = subparsers.add_parser(
+        "normalize-polymarket-crypto-discovery",
+        help="Saved-file-only conversion of Polymarket public discovery candidates into manual crypto fixtures.",
+    )
+    polymarket_crypto_normalize_parser.add_argument(
+        "--discovery",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_crypto_discovery.json",
+        help="Saved discover-polymarket-crypto-markets JSON output.",
+    )
+    polymarket_crypto_normalize_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_snapshots" / "polymarket_crypto" / "normalized",
+        help="Directory for generated manual_polymarket_crypto_event_page_snapshot fixture files.",
+    )
+    polymarket_crypto_normalize_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_crypto_discovery_normalized.json",
+    )
+    polymarket_universe_parser = subparsers.add_parser(
+        "discover-polymarket-market-universe",
+        help=(
+            "Explicit public no-auth Polymarket Gamma/CLOB read-only market universe discovery "
+            "and taxonomy report. Not part of the default scan and never creates candidate pairs."
+        ),
+    )
+    polymarket_universe_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_snapshots" / "polymarket_universe",
+        help="Base directory for timestamped raw public universe snapshots.",
+    )
+    polymarket_universe_parser.add_argument("--limit", type=int, default=1000)
+    polymarket_universe_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    polymarket_universe_parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=2,
+        help="Maximum offset pages to try per public endpoint pattern.",
+    )
+    polymarket_universe_parser.add_argument(
+        "--include-books",
+        action="store_true",
+        help="Also call public CLOB book endpoints for discovered token IDs. Defaults off.",
+    )
+    polymarket_universe_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_market_taxonomy.json",
+    )
+    polymarket_universe_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_market_taxonomy.md",
+    )
+
     kalshi_parser = subparsers.add_parser(
         "fetch-kalshi",
         help="Fetch a small read-only Kalshi market snapshot.",
@@ -145,6 +394,35 @@ def main(argv: list[str] | None = None) -> int:
         help="Include markets with parseable close times before the fetch timestamp.",
     )
 
+    kalshi_crypto_parser = subparsers.add_parser(
+        "fetch-kalshi-crypto-readonly",
+        help="Fetch current/future public Kalshi BTC/ETH crypto threshold markets, optionally with read-only orderbooks.",
+    )
+    kalshi_crypto_parser.add_argument(
+        "--asset",
+        default="BTC,ETH",
+        help="Comma-separated crypto assets to fetch. Supported: BTC, ETH.",
+    )
+    kalshi_crypto_parser.add_argument(
+        "--output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "live_readonly" / "crypto" / "kalshi_live_readonly_snapshot.json",
+    )
+    kalshi_crypto_parser.add_argument("--limit", type=int, default=1000)
+    kalshi_crypto_parser.add_argument("--max-pages", type=int, default=20)
+    kalshi_crypto_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    kalshi_crypto_parser.add_argument(
+        "--max-orderbooks",
+        type=int,
+        default=200,
+        help="Maximum public orderbook endpoints to call when --include-orderbooks is set. Use 0 to skip orderbook calls.",
+    )
+    kalshi_crypto_parser.add_argument(
+        "--include-orderbooks",
+        action="store_true",
+        help="Also call public no-auth Kalshi orderbook endpoints for the retained current/future crypto rows.",
+    )
+
     odds_parser = subparsers.add_parser(
         "fetch-the-odds-api",
         help="Fetch a read-only sportsbook reference odds snapshot from The Odds API.",
@@ -159,9 +437,33 @@ def main(argv: list[str] | None = None) -> int:
     odds_parser.add_argument("--stale-after-seconds", type=int, default=900)
     odds_parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "reports" / "the_odds_api_reference_snapshot.json")
 
+    reference_odds_fv_parser = subparsers.add_parser(
+        "audit-reference-odds-fv",
+        help="Saved-file-only fair-value residual diagnostics for The Odds API reference snapshots.",
+    )
+    reference_odds_fv_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory containing manual_snapshots/the_odds_api snapshots and optional sports reports.",
+    )
+    reference_odds_fv_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "the_odds_api_fv_residuals.json",
+    )
+    reference_odds_fv_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "the_odds_api_fv_residuals.md",
+    )
+
     sx_bet_parser = subparsers.add_parser(
         "fetch-sx-bet-readonly",
-        help="Fetch a public read-only SX Bet research snapshot that remains non-executable.",
+        help=(
+            "Fetch a public read-only REST-only SX Bet research snapshot; no auth, no orders, "
+            "no wallet/signing, diagnostic only."
+        ),
     )
     sx_bet_parser.add_argument("--max-markets", type=int, default=25)
     sx_bet_parser.add_argument("--timeout-seconds", type=float, default=10.0)
@@ -169,7 +471,52 @@ def main(argv: list[str] | None = None) -> int:
     sx_bet_parser.add_argument("--league", help="Optional local league filter for SX Bet research snapshots, for example MLB, NBA, or NFL.")
     sx_bet_parser.add_argument("--query", help="Optional local free-text filter across SX Bet event/team/outcome fields.")
     sx_bet_parser.add_argument("--label", help="Optional safe label for reports/sx_bet/<label>/sx_bet_research_snapshot.json.")
-    sx_bet_parser.add_argument("--output", type=Path)
+    sx_bet_parser.add_argument("--output", type=Path, help="Raw sx_bet_research_snapshot_v1 JSON output path.")
+    sx_bet_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Optional base directory for a timestamped raw SX Bet public snapshot, for example reports/manual_snapshots/sx_bet.",
+    )
+    sx_bet_parser.add_argument(
+        "--json-output",
+        type=Path,
+        help="Optional sx_bet_normalized_draft_v1 JSON output path derived from the fetched raw snapshot.",
+    )
+    sx_bet_parser.add_argument(
+        "--coverage-output",
+        type=Path,
+        help="Optional sx_bet_normalized_draft_coverage_v1 JSON output path.",
+    )
+
+    sx_bet_public_snapshot_parser = subparsers.add_parser(
+        "fetch-sx-bet-public-snapshot",
+        help=(
+            "Alias for fetch-sx-bet-readonly. Public read-only REST only; no auth, no orders, "
+            "no wallet/signing; output is diagnostic only."
+        ),
+    )
+    sx_bet_public_snapshot_parser.add_argument("--max-markets", type=int, default=25)
+    sx_bet_public_snapshot_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    sx_bet_public_snapshot_parser.add_argument("--sport", help="Optional local sport filter for SX Bet research snapshots, for example baseball or basketball.")
+    sx_bet_public_snapshot_parser.add_argument("--league", help="Optional local league filter for SX Bet research snapshots, for example MLB, NBA, or NFL.")
+    sx_bet_public_snapshot_parser.add_argument("--query", help="Optional local free-text filter across SX Bet event/team/outcome fields.")
+    sx_bet_public_snapshot_parser.add_argument("--label", help="Optional safe label for reports/sx_bet/<label>/sx_bet_research_snapshot.json.")
+    sx_bet_public_snapshot_parser.add_argument("--output", type=Path, help="Raw sx_bet_research_snapshot_v1 JSON output path.")
+    sx_bet_public_snapshot_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Optional base directory for a timestamped raw SX Bet public snapshot, for example reports/manual_snapshots/sx_bet.",
+    )
+    sx_bet_public_snapshot_parser.add_argument(
+        "--json-output",
+        type=Path,
+        help="Optional sx_bet_normalized_draft_v1 JSON output path derived from the fetched raw snapshot.",
+    )
+    sx_bet_public_snapshot_parser.add_argument(
+        "--coverage-output",
+        type=Path,
+        help="Optional sx_bet_normalized_draft_coverage_v1 JSON output path.",
+    )
 
     sx_bet_compare_parser = subparsers.add_parser(
         "compare-sx-bet-reference",
@@ -226,7 +573,57 @@ def main(argv: list[str] | None = None) -> int:
     enrich_parser.add_argument("--venue", choices=["kalshi", "polymarket"], required=True)
     enrich_parser.add_argument("--output", type=Path, required=True)
     enrich_parser.add_argument("--timeout-seconds", type=float, default=10.0)
-    enrich_parser.add_argument("--max-snapshot-age-hours", type=float, default=24.0)
+    enrich_parser.add_argument(
+        "--max-snapshot-age-hours",
+        type=float,
+        default=24.0,
+        help=(
+            "Maximum accepted age for the saved source snapshot before read-only book fetch is skipped. "
+            "Increase explicitly when using an old saved snapshot only as a ticker/token list."
+        ),
+    )
+    enrich_parser.add_argument("--preserve-raw-orderbook", action="store_true", help="Preserve raw orderbook payloads in the saved enriched output.")
+
+    enrich_kalshi_parser = subparsers.add_parser(
+        "enrich-kalshi-orderbooks",
+        help="Explicit read-only Kalshi orderbook/depth enrichment for a saved schema-v1 snapshot.",
+    )
+    enrich_kalshi_parser.add_argument("--snapshot", type=Path, required=True)
+    enrich_kalshi_parser.add_argument("--output", type=Path, required=True)
+    enrich_kalshi_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+    enrich_kalshi_parser.add_argument(
+        "--max-snapshot-age-hours",
+        type=float,
+        default=24.0,
+        help=(
+            "Maximum accepted age for the saved Kalshi snapshot before public read-only orderbook fetch is skipped. "
+            "Increase explicitly when using an old saved snapshot only as a ticker list."
+        ),
+    )
+    enrich_kalshi_parser.add_argument("--preserve-raw-orderbook", action="store_true", help="Preserve raw Kalshi orderbook payloads in the saved enriched output.")
+    enrich_kalshi_parser.add_argument(
+        "--max-markets",
+        type=int,
+        default=None,
+        help="If set, stop fetching after this many markets (the rest are tagged max_markets_reached). Bounded by snapshot size.",
+    )
+    enrich_kalshi_parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=0,
+        help="If > 0, log enrichment progress every N markets to stderr.",
+    )
+    enrich_kalshi_parser.add_argument(
+        "--retry-failed-once",
+        action="store_true",
+        help="Retry transient failures (timeout / network / HTTP 5xx / HTTP 429) once.",
+    )
+    enrich_kalshi_parser.add_argument(
+        "--failure-sample-limit",
+        type=int,
+        default=10,
+        help="Maximum sample failed markets to record in the enriched output.",
+    )
 
     evaluate_parser = subparsers.add_parser(
         "evaluate-paper-candidates",
@@ -588,6 +985,64 @@ def main(argv: list[str] | None = None) -> int:
     scout_manifest_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
     scout_manifest_parser.add_argument("--min-depth", type=float, default=1.0)
 
+    audit_event_metadata_parser = subparsers.add_parser(
+        "audit-kalshi-event-metadata",
+        help="Saved-file-only normalize/audit of Kalshi event-metadata JSON files (no live calls, no orders).",
+    )
+    audit_event_metadata_parser.add_argument(
+        "--metadata",
+        dest="metadata_paths",
+        action="append",
+        type=Path,
+        required=True,
+        help="Saved Kalshi event metadata JSON path. Repeat to pass multiple files.",
+    )
+    audit_event_metadata_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_event_metadata_audit.json",
+    )
+    audit_event_metadata_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_event_metadata_audit.md",
+    )
+
+    join_event_metadata_parser = subparsers.add_parser(
+        "join-kalshi-event-metadata",
+        help="Saved-file-only join of normalized Kalshi event metadata into a saved market/orderbook snapshot.",
+    )
+    join_event_metadata_parser.add_argument(
+        "--snapshot",
+        required=True,
+        type=Path,
+        help="Saved Kalshi market/orderbook snapshot JSON.",
+    )
+    join_event_metadata_parser.add_argument(
+        "--metadata",
+        dest="metadata_paths",
+        action="append",
+        type=Path,
+        required=True,
+        help="Saved Kalshi event metadata JSON path. Repeat to pass multiple files.",
+    )
+    join_event_metadata_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_event_metadata_join_report.json",
+    )
+    join_event_metadata_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_event_metadata_join_report.md",
+    )
+    join_event_metadata_parser.add_argument(
+        "--enriched-snapshot-output",
+        type=Path,
+        default=None,
+        help="Optional path to write the enriched snapshot JSON for downstream saved-file diagnostics.",
+    )
+
     paper_fill_parser = subparsers.add_parser(
         "simulate-paper-fills",
         help="Saved-file-only paper fill journal for rows already gated by upstream review logic.",
@@ -609,6 +1064,199 @@ def main(argv: list[str] | None = None) -> int:
     paper_fill_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
     paper_fill_parser.add_argument("--slippage-budget-cents-per-leg", type=float, default=0.0)
 
+    dry_run_parser = subparsers.add_parser(
+        "run-structural-basket-dry-run",
+        help=(
+            "Saved-file-only structural basket dry run: audit metadata, join into snapshot, "
+            "build structural basket review, and simulate paper fills only when STOP_FOR_REVIEW "
+            "is surfaced. No live API, no orders."
+        ),
+    )
+    dry_run_parser.add_argument(
+        "--snapshot",
+        required=True,
+        type=Path,
+        help="Saved Kalshi market/orderbook snapshot JSON.",
+    )
+    dry_run_parser.add_argument(
+        "--metadata",
+        dest="metadata_paths",
+        action="append",
+        type=Path,
+        required=True,
+        help="Saved Kalshi event metadata JSON path. Repeat to pass multiple files.",
+    )
+    dry_run_parser.add_argument(
+        "--summary-json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_dry_run_summary.json",
+    )
+    dry_run_parser.add_argument(
+        "--summary-markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_dry_run_summary.md",
+    )
+    dry_run_parser.add_argument(
+        "--audit-json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write the kalshi_event_metadata_audit sub-report JSON.",
+    )
+    dry_run_parser.add_argument("--audit-markdown-output", type=Path, default=None)
+    dry_run_parser.add_argument(
+        "--join-json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write the kalshi_event_metadata_join sub-report JSON.",
+    )
+    dry_run_parser.add_argument("--join-markdown-output", type=Path, default=None)
+    dry_run_parser.add_argument(
+        "--enriched-snapshot-output",
+        type=Path,
+        default=None,
+        help="Optional path to write the enriched snapshot consumed by detect-structural-baskets.",
+    )
+    dry_run_parser.add_argument(
+        "--structural-json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write the structural basket detector sub-report JSON.",
+    )
+    dry_run_parser.add_argument("--structural-markdown-output", type=Path, default=None)
+    dry_run_parser.add_argument(
+        "--paper-fill-json-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to write the paper-fill journal JSON. Only written when "
+            "STOP_FOR_REVIEW rows triggered paper simulation."
+        ),
+    )
+    dry_run_parser.add_argument("--paper-fill-markdown-output", type=Path, default=None)
+    dry_run_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    dry_run_parser.add_argument("--min-depth", type=float, default=1.0)
+    dry_run_parser.add_argument("--desired-quantity", type=float, default=1.0)
+    dry_run_parser.add_argument("--slippage-budget-cents-per-leg", type=float, default=0.0)
+    dry_run_parser.add_argument(
+        "--skip-paper-fill-simulation",
+        action="store_true",
+        help=(
+            "Skip paper-fill simulation even if STOP_FOR_REVIEW rows are surfaced. "
+            "The detector still runs; the simulator is just not invoked."
+        ),
+    )
+
+    import_metadata_parser = subparsers.add_parser(
+        "import-kalshi-event-metadata",
+        help=(
+            "Saved-file-only acquisition: validate Kalshi event metadata JSON files "
+            "and optionally copy them into a destination directory. No live API calls."
+        ),
+    )
+    import_metadata_parser.add_argument(
+        "--source",
+        dest="sources",
+        action="append",
+        type=Path,
+        required=True,
+        help="Saved Kalshi event metadata JSON file to validate. Repeat for multiple files.",
+    )
+    import_metadata_parser.add_argument(
+        "--destination-dir",
+        type=Path,
+        default=None,
+        help="Optional directory to copy validated files into.",
+    )
+    import_metadata_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing files in the destination directory.",
+    )
+    import_metadata_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_event_metadata_import.json",
+    )
+    import_metadata_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_event_metadata_import.md",
+    )
+
+    hunt_basket_parser = subparsers.add_parser(
+        "hunt-structural-basket-candidates",
+        help=(
+            "Saved-file-only structural basket hunter: sweep saved snapshots, Kalshi event "
+            "metadata, and local_manifest_v1 files; report exactly which groups are closest "
+            "to credible paper review. Never makes live API calls, never places orders, "
+            "never emits PAPER_CANDIDATE. Templates written are INVALID by default."
+        ),
+    )
+    hunt_basket_parser.add_argument(
+        "--snapshots-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Directory to recursively scan for Kalshi market/orderbook snapshots.",
+    )
+    hunt_basket_parser.add_argument(
+        "--metadata-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Directory to recursively scan for Kalshi event metadata JSON files.",
+    )
+    hunt_basket_parser.add_argument(
+        "--manifest-dir",
+        type=Path,
+        default=None,
+        help="Optional directory to recursively scan for local_manifest_v1 manifests.",
+    )
+    hunt_basket_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_hunt.json",
+    )
+    hunt_basket_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_hunt.md",
+    )
+    hunt_basket_parser.add_argument(
+        "--manifest-template-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manifest_templates",
+        help=(
+            "Directory where the hunter writes manifest templates for candidate groups "
+            "missing metadata. Templates are intentionally invalid by default."
+        ),
+    )
+    hunt_basket_parser.add_argument(
+        "--skip-template-writes",
+        action="store_true",
+        help="Compute template suggestions but do not write any template files.",
+    )
+    hunt_basket_parser.add_argument(
+        "--max-quote-age-seconds",
+        type=float,
+        default=1800.0,
+    )
+    hunt_basket_parser.add_argument("--min-depth", type=float, default=1.0)
+    hunt_basket_parser.add_argument("--desired-quantity", type=float, default=1.0)
+    hunt_basket_parser.add_argument("--slippage-budget-cents-per-leg", type=float, default=0.0)
+    hunt_basket_parser.add_argument(
+        "--skip-paper-fill-simulation",
+        action="store_true",
+        help=(
+            "Skip paper-fill simulation even if STOP_FOR_REVIEW rows are surfaced. "
+            "The detector still runs; the simulator is just not invoked."
+        ),
+    )
+    hunt_basket_parser.add_argument(
+        "--top-closest-n",
+        type=int,
+        default=10,
+        help="Maximum number of closest_groups_to_review rows to include in the report.",
+    )
+
     kalshi_native_parser = subparsers.add_parser(
         "audit-kalshi-native-groups",
         help="Saved-file-only audit for explicit Kalshi venue-native event/group completeness metadata.",
@@ -625,6 +1273,27 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=None,
+    )
+
+    kxmlb_evidence_parser = subparsers.add_parser(
+        "audit-kalshi-kxmlb26-event-evidence",
+        help=(
+            "Saved-file-only evidence summary for KXMLB-26 manifest readiness. "
+            "No live API calls, no manifest writes, no approvals, no orders."
+        ),
+    )
+    kxmlb_evidence_parser.add_argument("--input-dir", type=Path, default=PROJECT_ROOT / "reports")
+    kxmlb_evidence_parser.add_argument("--event-ticker", default="KXMLB-26")
+    kxmlb_evidence_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
+    kxmlb_evidence_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_kxmlb26_event_evidence_summary.json",
+    )
+    kxmlb_evidence_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_kxmlb26_event_evidence_summary.md",
     )
 
     graph_parser = subparsers.add_parser(
@@ -666,6 +1335,1172 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=PROJECT_ROOT / "reports" / "market_graph_relative_value_hints.md",
     )
+
+    cross_platform_triage_parser = subparsers.add_parser(
+        "triage-cross-platform-opportunities",
+        help="Saved-file-only cross-platform opportunity triage for review; never emits PAPER_CANDIDATE.",
+    )
+    cross_platform_triage_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports/snapshots directory to scan for diagnostic opportunity rows.",
+    )
+    cross_platform_triage_parser.add_argument(
+        "--graph-hints-path",
+        type=Path,
+        default=None,
+        help="Optional saved market-graph relative-value hints JSON; advisory only.",
+    )
+    cross_platform_triage_parser.add_argument(
+        "--json-output",
+        "--out",
+        dest="json_output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cross_platform_opportunity_triage.json",
+    )
+    cross_platform_triage_parser.add_argument(
+        "--csv-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cross_platform_opportunity_triage.csv",
+    )
+    cross_platform_triage_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cross_platform_opportunity_triage.md",
+    )
+
+    metadata_coverage_parser = subparsers.add_parser(
+        "audit-venue-metadata-coverage",
+        help="Saved-file-only venue metadata/inventory coverage audit for cross-platform matching readiness.",
+    )
+    metadata_coverage_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved snapshots/reports directory to scan for market metadata rows.",
+    )
+    metadata_coverage_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "venue_metadata_coverage.json",
+    )
+    metadata_coverage_parser.add_argument(
+        "--csv-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "venue_metadata_coverage.csv",
+    )
+    metadata_coverage_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "venue_metadata_coverage.md",
+    )
+
+    normalize_markets_parser = subparsers.add_parser(
+        "normalize-market-snapshots",
+        help="Saved-file-only NormalizedMarket contract v0 report for adapter shape/coverage review.",
+    )
+    normalize_markets_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved snapshots/reports directory to scan for market rows.",
+    )
+    normalize_markets_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "normalized_markets_v0.json",
+    )
+    normalize_markets_parser.add_argument(
+        "--coverage-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "normalized_markets_v0_coverage.json",
+    )
+    normalize_markets_parser.add_argument("--csv-output", type=Path, default=None)
+    normalize_markets_parser.add_argument("--markdown-output", type=Path, default=None)
+
+    canonical_registry_parser = subparsers.add_parser(
+        "audit-canonical-convention-registry",
+        help="Saved-file-only audit for manually reviewed canonical convention registry entries.",
+    )
+    canonical_registry_parser.add_argument(
+        "--registry",
+        type=Path,
+        required=True,
+        help="Manual canonical convention registry JSON to validate.",
+    )
+    canonical_registry_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path for the registry audit JSON report.",
+    )
+
+    canonical_registry_coverage_parser = subparsers.add_parser(
+        "audit-canonical-registry-coverage",
+        help="Saved-file-only canonical registry coverage and reviewer-flow report.",
+    )
+    canonical_registry_coverage_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory containing settlement burden and family graduation reports.",
+    )
+    canonical_registry_coverage_parser.add_argument(
+        "--registry",
+        type=Path,
+        default=_default_canonical_registry_path(),
+        help=(
+            "Manual canonical convention registry JSON to compare against proposal scopes. "
+            "Defaults to docs/example_canonical_convention_registry_v0.json when that file exists."
+        ),
+    )
+    canonical_registry_coverage_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "canonical_registry_coverage.json",
+    )
+    canonical_registry_coverage_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "canonical_registry_coverage.md",
+    )
+
+    canonical_registry_expiry_parser = subparsers.add_parser(
+        "audit-canonical-registry-expiry",
+        help="Saved-file-only audit of canonical registry review_until expiry status.",
+    )
+    canonical_registry_expiry_parser.add_argument(
+        "--registry",
+        type=Path,
+        default=PROJECT_ROOT / "docs" / "example_canonical_convention_registry_v0.json",
+        help="Manual canonical convention registry JSON to audit for review_until expiry.",
+    )
+    canonical_registry_expiry_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "canonical_registry_expiry_audit.json",
+    )
+    canonical_registry_expiry_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "canonical_registry_expiry_audit.md",
+    )
+    canonical_registry_expiry_parser.add_argument(
+        "--expiring-soon-days",
+        type=int,
+        default=7,
+        help="Number of days before review_until to flag review_expiring_soon.",
+    )
+
+    pending_registry_entries_parser = subparsers.add_parser(
+        "plan-pending-registry-entries",
+        help="Write pending registry-entry skeleton files from canonical registry coverage; proposals are not trust.",
+    )
+    pending_registry_entries_parser.add_argument(
+        "--coverage",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "canonical_registry_coverage.json",
+        help="Saved canonical_registry_coverage JSON report.",
+    )
+    pending_registry_entries_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "docs" / "pending_registry_entries",
+        help="Directory for pending registry skeleton JSON files.",
+    )
+    pending_registry_entries_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "pending_registry_entries_plan.json",
+    )
+
+    audit_pending_promotion_parser = subparsers.add_parser(
+        "audit-pending-registry-entries-promotion",
+        help=(
+            "Saved-file-only audit of docs/pending_registry_entries/*.json: reports which "
+            "skeletons have been filled in and are structurally ready for manual merge into "
+            "the canonical registry. NEVER mutates the canonical registry."
+        ),
+    )
+    audit_pending_promotion_parser.add_argument(
+        "--pending-dir",
+        type=Path,
+        default=PROJECT_ROOT / "docs" / "pending_registry_entries",
+        help="Directory of pending registry skeleton JSON files.",
+    )
+    audit_pending_promotion_parser.add_argument(
+        "--registry",
+        type=Path,
+        default=_default_canonical_registry_path(),
+        help=(
+            "Optional canonical registry JSON for entry_id collision checks. Defaults to "
+            "docs/example_canonical_convention_registry_v0.json when that file exists."
+        ),
+    )
+    audit_pending_promotion_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "pending_registry_entries_promotion_audit.json",
+    )
+
+    settlement_burden_parser = subparsers.add_parser(
+        "audit-settlement-evidence-burden",
+        help="Saved-file-only family-aware settlement-evidence burden audit; diagnostic only, never emits PAPER_CANDIDATE.",
+    )
+    settlement_burden_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved snapshots/reports directory to scan for market rows (normalized markets preferred).",
+    )
+    settlement_burden_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "settlement_evidence_burden.json",
+    )
+    settlement_burden_parser.add_argument(
+        "--csv-output",
+        type=Path,
+        default=None,
+        help="Optional CSV output for the per-market evidence-burden classification.",
+    )
+    settlement_burden_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=None,
+        help="Optional markdown summary output.",
+    )
+    settlement_burden_parser.add_argument(
+        "--registry-path",
+        type=Path,
+        default=_default_canonical_registry_path(),
+        help=(
+            "Optional path to a manually reviewed canonical convention registry JSON. "
+            "Defaults to docs/example_canonical_convention_registry_v0.json when that file "
+            "exists so reviewed-scope rows are promoted to SETTLEMENT_SOURCE_REVIEW_READY. "
+            "Pass an explicit path to override."
+        ),
+    )
+    settlement_burden_parser.add_argument(
+        "--staleness-seconds",
+        type=int,
+        default=DEFAULT_STALENESS_SECONDS,
+        help="Maximum quote capture age in seconds before the burden audit adds stale_quote.",
+    )
+
+    standardized_candidates_parser = subparsers.add_parser(
+        "generate-standardized-family-candidates",
+        help="Saved-file-only exact typed-key candidate groups for standardized families; diagnostic only.",
+    )
+    standardized_candidates_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory used for source-row evidence lookup.",
+    )
+    standardized_candidates_parser.add_argument(
+        "--burden-report",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "settlement_evidence_burden.json",
+        help="Saved audit-settlement-evidence-burden JSON output.",
+    )
+    standardized_candidates_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "standardized_family_candidates.json",
+    )
+    standardized_candidates_parser.add_argument(
+        "--csv-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "standardized_family_candidates.csv",
+    )
+    standardized_candidates_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "standardized_family_candidates.md",
+    )
+
+    family_graduation_parser = subparsers.add_parser(
+        "plan-family-graduation",
+        help="Saved-file-only family typed-key graduation plan; proposes registry review without creating candidates.",
+    )
+    family_graduation_parser.add_argument(
+        "--family",
+        choices=("CRYPTO_PRICE_THRESHOLD", "FED_FOMC"),
+        default=None,
+        help="Family to plan. If omitted, selects the supported family with the most FAMILY_TYPED_REVIEW_READY rows.",
+    )
+    family_graduation_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory containing settlement_evidence_burden and normalized_markets_v0.",
+    )
+    family_graduation_parser.add_argument(
+        "--registry-path",
+        type=Path,
+        default=_default_canonical_registry_path(),
+        help=(
+            "Optional manually reviewed canonical convention registry JSON for projection only. "
+            "Defaults to docs/example_canonical_convention_registry_v0.json when that file exists."
+        ),
+    )
+    family_graduation_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "family_graduation.json",
+    )
+    family_graduation_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "family_graduation.md",
+    )
+
+    ops_status_parser = subparsers.add_parser(
+        "relative-value-ops-status",
+        help="Saved-file-only operator status summary for the relative-value diagnostics lane.",
+    )
+    ops_status_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory to summarize.",
+    )
+    ops_status_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "relative_value_ops_status.json",
+    )
+    ops_status_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "relative_value_ops_status.md",
+    )
+
+    poly_shape_parser = subparsers.add_parser(
+        "polymarket-taxonomy-shape-scout",
+        help="Saved-file-only Polymarket taxonomy + market-shape scout that ranks exact-matchability likelihood. Diagnostic only; never creates candidate pairs or paper actions.",
+    )
+    poly_shape_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Directory containing polymarket_market_taxonomy.json and polymarket_orderbook_enriched_snapshot.json.",
+    )
+    poly_shape_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_taxonomy_shape_scout.json",
+    )
+    poly_shape_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_taxonomy_shape_scout.md",
+    )
+
+    poly_clob_refresh_parser = subparsers.add_parser(
+        "refresh-polymarket-clob-for-taxonomy-candidates",
+        help=(
+            "Public no-auth Polymarket CLOB refresh-and-attach for top taxonomy-shape "
+            "candidates. Diagnostic only; never creates paper candidates or exact-payoff equivalences."
+        ),
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--taxonomy-json",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_taxonomy_shape_scout.json",
+        help="Saved polymarket-taxonomy-shape-scout JSON to read candidate rows from.",
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_snapshots" / "polymarket_clob_taxonomy",
+        help="Directory under which a timestamped folder of raw CLOB book snapshots is written.",
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_clob_taxonomy_refresh.json",
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--enriched-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_taxonomy_shape_scout_enriched.json",
+        help=(
+            "Copy of the scout JSON with refreshed CLOB quote fields and recomputed blockers "
+            "merged in. Stand-alone enriched view; never emits paper candidates."
+        ),
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_clob_taxonomy_refresh.md",
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--max-candidates",
+        type=int,
+        default=200,
+        help="Maximum number of candidate rows to refresh (after shape + min-score filtering).",
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--shape",
+        dest="shape_filter",
+        type=str,
+        default="point_in_time_threshold",
+        choices=[*POLYMARKET_CLOB_TAXONOMY_REFRESH_DEFAULT_SHAPE_PRIORITY, "all"],
+        help="Restrict to a single market_shape value; pass 'all' to drop the shape filter.",
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--min-score",
+        type=float,
+        default=30.0,
+        help="Minimum exact_matchability_score (review_priority_score) for a row to be eligible.",
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--include-deadline-range",
+        action="store_true",
+        help=(
+            "Include deadline_threshold_touch / range_hit / range_bucket / crypto_deadline_range_hit "
+            "shapes (excluded by default; these can never be exact point-in-time)."
+        ),
+    )
+    poly_clob_refresh_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=10.0,
+        help="HTTP timeout for each public CLOB book request.",
+    )
+
+    poly_point_audit_parser = subparsers.add_parser(
+        "polymarket-point-in-time-typed-key-audit",
+        help=(
+            "Saved-file-only audit of Polymarket point-in-time taxonomy rows. "
+            "Ranks typed-key completeness and targeted CLOB refresh candidates; diagnostic only."
+        ),
+    )
+    poly_point_audit_parser.add_argument(
+        "--taxonomy-json",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_taxonomy_shape_scout.json",
+        help="Saved polymarket-taxonomy-shape-scout JSON.",
+    )
+    poly_point_audit_parser.add_argument(
+        "--enriched-json",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_taxonomy_shape_scout_enriched.json",
+        help="Saved enriched taxonomy JSON with any attached CLOB evidence.",
+    )
+    poly_point_audit_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_point_in_time_typed_key_audit.json",
+    )
+    poly_point_audit_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "polymarket_point_in_time_typed_key_audit.md",
+    )
+
+    kalshi_crypto_audit_parser = subparsers.add_parser(
+        "kalshi-crypto-typed-key-audit",
+        help=(
+            "Saved-file-only audit of Kalshi crypto price-threshold rows. Extracts explicit "
+            "typed keys, classifies shape, tags blockers, and emits diagnostic CDNA / "
+            "Polymarket peer hints. Never creates candidate pairs or paper actions."
+        ),
+    )
+    kalshi_crypto_audit_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help=(
+            "Directory containing normalized_markets_v0.json plus optional CDNA snapshot and "
+            "Polymarket point-in-time typed-key audit reports."
+        ),
+    )
+    kalshi_crypto_audit_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_crypto_typed_key_audit.json",
+    )
+    kalshi_crypto_audit_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "kalshi_crypto_typed_key_audit.md",
+    )
+
+    crypto_peer_plan_parser = subparsers.add_parser(
+        "crypto-peer-acquisition-plan",
+        help=(
+            "Saved-file-only planner that turns the typed-complete Kalshi crypto grid into "
+            "precise Polymarket / CDNA / Kalshi orderbook acquisition targets. Diagnostic only; "
+            "never creates candidate pairs, performs live fetches, or emits paper actions."
+        ),
+    )
+    crypto_peer_plan_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help=(
+            "Directory containing kalshi_crypto_typed_key_audit.json, "
+            "polymarket_point_in_time_typed_key_audit.json, polymarket_taxonomy_shape_scout_enriched.json, "
+            "cdna_crypto_basis_risk_scout.json, and core_trio_peer_coverage_audit.json."
+        ),
+    )
+    crypto_peer_plan_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_peer_acquisition_plan.json",
+    )
+    crypto_peer_plan_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_peer_acquisition_plan.md",
+    )
+
+    crypto_payoff_calendar_parser = subparsers.add_parser(
+        "crypto-payoff-calendar-audit",
+        help=(
+            "Saved-file-only crypto payoff-calendar ontology audit. Classifies every saved Kalshi / "
+            "Polymarket / CDNA crypto row into a payoff-calendar shape (daily 5pm / hourly / weekly "
+            "Friday / intraday touch / deadline touch / up-down / all-time-high / range bucket / "
+            "point-in-time) and applies a conservative cross-venue compatibility matrix. Diagnostic only."
+        ),
+    )
+    crypto_payoff_calendar_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help=(
+            "Directory containing kalshi_crypto_typed_key_audit.json, "
+            "polymarket_taxonomy_shape_scout_enriched.json, polymarket_point_in_time_typed_key_audit.json, "
+            "crypto_com_predict_cdna_research_snapshot.json, and cdna_crypto_basis_risk_scout.json."
+        ),
+    )
+    crypto_payoff_calendar_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_payoff_calendar_audit.json",
+    )
+    crypto_payoff_calendar_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_payoff_calendar_audit.md",
+    )
+
+    crypto_manual_workbench_parser = subparsers.add_parser(
+        "crypto-manual-discovery-workbench",
+        help=(
+            "Saved-file-only manual discovery workbench. Reads the crypto-payoff-calendar-audit JSON "
+            "and emits a per-venue checklist of the highest-priority manual evidence Mason must "
+            "collect (rules text, settlement source, observation time, comparator, identifiers). "
+            "Emits diagnostic manual_manifest_candidate templates with approved=false; never reaches "
+            "the evaluator or trusted-manifest tier."
+        ),
+    )
+    crypto_manual_workbench_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Directory containing crypto_payoff_calendar_audit.json.",
+    )
+    crypto_manual_workbench_parser.add_argument(
+        "--audit-json",
+        type=Path,
+        default=None,
+        help="Override path to a saved crypto_payoff_calendar_audit.json. Default: <input-dir>/crypto_payoff_calendar_audit.json.",
+    )
+    crypto_manual_workbench_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_manual_discovery_workbench.json",
+    )
+    crypto_manual_workbench_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_manual_discovery_workbench.md",
+    )
+    crypto_manual_workbench_parser.add_argument(
+        "--max-targets-per-group",
+        type=int,
+        default=20,
+        help="Maximum number of manual discovery targets to emit per payoff-calendar group.",
+    )
+
+    manual_evidence_parser = subparsers.add_parser(
+        "manual-evidence-requirements",
+        help=(
+            "Saved-file-only manual evidence requirements catalogue + playbook. Emits the full "
+            "per-vertical per-platform list of manual evidence Mason needs to capture (rules text, "
+            "settlement source, comparator, observation time, fee schedule, fresh quote, etc.) to "
+            "move rows from missing-evidence into source-review. Diagnostic only; never clears "
+            "evaluator gates and never creates paper candidates."
+        ),
+    )
+    manual_evidence_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help=(
+            "Directory containing the saved reports the catalogue consults to enrich item status "
+            "(kalshi_crypto_typed_key_audit.json, crypto_payoff_calendar_audit.json, "
+            "family_graduation_fed.json, default_sports_sweep_summary.json, "
+            "ibkr_forecastex_quote_diagnostics.json, the_odds_api_fv_residuals.json, "
+            "relative_value_ops_status.json)."
+        ),
+    )
+    manual_evidence_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_evidence_requirements.json",
+    )
+    manual_evidence_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_evidence_requirements.md",
+    )
+
+    cdna_basis_parser = subparsers.add_parser(
+        "cdna-crypto-basis-risk-scout",
+        help="Saved-file-only CDNA / Crypto.com Predict crypto basis-risk scout. Emits BASIS_RISK_REVIEW / WATCH / MANUAL_REVIEW only; never exact-equality or paper actions.",
+    )
+    cdna_basis_parser.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="Path to a saved CDNA fixture JSON file (top-level array or single object).",
+    )
+    cdna_basis_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cdna_crypto_basis_risk_scout.json",
+    )
+    cdna_basis_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cdna_crypto_basis_risk_scout.md",
+    )
+    cdna_basis_parser.add_argument(
+        "--peer-input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Directory containing normalized_markets_v0.json with saved Kalshi/Polymarket crypto rows for peer comparison.",
+    )
+
+    scout_parser = subparsers.add_parser(
+        "cross-venue-opportunity-scout",
+        help="Saved-file-only cross-venue diagnostic scout that ranks closest review targets and their blockers. Does not create candidate pairs or paper actions.",
+    )
+    scout_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory to scan.",
+    )
+    scout_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cross_venue_opportunity_scout.json",
+    )
+    scout_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cross_venue_opportunity_scout.md",
+    )
+    scout_parser.add_argument(
+        "--polymarket-enriched-json",
+        type=Path,
+        default=None,
+        help="Optional enriched Polymarket taxonomy JSON with attached CLOB quote evidence. Defaults to input-dir/polymarket_taxonomy_shape_scout_enriched.json when present.",
+    )
+    scout_parser.add_argument(
+        "--active-platforms",
+        default="kalshi,polymarket,cdna",
+        help="Comma-separated active platform filter for ranking. Rows outside this set stay in the report as queued/inactive.",
+    )
+
+    core_trio_peer_parser = subparsers.add_parser(
+        "core-trio-peer-coverage-audit",
+        help=(
+            "Saved-file-only diagnostic audit of Kalshi, Polymarket, and CDNA peer coverage. "
+            "Identifies missing Kalshi family coverage and typed-key gaps; creates no pairs or paper actions."
+        ),
+    )
+    core_trio_peer_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory to audit.",
+    )
+    core_trio_peer_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "core_trio_peer_coverage_audit.json",
+    )
+    core_trio_peer_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "core_trio_peer_coverage_audit.md",
+    )
+
+    existing_paper_audit_parser = subparsers.add_parser(
+        "audit-existing-paper-candidates",
+        help="Saved-file-only forensic audit of existing evaluator positive rows; creates no new candidates.",
+    )
+    existing_paper_audit_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory to scan.",
+    )
+    existing_paper_audit_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "existing_paper_candidate_audit.json",
+    )
+    existing_paper_audit_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "existing_paper_candidate_audit.md",
+    )
+
+    stale_archive_plan_parser = subparsers.add_parser(
+        "plan-stale-report-archive",
+        help="Saved-file-only stale evaluator/report archive plan; prints suggested move commands but moves nothing.",
+    )
+    stale_archive_plan_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory to scan.",
+    )
+    stale_archive_plan_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "stale_report_archive_plan.json",
+    )
+    stale_archive_plan_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "stale_report_archive_plan.md",
+    )
+
+    stale_archive_apply_parser = subparsers.add_parser(
+        "apply-stale-report-archive-plan",
+        help="Dry-run or apply the saved stale report archive plan with shutil.move; dry-run by default.",
+    )
+    stale_archive_apply_parser.add_argument(
+        "--plan",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "stale_report_archive_plan.json",
+        help="Saved stale_report_archive_plan.json to read.",
+    )
+    stale_archive_apply_parser.add_argument(
+        "--applied-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "stale_report_archive_applied.json",
+        help="Applied manifest written only when --apply is used.",
+    )
+    stale_archive_apply_mode = stale_archive_apply_parser.add_mutually_exclusive_group()
+    stale_archive_apply_mode.add_argument("--dry-run", action="store_true", help="Print moves and modify nothing.")
+    stale_archive_apply_mode.add_argument("--apply", action="store_true", help="Move only files listed in the saved plan.")
+
+    paper_readiness_probe_parser = subparsers.add_parser(
+        "audit-paper-readiness-probe",
+        help="Saved-file-only probe for reviewed-scope rows still blocked before execution readiness.",
+    )
+    paper_readiness_probe_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory containing burden, registry coverage, graduation, and normalized reports.",
+    )
+    paper_readiness_probe_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "paper_readiness_probe.json",
+    )
+    paper_readiness_probe_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "paper_readiness_probe.md",
+    )
+
+    mlb_revival_status_parser = subparsers.add_parser(
+        "run-mlb-world-series-revival-status",
+        help="Saved-file-only MLB World Series revival checklist using strict same-payoff-board evidence and saved enrichment.",
+    )
+    mlb_revival_status_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory to inspect.",
+    )
+    mlb_revival_status_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_revival_status.json",
+    )
+    mlb_revival_status_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "mlb_world_series_revival_status.md",
+    )
+
+    platform_api_expansion_parser = subparsers.add_parser(
+        "audit-platform-api-expansion",
+        help="Saved-file-only platform API adapter readiness matrix; no live fetching or evaluator promotion.",
+    )
+    platform_api_expansion_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory used for fixture/report evidence summaries.",
+    )
+    platform_api_expansion_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "platform_api_expansion.json",
+    )
+    platform_api_expansion_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "platform_api_expansion.md",
+    )
+
+    crypto_com_predict_parser = subparsers.add_parser(
+        "parse-crypto-com-predict-cdna-fixtures",
+        help="Parse saved Crypto.com Predict/CDNA fixtures into a research-only snapshot; no live fetching.",
+    )
+    crypto_com_predict_parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        action="append",
+        default=None,
+        help="Directory containing saved Crypto.com Predict/CDNA HTML or JSON fixtures.",
+    )
+    crypto_com_predict_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_com_predict_cdna_research_snapshot.json",
+    )
+
+    cdna_kalshi_basis_parser = subparsers.add_parser(
+        "compare-cdna-vs-kalshi-btc-basis-risk",
+        help="Saved-file-only CDNA x Kalshi BTC basis-risk join; diagnostic only and never evaluator input.",
+    )
+    cdna_kalshi_basis_parser.add_argument(
+        "--cdna",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_com_predict_cdna_research_snapshot.json",
+        help="Saved Crypto.com Predict/CDNA research snapshot JSON.",
+    )
+    cdna_kalshi_basis_parser.add_argument(
+        "--standardized",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "standardized_family_candidates.json",
+        help="Saved standardized family candidates JSON.",
+    )
+    cdna_kalshi_basis_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cdna_vs_kalshi_btc_basis_risk.json",
+    )
+
+    sx_bet_saved_parser = subparsers.add_parser(
+        "normalize-sx-bet-saved",
+        help="Saved-file-only SX Bet draft normalizer; research-only and never evaluator input.",
+    )
+    sx_bet_saved_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory to scan for SX Bet research snapshots.",
+    )
+    sx_bet_saved_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_normalized_draft.json",
+    )
+    sx_bet_saved_parser.add_argument(
+        "--coverage-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_normalized_draft_coverage.json",
+    )
+
+    sx_bet_typed_keys_parser = subparsers.add_parser(
+        "audit-sx-bet-sports-typed-keys",
+        help="Saved-file-only SX Bet sports typed-key coverage audit; no candidates or evaluator integration.",
+    )
+    sx_bet_typed_keys_parser.add_argument(
+        "--input",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_normalized_draft.json",
+        help="Saved normalize-sx-bet-saved JSON report.",
+    )
+    sx_bet_typed_keys_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_sports_typed_keys.json",
+    )
+    sx_bet_typed_keys_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_sports_typed_keys.md",
+    )
+
+    sx_bet_overlap_parser = subparsers.add_parser(
+        "audit-sx-bet-sports-overlap",
+        help="Saved-file-only SX Bet sports typed-key overlap diagnostics; no candidates or evaluator integration.",
+    )
+    sx_bet_overlap_parser.add_argument(
+        "--sx-bet-typed-keys",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_sports_typed_keys.json",
+        help="Saved audit-sx-bet-sports-typed-keys JSON report.",
+    )
+    sx_bet_overlap_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports",
+        help="Saved reports directory containing normalized_markets_v0 and settlement_evidence_burden reports.",
+    )
+    sx_bet_overlap_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_sports_overlap.json",
+    )
+    sx_bet_overlap_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sx_bet_sports_overlap.md",
+    )
+    sx_bet_overlap_parser.add_argument(
+        "--require-game-level-target",
+        action="store_true",
+        help="Only consider Kalshi/Polymarket target rows with game-level sports market types.",
+    )
+
+    mlb_daily_residual_parser = subparsers.add_parser(
+        "sports-mlb-daily-residual-risk-scout",
+        help=(
+            "Saved-evidence-only MLB daily game-winner residual-risk scout. "
+            "The contingency-risk override is default-off and never affects strict evaluator gates."
+        ),
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--kalshi-evidence",
+        type=Path,
+        required=True,
+        help="Saved normalized Kalshi MLB daily-game evidence JSON.",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--polymarket-evidence",
+        type=Path,
+        required=True,
+        help="Saved normalized Polymarket MLB daily-game evidence JSON.",
+    )
+    mlb_daily_residual_parser.add_argument("--date", required=True, help="Slate date label, e.g. 2026-05-28.")
+    mlb_daily_residual_parser.add_argument(
+        "--accept-mlb-daily-contingency-risk",
+        action="store_true",
+        help="Explicitly accept MLB daily-game residual postponement/suspension/cancellation tail risk for this diagnostic run only.",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--include-live-games",
+        action="store_true",
+        help="Allow live/in-progress games to reach residual-risk review if all other diagnostic gates pass. Defaults off.",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--max-quote-age-seconds",
+        type=float,
+        default=MLB_DAILY_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+        help="Maximum quote age before stale_or_missing_quote blocks the row.",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--min-available-notional",
+        type=float,
+        default=MLB_DAILY_RESIDUAL_RISK_DEFAULT_MIN_AVAILABLE_NOTIONAL,
+        help="Minimum explicit same-unit available notional before a row can reach residual-risk shadow review.",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sports_mlb_daily_residual_risk_scout.json",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sports_mlb_daily_residual_risk_scout.md",
+    )
+
+    mlb_daily_fetch_parser = subparsers.add_parser(
+        "fetch-mlb-daily-game-evidence",
+        help=(
+            "Public no-auth collector for MLB daily game-winner Kalshi/Polymarket evidence. "
+            "Writes raw snapshots and normalized evidence only."
+        ),
+    )
+    mlb_daily_fetch_parser.add_argument(
+        "--date",
+        default=None,
+        help="Slate date in YYYY-MM-DD. Defaults to current local date if omitted.",
+    )
+    mlb_daily_fetch_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Raw snapshot base directory. Defaults to reports/live_readonly/mlb_daily/<date>.",
+    )
+    mlb_daily_fetch_parser.add_argument(
+        "--normalized-output-dir",
+        type=Path,
+        default=None,
+        help="Normalized output directory. Defaults to reports/manual_evidence/sports/mlb_daily_games/<date>/normalized.",
+    )
+    mlb_daily_fetch_parser.add_argument("--max-games", type=int, default=20)
+    mlb_daily_fetch_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+
+    mlb_world_series_fetch_parser = subparsers.add_parser(
+        "fetch-mlb-world-series-evidence",
+        help=(
+            "Public no-auth collector for MLB World Series/Pro Baseball Champion futures evidence. "
+            "Writes raw snapshots and normalized evidence only."
+        ),
+    )
+    mlb_world_series_fetch_parser.add_argument("--season", required=True, help="Season year, e.g. 2026.")
+    mlb_world_series_fetch_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Raw snapshot base directory. Defaults to reports/live_readonly/mlb_world_series/<season>.",
+    )
+    mlb_world_series_fetch_parser.add_argument(
+        "--normalized-output-dir",
+        type=Path,
+        default=None,
+        help="Normalized output directory. Defaults to reports/manual_evidence/sports/mlb_world_series_<season>.",
+    )
+    mlb_world_series_fetch_parser.add_argument("--timeout-seconds", type=float, default=10.0)
+
+    mlb_world_series_compare_parser = subparsers.add_parser(
+        "sports-mlb-world-series-evidence-compare",
+        help=(
+            "Saved-evidence-only MLB World Series Kalshi/Polymarket source comparison. "
+            "Diagnostic only; never creates candidate pairs or evaluator actions."
+        ),
+    )
+    mlb_world_series_compare_parser.add_argument(
+        "--kalshi-evidence",
+        type=Path,
+        required=True,
+        help="Saved normalized Kalshi MLB World Series evidence JSON.",
+    )
+    mlb_world_series_compare_parser.add_argument(
+        "--polymarket-evidence",
+        type=Path,
+        required=True,
+        help="Saved normalized Polymarket MLB World Series evidence JSON.",
+    )
+    mlb_world_series_compare_parser.add_argument(
+        "--accept-world-series-remote-tail-risk",
+        action="store_true",
+        help="Record human acceptance of no-champion/Other-vs-proportional remote tail risk for diagnostics only.",
+    )
+    mlb_world_series_compare_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sports_mlb_world_series_cross_venue_comparison.json",
+    )
+    mlb_world_series_compare_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sports_mlb_world_series_cross_venue_comparison.md",
+    )
+
+    mlb_world_series_residual_parser = subparsers.add_parser(
+        "sports-mlb-world-series-residual-risk-scout",
+        help=(
+            "Saved-evidence-only MLB World Series residual-risk shadow scout. "
+            "Diagnostic only; remote-tail-risk override is explicit and default-off."
+        ),
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--kalshi-evidence",
+        type=Path,
+        required=True,
+        help="Saved normalized Kalshi MLB World Series evidence JSON.",
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--polymarket-evidence",
+        type=Path,
+        required=True,
+        help="Saved normalized Polymarket MLB World Series evidence JSON.",
+    )
+    mlb_world_series_residual_parser.add_argument("--season", required=True, help="Season year, e.g. 2026.")
+    mlb_world_series_residual_parser.add_argument(
+        "--accept-world-series-remote-tail-risk",
+        action="store_true",
+        help="Explicitly accept no-champion/Other-vs-proportional remote tail risk for this diagnostic run only.",
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--operator-accepted-as-arb",
+        action="store_true",
+        help=(
+            "Scoped operator-approved arb mode for MLB World Series winner markets only. "
+            "Requires --accept-world-series-remote-tail-risk and never emits standard paper candidates."
+        ),
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--max-quote-age-seconds",
+        type=float,
+        default=MLB_WORLD_SERIES_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+        help="Maximum quote age before stale_or_missing_quote blocks a row.",
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--min-available-notional",
+        type=float,
+        default=MLB_WORLD_SERIES_RESIDUAL_RISK_DEFAULT_MIN_AVAILABLE_NOTIONAL,
+        help="Minimum explicit same-unit available notional before a row can reach residual-risk shadow review.",
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sports_mlb_world_series_residual_risk_scout.json",
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "sports_mlb_world_series_residual_risk_scout.md",
+    )
+
+    operator_convergence_parser = subparsers.add_parser(
+        "operator-arb-convergence-plan",
+        help=(
+            "Saved-report-only convergence and early-exit plan for operator-approved arb rows. "
+            "Diagnostic only; never places trades or emits standard paper candidates."
+        ),
+    )
+    operator_convergence_parser.add_argument("--input-report", type=Path, required=True)
+    operator_convergence_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "operator_arb_convergence_plan.json",
+    )
+    operator_convergence_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "operator_arb_convergence_plan.md",
+    )
+    operator_convergence_parser.add_argument("--target-exit-edge", type=float, default=0.015)
+    operator_convergence_parser.add_argument("--min-hold-net-edge", type=float, default=0.02)
+    operator_convergence_parser.add_argument("--min-annualized-return", type=float, default=0.10)
+    operator_convergence_parser.add_argument(
+        "--settlement-date",
+        help="Optional YYYY-MM-DD settlement date for hold-to-settlement annualized return diagnostics.",
+    )
+    operator_convergence_parser.add_argument("--max-capital-tieup-days", type=int, default=45)
 
     markout_parser = subparsers.add_parser(
         "replay-paper-candidate-markouts",
@@ -813,6 +2648,147 @@ def main(argv: list[str] | None = None) -> int:
         "--markdown-output",
         type=Path,
         default=PROJECT_ROOT / "reports" / "ibkr_forecastex_fixture_inspection.md",
+    )
+
+    ibkr_doctor_parser = subparsers.add_parser(
+        "ibkr-forecastex-access-doctor",
+        help=(
+            "Check local IBKR Client Portal Gateway reachability/auth status only. "
+            "Public/local read-only diagnostics; no login, auth material, account, order, portfolio, wallet, or signing calls."
+        ),
+    )
+    ibkr_doctor_parser.add_argument("--base-url", default=DEFAULT_IBKR_FORECASTEX_BASE_URL)
+    ibkr_doctor_parser.add_argument("--timeout-seconds", type=float, default=5.0)
+    ibkr_doctor_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_access_doctor.json",
+    )
+
+    ibkr_fetch_parser = subparsers.add_parser(
+        "fetch-ibkr-forecastex-readonly",
+        help=(
+            "Fetch a local IBKR / ForecastEx read-only diagnostic snapshot from Client Portal Gateway. "
+            "No auth material, no account/order/portfolio calls, no wallet/signing, diagnostic output only."
+        ),
+    )
+    ibkr_fetch_parser.add_argument("--base-url", default=DEFAULT_IBKR_FORECASTEX_BASE_URL)
+    ibkr_fetch_parser.add_argument("--timeout-seconds", type=float, default=8.0)
+    ibkr_fetch_parser.add_argument("--max-contracts", type=int, default=100)
+    ibkr_fetch_parser.add_argument(
+        "--max-contract-info-requests",
+        type=int,
+        default=DEFAULT_MAX_CONTRACT_INFO_REQUESTS,
+        help="Bound read-only secdef/info contract-detail follow-up requests after strikes discovery.",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--max-followup-errors",
+        type=int,
+        default=DEFAULT_MAX_FOLLOWUP_ERRORS,
+        help="Stop read-only ForecastEx follow-up discovery after this many gateway request failures.",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--search-terms",
+        default=None,
+        help="Comma-separated read-only secdef search terms, for example ForecastEx,FORECASTX,event contract,BTC.",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--forecastx-doc-seed",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Try documented ForecastEx seed symbols first, with FF first. Use --no-forecastx-doc-seed to disable.",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--forecastx-months",
+        default=None,
+        help=(
+            "Explicit bounded ForecastEx options-style months to inspect, for example JUN26. "
+            "When omitted, the fetcher records forecastx_month_required and does not guess month ranges."
+        ),
+    )
+    ibkr_fetch_parser.add_argument(
+        "--seed-conids",
+        type=Path,
+        help="Optional text file of operator-provided conids, one per line. Uses only read-only secdef info and market-data snapshot endpoints.",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_snapshots" / "ibkr_forecastex",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_normalized_draft.json",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--discovery-json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_discovery_candidates.json",
+    )
+    ibkr_fetch_parser.add_argument(
+        "--discovery-markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_discovery_candidates.md",
+    )
+
+    ibkr_pipeline_parser = subparsers.add_parser(
+        "ibkr-forecastex-readonly-pipeline",
+        help=(
+            "Run the safe IBKR / ForecastEx read-only diagnostic pipeline after manual Gateway login. "
+            "No browser, login automation, account, portfolio, position, balance, or order calls."
+        ),
+    )
+    ibkr_pipeline_parser.add_argument("--base-url", default=DEFAULT_IBKR_FORECASTEX_BASE_URL)
+    ibkr_pipeline_parser.add_argument("--wait-for-auth-seconds", type=int, default=0)
+    ibkr_pipeline_parser.add_argument("--poll-seconds", type=float, default=10.0)
+    ibkr_pipeline_parser.add_argument("--search-terms", default="FF")
+    ibkr_pipeline_parser.add_argument(
+        "--forecastx-months",
+        required=True,
+        help="Explicit bounded ForecastEx options-style months to inspect, for example JUN26.",
+    )
+    ibkr_pipeline_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_snapshots" / "ibkr_forecastex",
+    )
+    ibkr_pipeline_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_normalized_draft.json",
+    )
+    ibkr_pipeline_parser.add_argument(
+        "--max-contract-info-requests",
+        type=int,
+        default=DEFAULT_MAX_CONTRACT_INFO_REQUESTS,
+    )
+    ibkr_pipeline_parser.add_argument("--timeout-seconds", type=float, default=8.0)
+    ibkr_pipeline_parser.add_argument(
+        "--max-followup-errors",
+        type=int,
+        default=DEFAULT_MAX_FOLLOWUP_ERRORS,
+    )
+    ibkr_pipeline_parser.add_argument(
+        "--ops-json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "relative_value_ops_status.json",
+    )
+    ibkr_pipeline_parser.add_argument(
+        "--ops-markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "relative_value_ops_status.md",
+    )
+
+    ibkr_memo_parser = subparsers.add_parser(
+        "validate-ibkr-forecastex-manual-memo",
+        help="Validate a manually filled IBKR / ForecastEx FF UI memo. Diagnostic only; no source-registry or evaluator effects.",
+    )
+    ibkr_memo_parser.add_argument("--memo-json", type=Path, required=True)
+    ibkr_memo_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ibkr_forecastex_manual_ui_memo_validation.json",
     )
 
     prophetx_fixture_parser = subparsers.add_parser(
@@ -1041,6 +3017,100 @@ def main(argv: list[str] | None = None) -> int:
             include_not_accepting_orders=args.include_not_accepting_orders,
             include_past_end_date=args.include_past_end_date,
         )
+    if args.command == "discover-polymarket-crypto-markets":
+        queries_from_file: list[str] = []
+        if getattr(args, "queries_file", None) is not None:
+            queries_from_file = [
+                line.strip()
+                for line in args.queries_file.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+        report = write_polymarket_crypto_discovery_files(
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            limit=args.limit,
+            include_books=args.include_books,
+            timeout_seconds=args.timeout_seconds,
+            max_pages=args.max_pages,
+            targeted_query=getattr(args, "query", None),
+            targeted_queries=queries_from_file or None,
+            targeted_asset=getattr(args, "asset", None),
+            targeted_target_date=getattr(args, "target_date", None),
+        )
+        summary = report["summary"]
+        targeted = report.get("targeted_filter") or {}
+        print(
+            "polymarket_crypto_discovery_status=OK "
+            f"endpoints_attempted={summary['endpoints_attempted']} "
+            f"raw_files_written={summary['raw_files_written']} "
+            f"candidate_events={summary['candidate_events']} "
+            f"candidate_markets={summary['candidate_markets']} "
+            f"threshold_like_candidates={summary['threshold_like_candidates']} "
+            f"token_ids_available={summary['token_ids_available']} "
+            f"books_saved={summary['books_saved']} "
+            f"book_tokens_saved={summary.get('book_token_ids_saved_count', 0)} "
+            f"book_tokens_failed={summary.get('book_token_ids_failed_count', 0)} "
+            f"candidates_with_any_book={summary.get('candidates_with_any_book_attached_count', 0)} "
+            f"candidates_with_all_books={summary.get('candidates_with_all_books_attached_count', 0)} "
+            f"targeted_filter_active={str(bool(targeted.get('active'))).lower()} "
+            f"targeted_filter_mode={targeted.get('targeted_filter_mode') or 'off'} "
+            f"targeted_rows_found={summary.get('targeted_rows_found', 0)} "
+            f"targeted_point_in_time_rows={summary.get('targeted_point_in_time_rows', 0)} "
+            f"targeted_deadline_or_range_hit_rows={summary.get('targeted_deadline_or_range_hit_rows', 0)} "
+            f"targeted_typed_rows={summary.get('targeted_typed_rows', 0)} "
+            f"targeted_rows_with_token_ids={summary.get('targeted_rows_with_token_ids', 0)} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "normalize-polymarket-crypto-discovery":
+        report = write_polymarket_crypto_discovery_normalization_files(
+            discovery_path=args.discovery,
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+        )
+        summary = report["summary"]
+        print(
+            "polymarket_crypto_discovery_normalized_status=OK "
+            f"discovery_candidates_read={summary['discovery_candidates_read']} "
+            f"normalized_fixtures_written={summary['normalized_fixtures_written']} "
+            f"markets_expanded={summary['markets_expanded']} "
+            f"point_in_time={summary['point_in_time_count']} "
+            f"monthly_extreme={summary['monthly_extreme_count']} "
+            f"range_hit={summary['range_hit_count']} "
+            f"token_ids_carried={summary['token_ids_carried']} "
+            f"book_files_attached={summary.get('book_files_attached_total', 0)} "
+            f"fixtures_with_any_book={summary.get('fixtures_with_any_book_attached', 0)} "
+            f"fixtures_with_all_books={summary.get('fixtures_with_all_tokens_with_books', 0)} "
+            f"json={args.json_output}"
+        )
+        return 0
+    if args.command == "discover-polymarket-market-universe":
+        report = write_polymarket_market_universe_files(
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            limit=args.limit,
+            include_books=args.include_books,
+            timeout_seconds=args.timeout_seconds,
+            max_pages=args.max_pages,
+        )
+        summary = report["summary"]
+        print(
+            "polymarket_market_taxonomy_status=OK "
+            f"endpoints_attempted={summary['endpoints_attempted']} "
+            f"raw_files_written={summary['raw_files_written']} "
+            f"total_events={summary['total_events']} "
+            f"total_markets={summary['total_markets']} "
+            f"typed_key_complete={summary['typed_key_complete_count']} "
+            f"partial={summary['partial_count']} "
+            f"unknown={summary['unknown_count']} "
+            f"books_saved={summary.get('books_saved', 0)} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
     if args.command == "fetch-kalshi":
         return fetch_kalshi(
             args.limit,
@@ -1052,6 +3122,16 @@ def main(argv: list[str] | None = None) -> int:
             max_pages=args.max_pages,
             include_closed=args.include_closed,
             include_past_close_time=args.include_past_close_time,
+        )
+    if args.command == "fetch-kalshi-crypto-readonly":
+        return fetch_kalshi_crypto_readonly(
+            assets=args.asset,
+            output=args.output,
+            limit=args.limit,
+            max_pages=args.max_pages,
+            timeout_seconds=args.timeout_seconds,
+            include_orderbooks=args.include_orderbooks,
+            max_orderbooks=args.max_orderbooks,
         )
     if args.command == "fetch-the-odds-api":
         return fetch_the_odds_api(
@@ -1065,7 +3145,7 @@ def main(argv: list[str] | None = None) -> int:
             stale_after_seconds=args.stale_after_seconds,
             output=args.output,
         )
-    if args.command == "fetch-sx-bet-readonly":
+    if args.command in {"fetch-sx-bet-readonly", "fetch-sx-bet-public-snapshot"}:
         return fetch_sx_bet_readonly(
             max_markets=args.max_markets,
             timeout_seconds=args.timeout_seconds,
@@ -1074,6 +3154,9 @@ def main(argv: list[str] | None = None) -> int:
             query=args.query,
             label=args.label,
             output=args.output,
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+            coverage_output=args.coverage_output,
         )
     if args.command == "compare-sx-bet-reference":
         return compare_sx_bet_reference(
@@ -1101,6 +3184,20 @@ def main(argv: list[str] | None = None) -> int:
             args.output,
             timeout_seconds=args.timeout_seconds,
             max_snapshot_age_hours=args.max_snapshot_age_hours,
+            preserve_raw_orderbook=args.preserve_raw_orderbook,
+        )
+    if args.command == "enrich-kalshi-orderbooks":
+        return enrich_orderbooks(
+            args.snapshot,
+            "kalshi",
+            args.output,
+            timeout_seconds=args.timeout_seconds,
+            max_snapshot_age_hours=args.max_snapshot_age_hours,
+            preserve_raw_orderbook=args.preserve_raw_orderbook,
+            max_markets=args.max_markets,
+            progress_every=args.progress_every,
+            retry_failed_once=args.retry_failed_once,
+            failure_sample_limit=args.failure_sample_limit,
         )
     if args.command == "evaluate-paper-candidates":
         return evaluate_paper_candidates(
@@ -1283,6 +3380,39 @@ def main(argv: list[str] | None = None) -> int:
             f"json={args.json_output} markdown={args.markdown_output}"
         )
         return 0
+    if args.command == "audit-kalshi-event-metadata":
+        report = audit_kalshi_event_metadata_files(
+            metadata_paths=args.metadata_paths,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "kalshi_event_metadata_audit_status=OK "
+            f"files={summary['metadata_files']} "
+            f"events={summary['events_discovered']} "
+            f"trusted={summary['events_trusted_for_completeness']} "
+            f"blocked={summary['events_blocked']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "join-kalshi-event-metadata":
+        result = join_kalshi_event_metadata_files(
+            snapshot_path=args.snapshot,
+            metadata_paths=args.metadata_paths,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            enriched_snapshot_output=args.enriched_snapshot_output,
+        )
+        summary = result["report"]["summary"]
+        print(
+            "kalshi_event_metadata_join_status=OK "
+            f"events={summary['events_discovered']} "
+            f"matched={summary['events_matched_to_snapshot']} "
+            f"trusted={summary['events_trusted_after_join']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
     if args.command == "simulate-paper-fills":
         journal = simulate_paper_fill_journal_files(
             input_path=args.input,
@@ -1300,6 +3430,104 @@ def main(argv: list[str] | None = None) -> int:
             f"blocked={summary['blocked_count']} "
             f"json={args.json_output} markdown={args.markdown_output}"
         )
+        return 0
+    if args.command == "run-structural-basket-dry-run":
+        report = run_structural_basket_dry_run_files(
+            snapshot_path=args.snapshot,
+            metadata_paths=args.metadata_paths,
+            summary_json_output=args.summary_json_output,
+            summary_markdown_output=args.summary_markdown_output,
+            audit_json_output=args.audit_json_output,
+            audit_markdown_output=args.audit_markdown_output,
+            join_json_output=args.join_json_output,
+            join_markdown_output=args.join_markdown_output,
+            enriched_snapshot_output=args.enriched_snapshot_output,
+            structural_json_output=args.structural_json_output,
+            structural_markdown_output=args.structural_markdown_output,
+            paper_fill_json_output=args.paper_fill_json_output,
+            paper_fill_markdown_output=args.paper_fill_markdown_output,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_depth=args.min_depth,
+            desired_quantity=args.desired_quantity,
+            slippage_budget_cents_per_leg=args.slippage_budget_cents_per_leg,
+            simulate_paper_fills_on_stop_for_review=not args.skip_paper_fill_simulation,
+        )
+        summary = report["summary"]
+        print(
+            "structural_basket_dry_run_status=OK "
+            f"metadata_events={summary['metadata_events']} "
+            f"trusted={summary['trusted_metadata_events']} "
+            f"matched={summary['matched_events']} "
+            f"enriched_rows={summary['enriched_normalized_market_rows']} "
+            f"structural_groups={summary['structural_groups_evaluated']} "
+            f"stop_for_review={summary['stop_for_review_count']} "
+            f"paper_fill_rows={summary['paper_fill_rows']} "
+            f"paper_simulation_skipped={summary['paper_simulation_skipped']} "
+            f"reason={summary['paper_simulation_skip_reason']} "
+            f"summary_json={args.summary_json_output} summary_markdown={args.summary_markdown_output}"
+        )
+        if summary["stop_for_review_count"]:
+            print(
+                "STOP_FOR_REVIEW structural basket review candidate detected; review/report only, "
+                "no orders placed and no PAPER_CANDIDATE emitted."
+            )
+        return 0
+    if args.command == "import-kalshi-event-metadata":
+        report = import_kalshi_event_metadata_files(
+            sources=args.sources,
+            destination_dir=args.destination_dir,
+            overwrite=args.overwrite,
+        )
+        args.json_output.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown_output.parent.mkdir(parents=True, exist_ok=True)
+        args.json_output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+        args.markdown_output.write_text(render_metadata_importer_markdown(report), encoding="utf-8")
+        summary = report["summary"]
+        print(
+            "kalshi_event_metadata_import_status=OK "
+            f"files_seen={summary['files_seen']} "
+            f"files_written={summary['files_written']} "
+            f"files_skipped_existing={summary['files_skipped_existing']} "
+            f"trusted_events={summary['trusted_event_count']} "
+            f"blocked_events={summary['blocked_event_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "hunt-structural-basket-candidates":
+        report = hunt_structural_basket_candidates_files(
+            snapshots_dir=args.snapshots_dir,
+            metadata_dir=args.metadata_dir,
+            manifest_dir=args.manifest_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            manifest_template_output_dir=args.manifest_template_dir,
+            write_templates=not args.skip_template_writes,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_depth=args.min_depth,
+            desired_quantity=args.desired_quantity,
+            slippage_budget_cents_per_leg=args.slippage_budget_cents_per_leg,
+            simulate_paper_fills_on_stop_for_review=not args.skip_paper_fill_simulation,
+            top_closest_n=args.top_closest_n,
+        )
+        summary = report["summary"]
+        print(
+            "structural_basket_hunt_status=OK "
+            f"files_considered={summary['files_considered']} "
+            f"snapshots={summary['snapshots_considered']} "
+            f"metadata={summary['metadata_files_considered']} "
+            f"manifests={summary['manifests_considered']} "
+            f"structural_groups={summary['structural_groups_evaluated']} "
+            f"stop_for_review={summary['stop_for_review_count']} "
+            f"paper_fill_rows={summary['paper_fill_rows']} "
+            f"templates_written={summary['manifest_templates_written']} "
+            f"paper_candidates={summary['paper_candidate_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        if summary["stop_for_review_count"]:
+            print(
+                "STOP_FOR_REVIEW row(s) surfaced; review/report only, no orders placed and "
+                "no PAPER_CANDIDATE emitted."
+            )
         return 0
     if args.command == "audit-kalshi-native-groups":
         outputs = kalshi_native_group_audit_paths(
@@ -1323,6 +3551,27 @@ def main(argv: list[str] | None = None) -> int:
             f"json={json_output} markdown={markdown_output}"
         )
         return 0
+    if args.command == "audit-kalshi-kxmlb26-event-evidence":
+        report = write_kalshi_event_evidence_summary_files(
+            input_dir=args.input_dir,
+            event_ticker=args.event_ticker,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+        )
+        summary = report["summary"]
+        print(
+            "kalshi_kxmlb26_event_evidence_summary_status=OK "
+            f"event_ticker={summary['event_ticker']} "
+            f"markets={summary['market_count']} "
+            f"explicit_outcome_list={str(summary['explicit_outcome_list_exists']).lower()} "
+            f"explicit_completeness={str(summary['explicit_completeness_evidence_exists']).lower()} "
+            f"settlement_source={str(summary['settlement_rules_source_evidence_exists']).lower()} "
+            f"fresh_orderbook_depth={str(summary['fresh_orderbook_depth_exists']).lower()} "
+            f"ready_for_human_manifest_review={str(summary['ready_for_human_manifest_review']).lower()} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
     if args.command == "market-graph-diagnostics":
         return market_graph_diagnostics(
             fixture=args.fixture,
@@ -1335,6 +3584,991 @@ def main(argv: list[str] | None = None) -> int:
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
+    if args.command == "triage-cross-platform-opportunities":
+        report = write_cross_platform_opportunity_triage_files(
+            input_dir=args.input_dir,
+            graph_hints_path=args.graph_hints_path,
+            json_output=args.json_output,
+            csv_output=args.csv_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "cross_platform_opportunity_triage_status=OK "
+            f"rows={summary['row_count']} "
+            f"paper_candidates={summary['paper_candidate_count']} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output} csv={args.csv_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "audit-venue-metadata-coverage":
+        report = write_venue_metadata_coverage_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            csv_output=args.csv_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "venue_metadata_coverage_status=OK "
+            f"venues={summary['venue_count']} "
+            f"markets={summary['market_count']} "
+            f"match_ready={summary['match_ready_count']} "
+            f"evaluator_ready={summary['evaluator_ready_count']} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output} csv={args.csv_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "normalize-market-snapshots":
+        outputs = write_normalized_markets_v0_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            coverage_output=args.coverage_output,
+            csv_output=args.csv_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = outputs["coverage"]["summary"]
+        print(
+            "normalized_markets_v0_status=OK "
+            f"venues={summary['venue_count']} "
+            f"normalized={summary['normalized_count']} "
+            f"identity_ready={summary['fully_identity_ready']} "
+            f"settlement_ready={summary['settlement_metadata_ready']} "
+            f"quote_depth_ready={summary['quote_depth_ready']} "
+            f"fee_ready={summary['fee_metadata_ready']} "
+            f"evaluator_metadata_ready={summary['evaluator_metadata_ready']} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output} coverage={args.coverage_output}"
+        )
+        return 0
+    if args.command == "audit-canonical-convention-registry":
+        report = build_canonical_convention_registry_audit(registry_path=args.registry)
+        if args.json_output is not None:
+            args.json_output.parent.mkdir(parents=True, exist_ok=True)
+            args.json_output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+        summary = report["summary"]
+        print(
+            "canonical_convention_registry_status=OK "
+            f"entries={summary['registry_entry_count']} "
+            f"valid={summary['valid_entry_count']} "
+            f"invalid={summary['invalid_entry_count']} "
+            f"warnings={summary['warning_count']} "
+            f"registry={args.registry} "
+            f"json={args.json_output}"
+        )
+        return 0
+    if args.command == "audit-canonical-registry-coverage":
+        report = write_canonical_registry_coverage_files(
+            input_dir=args.input_dir,
+            registry_path=args.registry,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "canonical_registry_coverage_status=OK "
+            f"scopes={summary['scopes_total']} "
+            f"reviewed={summary['scopes_reviewed']} "
+            f"unreviewed={summary['scopes_unreviewed']} "
+            f"rows_covered={summary['rows_covered_by_reviewed_scopes']} "
+            f"rows_uncovered={summary['rows_uncovered']} "
+            f"top_scope={summary.get('top_leverage_scope')} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "audit-canonical-registry-expiry":
+        report = write_canonical_registry_expiry_audit_files(
+            registry_path=args.registry,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            expiring_soon_days=args.expiring_soon_days,
+        )
+        summary = report["summary"]
+        print(
+            "canonical_registry_expiry_audit_status=OK "
+            f"entries={summary['registry_entries_total']} "
+            f"valid_current={summary['registry_entries_valid_current_review']} "
+            f"expiring_soon={summary['registry_entries_expiring_soon']} "
+            f"expired={summary['registry_entries_expired']} "
+            f"missing_review_until={summary['registry_entries_missing_review_until']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "plan-pending-registry-entries":
+        report = write_pending_registry_entries_plan(
+            coverage_path=args.coverage,
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+        )
+        summary = report["summary"]
+        print(
+            "pending_registry_entries_plan_status=OK "
+            f"written={summary['pending_files_written']} "
+            f"skipped_reviewed={summary['skipped_reviewed_scopes']} "
+            f"output_dir={summary['output_dir']} "
+            f"json={args.json_output}"
+        )
+        return 0
+    if args.command == "audit-pending-registry-entries-promotion":
+        report = audit_pending_registry_entries_for_promotion(
+            pending_dir=args.pending_dir,
+            registry_path=args.registry,
+        )
+        args.json_output.parent.mkdir(parents=True, exist_ok=True)
+        args.json_output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+        summary = report["summary"]
+        print(
+            "pending_registry_entries_promotion_audit_status=OK "
+            f"files={summary['pending_file_count']} "
+            f"ready={summary['ready_to_promote_count']} "
+            f"blocked={summary['blocked_count']} "
+            f"warnings={summary['warning_count']} "
+            f"registry={args.registry} "
+            f"json={args.json_output}"
+        )
+        return 0
+    if args.command == "audit-settlement-evidence-burden":
+        report = write_settlement_evidence_burden_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            csv_output=args.csv_output,
+            markdown_output=args.markdown_output,
+            registry_path=args.registry_path,
+            staleness_seconds=args.staleness_seconds,
+        )
+        summary = report["summary"]
+        tier_counts = summary.get("by_review_readiness_tier") or {}
+        freshness_counts = summary.get("by_quote_freshness_blocker") or {}
+        print(
+            "settlement_evidence_burden_status=OK "
+            f"markets={summary['market_row_count']} "
+            f"unique_markets={summary['unique_market_count']} "
+            f"family_typed_review={tier_counts.get('FAMILY_TYPED_REVIEW_READY', 0)} "
+            f"settlement_source_review={tier_counts.get('SETTLEMENT_SOURCE_REVIEW_READY', 0)} "
+            f"exact_payoff_review={tier_counts.get('EXACT_PAYOFF_REVIEW_READY', 0)} "
+            f"execution_evaluation={tier_counts.get('EXECUTION_EVALUATION_READY', 0)} "
+            f"stale_quote={freshness_counts.get('stale_quote', 0)} "
+            f"missing_quote_captured_at={freshness_counts.get('missing_quote_captured_at', 0)} "
+            f"future_quote_captured_at={freshness_counts.get('future_quote_captured_at', 0)} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output}"
+        )
+        return 0
+    if args.command == "generate-standardized-family-candidates":
+        report = write_standardized_family_candidates_files(
+            input_dir=args.input_dir,
+            burden_report=args.burden_report,
+            json_output=args.json_output,
+            csv_output=args.csv_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "standardized_family_candidates_status=OK "
+            f"groups={summary['candidate_group_count']} "
+            f"pairs={summary['candidate_pair_count']} "
+            f"basis_risk_rows={summary.get('basis_risk_row_count', 0)} "
+            f"btc_basis_risk_review={summary.get('btc_basis_risk_review_count', 0)} "
+            f"cross_venue_groups={summary['cross_venue_candidate_group_count']} "
+            f"manual_registry_review_ready={summary['manual_registry_review_ready_count']} "
+            f"typed_key_review_ready={summary['review_typed_key_match_ready_count']} "
+            f"paper_candidates={summary['paper_candidate_count']} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output} csv={args.csv_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "plan-family-graduation":
+        report = write_family_graduation_files(
+            input_dir=args.input_dir,
+            family=args.family,
+            registry_path=args.registry_path,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "family_graduation_status=OK "
+            f"family={report['family']} "
+            f"rows={summary['candidate_row_count']} "
+            f"typed_ready={summary['family_typed_ready_count']} "
+            f"registry_proposals={summary['registry_proposal_count']} "
+            f"existing_registry_matches={summary['existing_reviewed_registry_match_count']} "
+            f"projected_exact_if_reviewed={summary['projected_exact_review_if_registry_reviewed_count']} "
+            f"projected_execution_ready={summary['projected_execution_ready_count']} "
+            f"paper_candidates={summary['paper_candidate_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "relative-value-ops-status":
+        report = write_relative_value_ops_status_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        tiers = summary.get("review_readiness_tier_counts") or {}
+        next_action = report.get("highest_priority_next_action") or {}
+        print(
+            "relative_value_ops_status=OK "
+            f"unique_markets={summary['unique_market_count']} "
+            f"venues={summary['venue_count']} "
+            f"families={summary['family_count']} "
+            f"discovery={tiers.get('DISCOVERY_READY', 0)} "
+            f"family_typed={tiers.get('FAMILY_TYPED_REVIEW_READY', 0)} "
+            f"source_review={tiers.get('SETTLEMENT_SOURCE_REVIEW_READY', 0)} "
+            f"exact_review={tiers.get('EXACT_PAYOFF_REVIEW_READY', 0)} "
+            f"execution_ready={tiers.get('EXECUTION_EVALUATION_READY', 0)} "
+            f"next_action={next_action.get('action')} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "polymarket-taxonomy-shape-scout":
+        report = write_polymarket_taxonomy_shape_scout_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        print(
+            "polymarket_taxonomy_shape_scout=OK diagnostic_only=true "
+            f"total_rows={summary.get('total_rows', 0)} "
+            f"point_in_time_candidates={summary.get('point_in_time_candidates', 0)} "
+            f"deadline_or_range_hit_blocked={summary.get('deadline_or_range_hit_blocked', 0)} "
+            f"deadline_touch_phrase_rows={summary.get('deadline_touch_phrase_rows', 0)} "
+            f"deadline_touch_phrase_reclassified_rows={summary.get('deadline_touch_phrase_reclassified_rows', 0)} "
+            f"clob_book_attached={summary.get('clob_book_attached', 0)} "
+            f"typed_key_complete={summary.get('typed_key_complete', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blockers={top_blocker_str} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "refresh-polymarket-clob-for-taxonomy-candidates":
+        shape_filter = None if args.shape_filter == "all" else args.shape_filter
+        bundle = write_polymarket_clob_taxonomy_refresh_files(
+            taxonomy_json=args.taxonomy_json,
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+            enriched_output=args.enriched_output,
+            markdown_output=args.markdown_output,
+            max_candidates=args.max_candidates,
+            shape_filter=shape_filter,
+            min_score=args.min_score,
+            include_deadline_range=args.include_deadline_range,
+            timeout_seconds=args.timeout_seconds,
+        )
+        summary = bundle["report"].get("summary") or {}
+        top_remaining = summary.get("top_remaining_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_remaining[:3]
+        ) or "none"
+        print(
+            "polymarket_clob_taxonomy_refresh=OK diagnostic_only=true "
+            f"shape_filter={shape_filter} min_score={args.min_score} "
+            f"candidates_selected={summary.get('candidates_selected', 0)} "
+            f"books_requested={summary.get('books_requested', 0)} "
+            f"books_saved={summary.get('books_saved', 0)} "
+            f"rows_enriched={summary.get('rows_enriched', 0)} "
+            f"rows_with_bid={summary.get('rows_with_bid', 0)} "
+            f"rows_with_ask={summary.get('rows_with_ask', 0)} "
+            f"rows_with_bid_ask={summary.get('rows_with_bid_ask', 0)} "
+            f"rows_with_bid_ask_size={summary.get('rows_with_bid_ask_size', 0)} "
+            f"rows_with_timestamp={summary.get('rows_with_timestamp', 0)} "
+            f"still_missing_clob={summary.get('still_missing_clob', 0)} "
+            f"still_stale_or_missing_quote={summary.get('still_stale_or_missing_quote', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_remaining_blockers={top_blocker_str} "
+            f"json={args.json_output} enriched={args.enriched_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "cdna-crypto-basis-risk-scout":
+        report = write_cdna_crypto_basis_risk_scout_files(
+            input_fixture=args.input,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            peer_input_dir=args.peer_input_dir,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        print(
+            "cdna_crypto_basis_risk_scout=OK diagnostic_only=true "
+            f"cdna_rows={summary.get('cdna_rows', 0)} "
+            f"btc_rows={summary.get('cdna_btc_rows', 0)} "
+            f"eth_rows={summary.get('cdna_eth_rows', 0)} "
+            f"point_in_time_rows={summary.get('point_in_time_rows', 0)} "
+            f"deadline_or_range_hit_rows={summary.get('deadline_or_range_hit_rows', 0)} "
+            f"ambiguous_rows={summary.get('ambiguous_rows', 0)} "
+            f"scout_rows={summary.get('scout_row_count', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blockers={top_blocker_str} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "polymarket-point-in-time-typed-key-audit":
+        report = write_polymarket_point_in_time_typed_key_audit_files(
+            taxonomy_json=args.taxonomy_json,
+            enriched_json=args.enriched_json,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        print(
+            "polymarket_point_in_time_typed_key_audit=OK diagnostic_only=true "
+            f"point_in_time_rows_audited={summary.get('point_in_time_rows_audited', 0)} "
+            f"excluded_fake_point_in_time_rows={summary.get('excluded_fake_point_in_time_rows', 0)} "
+            f"typed_complete_rows={summary.get('typed_complete_rows', 0)} "
+            f"targeted_clob_refresh_candidate_rows={summary.get('targeted_clob_refresh_candidate_rows', 0)} "
+            f"rows_with_clob_attached={summary.get('rows_with_clob_attached', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blockers={top_blocker_str} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "kalshi-crypto-typed-key-audit":
+        report = write_kalshi_crypto_typed_key_audit_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        print(
+            "kalshi_crypto_typed_key_audit=OK diagnostic_only=true "
+            f"kalshi_crypto_rows={summary.get('kalshi_crypto_rows', 0)} "
+            f"typed_complete_rows={summary.get('typed_complete_rows', 0)} "
+            f"point_in_time_rows={summary.get('point_in_time_rows', 0)} "
+            f"deadline_or_range_hit_rows={summary.get('deadline_or_range_hit_rows', 0)} "
+            f"rows_with_threshold={summary.get('rows_with_threshold', 0)} "
+            f"rows_with_target_date={summary.get('rows_with_target_date', 0)} "
+            f"rows_with_target_time={summary.get('rows_with_target_time', 0)} "
+            f"rows_with_settlement_source={summary.get('rows_with_settlement_source', 0)} "
+            f"rows_with_quote={summary.get('rows_with_quote', 0)} "
+            f"possible_cdna_peer_rows={summary.get('possible_cdna_peer_rows', 0)} "
+            f"possible_polymarket_peer_rows={summary.get('possible_polymarket_peer_rows', 0)} "
+            f"date_threshold_comparator_overlap_rows={summary.get('date_threshold_comparator_overlap_rows', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blockers={top_blocker_str} "
+            f"next_action={summary.get('next_action')} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "crypto-peer-acquisition-plan":
+        report = write_crypto_peer_acquisition_plan_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        top_assets = ",".join(
+            item.get("asset") for item in (summary.get("top_target_assets") or [])[:3]
+        ) or "none"
+        top_dates = ",".join(
+            item.get("target_date") for item in (summary.get("top_target_dates") or [])[:3]
+        ) or "none"
+        print(
+            "crypto_peer_acquisition_plan=OK diagnostic_only=true saved_files_only=true "
+            f"kalshi_typed_complete_grid_rows={summary.get('kalshi_typed_complete_grid_rows', 0)} "
+            f"unique_assets={summary.get('unique_assets', 0)} "
+            f"unique_dates={summary.get('unique_dates', 0)} "
+            f"unique_thresholds={summary.get('unique_thresholds', 0)} "
+            f"top_target_assets={top_assets} "
+            f"top_target_dates={top_dates} "
+            f"polymarket_queries_recommended={summary.get('polymarket_queries_recommended', 0)} "
+            f"polymarket_clob_refresh_recommended={summary.get('polymarket_clob_refresh_recommended', 0)} "
+            f"cdna_targets_recommended={summary.get('cdna_targets_recommended', 0)} "
+            f"kalshi_orderbook_targets_recommended={summary.get('kalshi_orderbook_targets_recommended', 0)} "
+            f"safe_commands_referenced={','.join(summary.get('safe_commands_referenced') or []) or 'none'} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blockers={top_blocker_str} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "crypto-payoff-calendar-audit":
+        report = write_crypto_payoff_calendar_audit_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        # Top-3 shapes by combined cross-venue count.
+        by_shape = summary.get("counts_by_shape_and_venue") or {}
+        shape_totals = sorted(
+            (
+                (shape, sum(per_venue.values()))
+                for shape, per_venue in by_shape.items()
+            ),
+            key=lambda kv: -kv[1],
+        )
+        top_shapes = ",".join(f"{shape}:{total}" for shape, total in shape_totals[:3]) or "none"
+        print(
+            "crypto_payoff_calendar_audit=OK diagnostic_only=true saved_files_only=true "
+            f"total_crypto_rows={summary.get('total_crypto_rows', 0)} "
+            f"venues={','.join(summary.get('venues') or []) or 'none'} "
+            f"exact_shape_possible_rows={summary.get('exact_shape_possible_rows', 0)} "
+            f"basis_risk_only_rows={summary.get('basis_risk_only_rows', 0)} "
+            f"manual_rules_needed_rows={summary.get('manual_rules_needed_rows', 0)} "
+            f"reference_only_rows={summary.get('reference_only_rows', 0)} "
+            f"no_current_peer_rows={summary.get('no_current_peer_rows', 0)} "
+            f"top_shapes={top_shapes} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blockers={top_blocker_str} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "crypto-manual-discovery-workbench":
+        report = write_crypto_manual_discovery_workbench_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            audit_path=args.audit_json,
+            max_targets_per_group=args.max_targets_per_group,
+        )
+        summary = report.get("summary") or {}
+        groups = report.get("groups") or []
+        group_str = ",".join(
+            f"{g['group_name']}:{g['targets_emitted']}/{g['total_eligible_rows']}" for g in groups
+        ) or "none"
+        print(
+            "crypto_manual_discovery_workbench=OK diagnostic_only=true saved_files_only=true "
+            f"groups={summary.get('group_count', 0)} "
+            f"targets_emitted={summary.get('targets_emitted', 0)} "
+            f"total_eligible_audit_rows={summary.get('total_eligible_audit_rows', 0)} "
+            f"top_target_group={summary.get('top_target_group')} "
+            f"top_target_venue={summary.get('top_target_venue')} "
+            f"top_target_asset={summary.get('top_target_asset')} "
+            f"top_target_date={summary.get('top_target_date')} "
+            f"top_target_payoff_shape={summary.get('top_target_payoff_shape')} "
+            f"group_breakdown={group_str} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "manual-evidence-requirements":
+        report = write_manual_evidence_requirements_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        priorities = summary.get("priority_counts") or {}
+        print(
+            "manual_evidence_requirements=OK diagnostic_only=true saved_files_only=true "
+            f"total_items={summary.get('total_items', 0)} "
+            f"verticals={','.join(summary.get('verticals') or [])} "
+            f"P0={priorities.get('P0', 0)} "
+            f"P1={priorities.get('P1', 0)} "
+            f"P2={priorities.get('P2', 0)} "
+            f"P3={priorities.get('P3', 0)} "
+            f"P4={priorities.get('P4', 0)} "
+            f"closest_to_source_review_vertical={summary.get('closest_to_source_review_vertical')} "
+            f"closest_to_exact_review_vertical={summary.get('closest_to_exact_review_vertical')} "
+            f"distraction_vertical={summary.get('distraction_vertical')} "
+            f"queued_platforms_remain_queued={str(bool(summary.get('queued_platforms_remain_queued'))).lower()} "
+            f"reference_only_platforms_never_become_pair_side={str(bool(summary.get('reference_only_platforms_never_become_pair_side'))).lower()} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "cross-venue-opportunity-scout":
+        report = write_cross_venue_opportunity_scout_files(
+            input_dir=args.input_dir,
+            polymarket_enriched_json=args.polymarket_enriched_json,
+            active_platforms=args.active_platforms,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        print(
+            "cross_venue_opportunity_scout=OK diagnostic_only=true "
+            f"scout_rows={summary.get('scout_row_count', 0)} "
+            f"exact_ready_rows={summary.get('exact_ready_rows', 0)} "
+            f"paper_candidate_rows={summary.get('paper_candidate_rows', 0)} "
+            f"execution_ready_rows={summary.get('execution_ready_rows', 0)} "
+            f"polymarket_enriched_rows_loaded={summary.get('polymarket_enriched_rows_loaded', 0)} "
+            f"polymarket_rows_with_bid_ask_size={summary.get('polymarket_rows_with_bid_ask_size', 0)} "
+            f"polymarket_overlap_rows={summary.get('polymarket_overlap_rows', 0)} "
+            f"top_lane={summary.get('top_lane') or 'none'} "
+            f"active_platforms={','.join(summary.get('active_platforms') or []) or 'all'} "
+            f"core_trio_top_lane={summary.get('core_trio_top_lane') or 'none'} "
+            f"top_blockers={top_blocker_str} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "core-trio-peer-coverage-audit":
+        report = write_core_trio_peer_coverage_audit_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary") or {}
+        top_blockers = summary.get("top_blockers") or []
+        top_blocker_str = ",".join(
+            f"{item.get('blocker')}:{item.get('count')}" for item in top_blockers[:3]
+        ) or "none"
+        print(
+            "core_trio_peer_coverage_audit=OK diagnostic_only=true saved_files_only=true "
+            f"families={summary.get('peer_coverage_families', 0)} "
+            f"strongest_overlap_family={summary.get('strongest_overlap_family') or 'none'} "
+            f"families_with_kalshi_peer_rows={summary.get('families_with_kalshi_peer_rows', 0)} "
+            f"families_without_kalshi_peer_rows={summary.get('families_without_kalshi_peer_rows', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blockers={top_blocker_str} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "audit-reference-odds-fv":
+        report = write_reference_odds_fv_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "reference_odds_fv_status=OK "
+            f"odds_events={summary['odds_events_read']} "
+            f"reference_markets={summary['reference_markets_read']} "
+            f"matched={summary['matched_rows']} "
+            f"residual_rows={summary['residual_rows']} "
+            f"unmatched={summary['unmatched_reference_rows']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "audit-existing-paper-candidates":
+        report = write_existing_paper_candidate_audit_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "existing_paper_candidate_audit_status=OK "
+            f"rows={summary['total_paper_candidate_rows_found']} "
+            f"unique={summary['unique_candidate_count']} "
+            f"current_needs_review={summary['current_needs_review_count']} "
+            f"stale={summary['stale_count']} "
+            f"likely_fake_or_blocked={summary['likely_fake_or_blocked_count']} "
+            f"recommended_next_action={summary['recommended_next_action']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "plan-stale-report-archive":
+        report = write_stale_report_archive_plan_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "stale_report_archive_plan_status=OK "
+            f"scanned={summary['scanned_file_count']} "
+            f"archive_candidates={summary['archive_candidate_count']} "
+            f"stale_evaluator={summary['stale_evaluator_output_count']} "
+            f"stale_pipeline={summary['stale_pipeline_summary_count']} "
+            f"legacy_artifacts={summary['legacy_candidate_artifact_count']} "
+            f"commands={summary['suggested_command_count']} "
+            f"moved_deleted={summary['files_moved_or_deleted']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "apply-stale-report-archive-plan":
+        should_apply = bool(args.apply)
+        report = apply_stale_report_archive_plan(
+            plan_path=args.plan,
+            applied_output=args.applied_output,
+            apply=should_apply,
+        )
+        summary = report["summary"]
+        mode = report["mode"]
+        status = report["status"]
+        print(
+            "stale_report_archive_apply_status="
+            f"{status} mode={mode} "
+            f"planned={summary['planned_move_count']} "
+            f"applied={summary['applied_move_count']} "
+            f"noop={summary['noop_move_count']} "
+            f"refused={summary['refused_move_count']} "
+            f"deleted={summary['files_deleted']} "
+            f"plan={args.plan}"
+        )
+        if not should_apply:
+            for move in report.get("planned_moves") or []:
+                print(move.get("suggested_move_command") or f"Move-Item -LiteralPath \"{move.get('source_file')}\" -Destination \"{move.get('destination_file')}\"")
+        if should_apply:
+            print(f"applied_output={args.applied_output}")
+        return 1 if summary["refused_move_count"] else 0
+    if args.command == "audit-paper-readiness-probe":
+        report = write_paper_readiness_probe_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "paper_readiness_probe_status=OK "
+            f"rows={summary['total_rows_considered']} "
+            f"stale_quote={summary['rows_blocked_by_stale_quote']} "
+            f"missing_quote={summary['rows_blocked_by_missing_quote']} "
+            f"fee={summary['rows_blocked_by_fee']} "
+            f"pair_review={summary['rows_blocked_by_pair_review']} "
+            f"paper_ready={summary['paper_ready_count']} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "run-mlb-world-series-revival-status":
+        report = write_mlb_world_series_revival_status_files(
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        print(
+            "mlb_world_series_revival_status=OK "
+            f"pairs={summary['pairs_found']} "
+            f"strict_same_payoff={summary['strict_same_payoff_pass_count']} "
+            f"trusted_relationships={summary['trusted_relationships_attached']} "
+            f"evaluator_rows={summary['evaluator_rows']} "
+            f"paper_count={summary['paper_candidate_count']} "
+            f"blockers={len(report['blockers'])} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "audit-platform-api-expansion":
+        report = write_platform_api_expansion_files(
+            project_root=PROJECT_ROOT,
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        recommendations = report.get("recommendations") or {}
+        print(
+            "platform_api_expansion_status=OK "
+            f"platforms={summary['platform_count']} "
+            f"read_only_only={summary['read_only_only_count']} "
+            f"reference_only={summary['reference_only_count']} "
+            f"requires_auth_review={summary['requires_auth_review_count']} "
+            f"best_next={recommendations.get('best_next_platform_adapter')} "
+            f"family={recommendations.get('best_next_family_universe')} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "parse-crypto-com-predict-cdna-fixtures":
+        fixture_dirs = args.fixture_dir or [PROJECT_ROOT / "venues" / "fixtures" / "crypto_com_predict_cdna"]
+        report = write_crypto_com_predict_cdna_research_snapshot_file(
+            fixture_dirs=fixture_dirs,
+            json_output=args.json_output,
+        )
+        summary = report["summary"]
+        top_blocker = (summary.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "crypto_com_predict_cdna_research_snapshot_status=OK "
+            f"rows={summary['parsed_rows']} "
+            f"btc_rows={summary['btc_rows']} "
+            f"eth_rows={summary['eth_rows']} "
+            f"basis_risk_compatible={summary['basis_risk_compatible_with_kalshi']} "
+            f"exact_compatible={summary['exact_payoff_compatible_with_kalshi']} "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output}"
+        )
+        return 0
+    if args.command == "compare-cdna-vs-kalshi-btc-basis-risk":
+        report = write_cdna_vs_kalshi_btc_basis_risk_file(
+            cdna_path=args.cdna,
+            standardized_path=args.standardized,
+            json_output=args.json_output,
+        )
+        summary = report["summary"]
+        print(
+            "cdna_vs_kalshi_btc_basis_risk_status=OK "
+            f"cdna_btc={summary['cdna_btc_rows_considered']} "
+            f"kalshi_btc={summary['kalshi_btc_rows_considered']} "
+            f"basis_risk_rows={summary['basis_risk_row_count']} "
+            f"btc_basis_risk_review={summary['btc_basis_risk_review_count']} "
+            f"paper_candidates={summary['paper_candidate_count']} "
+            f"warnings={summary['warning_count']} "
+            f"json={args.json_output}"
+        )
+        return 0
+    if args.command == "normalize-sx-bet-saved":
+        outputs = write_sx_bet_saved_normalization_files(
+            project_root=PROJECT_ROOT,
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            coverage_output=args.coverage_output,
+        )
+        summary = outputs["coverage"]["summary"]
+        top_blocker = (summary.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "sx_bet_normalized_draft_status=OK "
+            f"rows_read={summary['rows_read']} "
+            f"normalized={summary['normalized_records']} "
+            f"unique_events={summary['unique_events']} "
+            f"unique_markets={summary['unique_markets']} "
+            f"quote_fields={summary['quote_fields_present']} "
+            f"depth_fields={summary['depth_fields_present']} "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} coverage={args.coverage_output}"
+        )
+        return 0
+    if args.command == "audit-sx-bet-sports-typed-keys":
+        report = write_sx_bet_sports_typed_keys_files(
+            input_path=args.input,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report["summary"]
+        status = "NO_INPUT" if report.get("warnings") else "OK"
+        top_blocker = (summary.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            f"sx_bet_sports_typed_keys_status={status} "
+            f"rows={summary['total_rows']} "
+            f"complete={summary['complete']} "
+            f"partial={summary['partial']} "
+            f"blocked={summary['blocked']} "
+            f"future_overlap_usable={summary['future_overlap_review_usable_count']} "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "audit-sx-bet-sports-overlap":
+        report = write_sx_bet_sports_overlap_files(
+            sx_bet_typed_keys_path=args.sx_bet_typed_keys,
+            input_dir=args.input_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            require_game_level_target=args.require_game_level_target,
+        )
+        summary = report["summary"]
+        top_blocker = (summary.get("top_blockers") or [{}])[0].get("blocker")
+        scope = summary.get("scope_mismatch_breakdown") or {}
+        print(
+            "sx_bet_sports_overlap_status=OK "
+            f"sx_rows={summary['sx_bet_rows_considered']} "
+            f"overlap_rows={summary['overlap_rows']} "
+            f"exact={summary['exact_typed_key_matches']} "
+            f"partial={summary['partial_matches']} "
+            f"blocked_reference_only={summary['blocked_reference_only']} "
+            f"require_game_level_target={str(report.get('require_game_level_target', False)).lower()} "
+            f"game_level_targets={scope.get('kalshi_polymarket_targets_game_level', 0)} "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "sports-mlb-daily-residual-risk-scout":
+        report = write_sports_mlb_daily_residual_risk_files(
+            kalshi_evidence=args.kalshi_evidence,
+            polymarket_evidence=args.polymarket_evidence,
+            date=args.date,
+            accept_mlb_daily_contingency_risk=args.accept_mlb_daily_contingency_risk,
+            include_live_games=args.include_live_games,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        summary = report.get("summary_counts") or {}
+        top_blocker = (summary.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "sports_mlb_daily_residual_risk_scout_status=OK "
+            f"diagnostic_only=true shadow_paper_only=true "
+            f"human_accepted_residual_risk={str(bool(report.get('human_accepted_residual_risk'))).lower()} "
+            f"matched_games={report.get('matched_games', 0)} "
+            f"rows={summary.get('rows', 0)} "
+            f"residual_review_rows={summary.get('residual_review_rows', 0)} "
+            f"manual_review_rows={summary.get('manual_review_rows', 0)} "
+            f"watch_rows={summary.get('watch_rows', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "fetch-mlb-daily-game-evidence":
+        date_label = args.date or datetime.now().date().isoformat()
+        output_dir = args.output_dir or PROJECT_ROOT / "reports" / "live_readonly" / "mlb_daily" / date_label
+        normalized_output_dir = (
+            args.normalized_output_dir
+            or PROJECT_ROOT / "reports" / "manual_evidence" / "sports" / "mlb_daily_games" / date_label / "normalized"
+        )
+        report = write_mlb_daily_game_evidence_files(
+            target_date=date_label,
+            output_dir=output_dir,
+            normalized_output_dir=normalized_output_dir,
+            max_games=args.max_games,
+            timeout_seconds=args.timeout_seconds,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        outputs = report.get("outputs") or {}
+        print(
+            "fetch_mlb_daily_game_evidence_status=OK "
+            "diagnostic_only=true public_no_auth_only=true "
+            f"date={date_label} "
+            f"polymarket_games={counts.get('polymarket_games', 0)} "
+            f"kalshi_games={counts.get('kalshi_games', 0)} "
+            f"matched_games={counts.get('matched_games', 0)} "
+            f"missing_kalshi_peer={counts.get('missing_kalshi_peer', 0)} "
+            f"missing_polymarket_peer={counts.get('missing_polymarket_peer', 0)} "
+            f"raw_files_written={counts.get('raw_files_written', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} "
+            f"summary={outputs.get('summary_json')} markdown={outputs.get('summary_markdown')}"
+        )
+        return 0
+    if args.command == "fetch-mlb-world-series-evidence":
+        season = str(args.season).strip()
+        output_dir = args.output_dir or PROJECT_ROOT / "reports" / "live_readonly" / "mlb_world_series" / season
+        normalized_output_dir = (
+            args.normalized_output_dir
+            or PROJECT_ROOT / "reports" / "manual_evidence" / "sports" / f"mlb_world_series_{season}"
+        )
+        report = write_mlb_world_series_evidence_files(
+            season=season,
+            output_dir=output_dir,
+            normalized_output_dir=normalized_output_dir,
+            timeout_seconds=args.timeout_seconds,
+        )
+        counts = report.get("summary_counts") or {}
+        missing = report.get("missing_fields_or_blockers") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        outputs = report.get("outputs") or {}
+        print(
+            "fetch_mlb_world_series_evidence_status=OK "
+            "diagnostic_only=true public_no_auth_only=true "
+            f"season={season} "
+            f"kalshi_team_outcomes={counts.get('kalshi_team_outcomes', 0)} "
+            f"kalshi_tickers={counts.get('kalshi_tickers', 0)} "
+            f"kalshi_orderbooks_requested={counts.get('kalshi_orderbooks_requested', 0)} "
+            f"polymarket_team_outcomes={counts.get('polymarket_team_outcomes', 0)} "
+            f"polymarket_token_ids={counts.get('polymarket_token_ids', 0)} "
+            f"polymarket_books_requested={counts.get('polymarket_books_requested', 0)} "
+            f"kalshi_missing_orderbooks={missing.get('kalshi_missing_orderbooks', 0)} "
+            f"polymarket_missing_books={missing.get('polymarket_missing_books', 0)} "
+            f"raw_files_written={counts.get('raw_files_written', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} "
+            f"summary={outputs.get('summary_json')} markdown={outputs.get('summary_markdown')}"
+        )
+        return 0
+    if args.command == "sports-mlb-world-series-evidence-compare":
+        report = write_sports_mlb_world_series_evidence_compare_files(
+            kalshi_evidence=args.kalshi_evidence,
+            polymarket_evidence=args.polymarket_evidence,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            accept_world_series_remote_tail_risk=args.accept_world_series_remote_tail_risk,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "sports_mlb_world_series_evidence_compare_status=OK "
+            "diagnostic_only=true strict_exact_arb=false "
+            f"human_accepted_remote_tail_risk={str(bool(report.get('human_accepted_remote_tail_risk'))).lower()} "
+            f"kalshi_rows_loaded={report.get('kalshi_rows_loaded', 0)} "
+            f"polymarket_rows_loaded={report.get('polymarket_rows_loaded', 0)} "
+            f"matched_team_rows={report.get('matched_team_rows', 0)} "
+            f"unmatched_kalshi_rows={report.get('unmatched_kalshi_rows', 0)} "
+            f"unmatched_polymarket_rows={report.get('unmatched_polymarket_rows', 0)} "
+            f"source_review_rows={counts.get('source_review_rows', 0)} "
+            f"manual_review_rows={counts.get('manual_review_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "sports-mlb-world-series-residual-risk-scout":
+        report = write_sports_mlb_world_series_residual_risk_files(
+            kalshi_evidence=args.kalshi_evidence,
+            polymarket_evidence=args.polymarket_evidence,
+            season=args.season,
+            accept_world_series_remote_tail_risk=args.accept_world_series_remote_tail_risk,
+            operator_accepted_as_arb=args.operator_accepted_as_arb,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "sports_mlb_world_series_residual_risk_scout_status=OK "
+            "diagnostic_only=true shadow_paper_only=true strict_exact_arb=false mathematical_strict_exact_arb=false "
+            f"human_accepted_remote_tail_risk={str(bool(report.get('human_accepted_remote_tail_risk'))).lower()} "
+            f"operator_accepted_as_arb={str(bool(report.get('operator_accepted_as_arb'))).lower()} "
+            f"operator_arb_mode={str(bool(report.get('operator_arb_mode'))).lower()} "
+            f"kalshi_rows_loaded={report.get('kalshi_rows_loaded', 0)} "
+            f"polymarket_rows_loaded={report.get('polymarket_rows_loaded', 0)} "
+            f"matched_team_rows={report.get('matched_team_rows', 0)} "
+            f"rows={counts.get('rows', 0)} "
+            f"operator_arb_review_rows={counts.get('operator_arb_review_rows', 0)} "
+            f"residual_review_rows={counts.get('residual_review_rows', 0)} "
+            f"manual_review_rows={counts.get('manual_review_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"positive_gross_rows={counts.get('positive_gross_rows', 0)} "
+            f"positive_net_rows={counts.get('positive_net_rows', 0)} "
+            f"exact_ready_rows=0 standard_paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "operator-arb-convergence-plan":
+        report = write_operator_arb_convergence_plan_files(
+            input_report=args.input_report,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+            target_exit_edge=args.target_exit_edge,
+            min_hold_net_edge=args.min_hold_net_edge,
+            min_annualized_return=args.min_annualized_return,
+            settlement_date=args.settlement_date,
+            max_capital_tieup_days=args.max_capital_tieup_days,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "operator_arb_convergence_plan_status=OK "
+            "diagnostic_only=true execution_recommendation_only=true standard_paper_candidate_emitted=false "
+            f"rows={counts.get('rows', 0)} "
+            f"exit_now_review_rows={counts.get('exit_now_review_rows', 0)} "
+            f"exit_target_already_met_rows={counts.get('exit_target_already_met_rows', 0)} "
+            f"enter_and_monitor_rows={counts.get('enter_and_monitor_rows', 0)} "
+            f"hold_to_settlement_rows={counts.get('hold_to_settlement_rows', 0)} "
+            f"manual_review_rows={counts.get('manual_review_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_low_return_rows={counts.get('ignore_low_return_rows', 0)} "
+            f"ignore_insufficient_size_rows={counts.get('ignore_insufficient_size_rows', 0)} "
+            f"exact_ready_rows=0 standard_paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
     if args.command == "replay-paper-candidate-markouts":
         return replay_paper_candidate_markouts(
             args.ledger,
@@ -1409,6 +4643,48 @@ def main(argv: list[str] | None = None) -> int:
             settlement_path=args.settlement,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
+        )
+    if args.command == "ibkr-forecastex-access-doctor":
+        return ibkr_forecastex_access_doctor(
+            base_url=args.base_url,
+            timeout_seconds=args.timeout_seconds,
+            json_output=args.json_output,
+        )
+    if args.command == "fetch-ibkr-forecastex-readonly":
+        return fetch_ibkr_forecastex_readonly(
+            base_url=args.base_url,
+            timeout_seconds=args.timeout_seconds,
+            max_contracts=args.max_contracts,
+            max_contract_info_requests=args.max_contract_info_requests,
+            max_followup_errors=args.max_followup_errors,
+            search_terms=args.search_terms,
+            forecastx_doc_seed=args.forecastx_doc_seed,
+            forecastx_months=args.forecastx_months,
+            seed_conids=args.seed_conids,
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+            discovery_json_output=args.discovery_json_output,
+            discovery_markdown_output=args.discovery_markdown_output,
+        )
+    if args.command == "ibkr-forecastex-readonly-pipeline":
+        return ibkr_forecastex_readonly_pipeline(
+            base_url=args.base_url,
+            wait_for_auth_seconds=args.wait_for_auth_seconds,
+            poll_seconds=args.poll_seconds,
+            search_terms=args.search_terms,
+            forecastx_months=args.forecastx_months,
+            output_dir=args.output_dir,
+            json_output=args.json_output,
+            max_contract_info_requests=args.max_contract_info_requests,
+            timeout_seconds=args.timeout_seconds,
+            max_followup_errors=args.max_followup_errors,
+            ops_json_output=args.ops_json_output,
+            ops_markdown_output=args.ops_markdown_output,
+        )
+    if args.command == "validate-ibkr-forecastex-manual-memo":
+        return validate_ibkr_forecastex_manual_memo_cli(
+            memo_json=args.memo_json,
+            json_output=args.json_output,
         )
     if args.command == "inspect-prophetx-fixtures":
         return inspect_prophetx_fixtures(
@@ -1619,6 +4895,245 @@ def inspect_ibkr_forecastex_fixtures(
         f"json={json_output} markdown={markdown_output}"
     )
     return 0 if status == "OK" else 1
+
+
+def ibkr_forecastex_access_doctor(
+    *,
+    base_url: str,
+    timeout_seconds: float,
+    json_output: Path,
+) -> int:
+    report = write_ibkr_forecastex_access_doctor_file(
+        json_output=json_output,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+    blockers = ",".join(report.get("blockers", [])[:5])
+    print(
+        "ibkr_forecastex_access_doctor_status={status} reachable={reachable} authenticated={authenticated} "
+        "blockers={blockers} json={json}".format(
+            status=report.get("status"),
+            reachable=str(report.get("reachable")).lower(),
+            authenticated=str(report.get("authenticated")).lower(),
+            blockers=blockers or "none",
+            json=json_output,
+        )
+    )
+    return 0
+
+
+def fetch_ibkr_forecastex_readonly(
+    *,
+    base_url: str,
+    timeout_seconds: float,
+    max_contracts: int,
+    max_contract_info_requests: int,
+    max_followup_errors: int,
+    search_terms: str | None,
+    forecastx_doc_seed: bool,
+    forecastx_months: str | None,
+    seed_conids: Path | None,
+    output_dir: Path,
+    json_output: Path,
+    discovery_json_output: Path,
+    discovery_markdown_output: Path,
+) -> int:
+    report = write_ibkr_forecastex_readonly_snapshot_file(
+        output_dir=output_dir,
+        json_output=json_output,
+        discovery_json_output=discovery_json_output,
+        discovery_markdown_output=discovery_markdown_output,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        max_contracts=max_contracts,
+        max_contract_info_requests=max_contract_info_requests,
+        max_followup_errors=max_followup_errors,
+        search_terms=search_terms,
+        forecastx_doc_seed=forecastx_doc_seed,
+        forecastx_months=forecastx_months,
+        seed_conids_path=seed_conids,
+    )
+    summary = report.get("summary", {})
+    blockers = ",".join(report.get("blockers", [])[:5])
+    print(
+        "ibkr_forecastex_readonly_fetch_status={status} reachable={reachable} authenticated={authenticated} "
+        "discovery_status={discovery_status} candidates={candidates} rows={rows} raw_files_written={raw_files} "
+        "final_tradable_rows={final_tradable_rows} yes_rows={yes_rows} no_rows={no_rows} "
+        "quote_rows_mapped={quote_rows_mapped} quote_bid_rows={quote_bid_rows} quote_ask_rows={quote_ask_rows} "
+        "quote_bid_ask_rows={quote_bid_ask_rows} quote_bid_ask_size_rows={quote_bid_ask_size_rows} "
+        "quote_timestamp_rows={quote_timestamp_rows} quote_complete_rows={quote_complete_rows} quote_execution_ready_rows={quote_execution_ready_rows} "
+        "months_attempted={months_attempted} strikes_found={strikes_found} info_requests={info_requests} "
+        "search_requests={search_requests} followup_requests={followup_requests} followup_errors={followup_errors} "
+        "blockers={blockers} json={json} discovery_json={discovery_json}".format(
+            status=report.get("status"),
+            reachable=str(report.get("reachable")).lower(),
+            authenticated=str(report.get("authenticated")).lower(),
+            discovery_status=summary.get("discovery_status"),
+            candidates=summary.get("forecastx_candidate_count", 0),
+            rows=summary.get("normalized_rows", 0),
+            raw_files=summary.get("raw_files_written", 0),
+            final_tradable_rows=summary.get("final_tradable_rows", 0),
+            yes_rows=summary.get("forecastx_yes_rows", 0),
+            no_rows=summary.get("forecastx_no_rows", 0),
+            quote_rows_mapped=summary.get("ibkr_quote_rows_mapped_to_contracts", 0),
+            quote_bid_rows=summary.get("ibkr_quote_rows_with_bid", 0),
+            quote_ask_rows=summary.get("ibkr_quote_rows_with_ask", 0),
+            quote_bid_ask_rows=summary.get("ibkr_quote_rows_with_bid_ask", 0),
+            quote_bid_ask_size_rows=summary.get("ibkr_quote_rows_with_bid_ask_size", 0),
+            quote_timestamp_rows=summary.get("ibkr_quote_rows_with_timestamp", 0),
+            quote_complete_rows=summary.get("ibkr_quote_rows_quote_diagnostic_complete", 0),
+            quote_execution_ready_rows=summary.get("ibkr_quote_rows_execution_ready", 0),
+            months_attempted=summary.get("forecastx_option_months_attempted", 0),
+            strikes_found=summary.get("forecastx_strikes_found", 0),
+            info_requests=summary.get("forecastx_info_requests", 0),
+            search_requests=summary.get("search_requests_attempted", 0),
+            followup_requests=summary.get("followup_requests_attempted", 0),
+            followup_errors=summary.get("followup_errors", 0),
+            blockers=blockers or "none",
+            json=json_output,
+            discovery_json=discovery_json_output,
+        )
+    )
+    return 0
+
+
+def ibkr_forecastex_readonly_pipeline(
+    *,
+    base_url: str,
+    wait_for_auth_seconds: int,
+    poll_seconds: float,
+    search_terms: str | None,
+    forecastx_months: str,
+    output_dir: Path,
+    json_output: Path,
+    max_contract_info_requests: int,
+    timeout_seconds: float,
+    max_followup_errors: int,
+    ops_json_output: Path,
+    ops_markdown_output: Path,
+) -> int:
+    wait_seconds = min(max(0, int(wait_for_auth_seconds)), 600)
+    poll_interval = max(0.0, float(poll_seconds))
+    access_json_output = ops_json_output.parent / "ibkr_forecastex_access_doctor.json"
+    report = _write_pipeline_access_doctor(
+        access_json_output=access_json_output,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+    if not report.get("reachable"):
+        print(
+            "ibkr_forecastex_readonly_pipeline_status=GATEWAY_UNREACHABLE "
+            "manual_action=start_IBKR_Client_Portal_Gateway access_doctor_json={json}".format(
+                json=access_json_output
+            )
+        )
+        return 1
+    if not report.get("authenticated"):
+        if wait_seconds > 0:
+            deadline = time.monotonic() + wait_seconds
+            while not report.get("authenticated"):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if poll_interval > 0:
+                    time.sleep(min(poll_interval, remaining))
+                report = _write_pipeline_access_doctor(
+                    access_json_output=access_json_output,
+                    base_url=base_url,
+                    timeout_seconds=timeout_seconds,
+                )
+                if poll_interval <= 0:
+                    break
+        if not report.get("authenticated"):
+            print(
+                "ibkr_forecastex_readonly_pipeline_status=AUTH_REQUIRED "
+                "manual_action=open_https_localhost_5000_and_log_in wait_seconds={wait} access_doctor_json={json}".format(
+                    wait=wait_seconds,
+                    json=access_json_output,
+                )
+            )
+            return 1
+
+    discovery_json_output = json_output.parent / "ibkr_forecastex_discovery_candidates.json"
+    discovery_markdown_output = json_output.parent / "ibkr_forecastex_discovery_candidates.md"
+    fetch_report = write_ibkr_forecastex_readonly_snapshot_file(
+        output_dir=output_dir,
+        json_output=json_output,
+        discovery_json_output=discovery_json_output,
+        discovery_markdown_output=discovery_markdown_output,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        max_contract_info_requests=max_contract_info_requests,
+        max_followup_errors=max_followup_errors,
+        search_terms=search_terms,
+        forecastx_doc_seed=True,
+        forecastx_months=forecastx_months,
+        seed_conids_path=None,
+    )
+    ops_report = write_relative_value_ops_status_files(
+        input_dir=ops_json_output.parent,
+        json_output=ops_json_output,
+        markdown_output=ops_markdown_output,
+    )
+    summary = fetch_report.get("summary", {})
+    next_action = ops_report.get("highest_priority_next_action") or {}
+    print(
+        "ibkr_forecastex_readonly_pipeline_status=OK fetch_status={fetch_status} "
+        "final_tradable_rows={final_rows} quote_complete_rows={quote_complete_rows} "
+        "execution_ready_rows={execution_ready_rows} ops_next_action={ops_next_action} "
+        "json={json} ops_json={ops_json}".format(
+            fetch_status=fetch_report.get("status"),
+            final_rows=summary.get("final_tradable_rows", 0),
+            quote_complete_rows=summary.get("ibkr_quote_rows_quote_diagnostic_complete", 0),
+            execution_ready_rows=summary.get("ibkr_quote_rows_execution_ready", 0),
+            ops_next_action=next_action.get("action"),
+            json=json_output,
+            ops_json=ops_json_output,
+        )
+    )
+    return 0
+
+
+def _write_pipeline_access_doctor(
+    *,
+    access_json_output: Path,
+    base_url: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    report = build_ibkr_forecastex_access_doctor(
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+    access_json_output.parent.mkdir(parents=True, exist_ok=True)
+    access_json_output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    return report
+
+
+def validate_ibkr_forecastex_manual_memo_cli(
+    *,
+    memo_json: Path,
+    json_output: Path,
+) -> int:
+    report = validate_ibkr_forecastex_manual_memo_file(
+        memo_json=memo_json,
+        json_output=json_output,
+    )
+    summary = report.get("summary", {})
+    blockers = ",".join(report.get("blockers", [])[:5])
+    print(
+        "ibkr_forecastex_manual_memo_validation_status={status} diagnostic_only=true "
+        "missing_required_fields={missing} validation_blocker_count={blocker_count} "
+        "memo_credibility_for_downstream_merge={memo_credibility} "
+        "can_create_candidate_pair=false paper_candidate_emitted=false blockers={blockers} json={json}".format(
+            status="OK" if report.get("validation_passed") else "BLOCKED",
+            missing=summary.get("missing_required_fields", 0),
+            blocker_count=summary.get("validation_blocker_count", 0),
+            memo_credibility=str(summary.get("memo_credibility_for_downstream_merge")).lower(),
+            blockers=blockers or "none",
+            json=json_output,
+        )
+    )
+    return 0 if report.get("validation_passed") else 1
 
 
 def _ibkr_forecastex_fixture_failure_snapshot(
@@ -6499,6 +10014,340 @@ def fetch_kalshi(
     return 0
 
 
+_KALSHI_CRYPTO_SERIES_BY_ASSET: dict[str, tuple[str, ...]] = {
+    "BTC": ("KXBTC", "KXBTCD"),
+    "ETH": ("KXETH", "ETHD"),
+}
+
+
+def fetch_kalshi_crypto_readonly(
+    *,
+    assets: str,
+    output: Path,
+    limit: int,
+    max_pages: int,
+    timeout_seconds: float,
+    include_orderbooks: bool,
+    max_orderbooks: int,
+) -> int:
+    try:
+        report = build_kalshi_crypto_readonly_snapshot(
+            assets=assets,
+            limit=limit,
+            max_pages=max_pages,
+            timeout_seconds=timeout_seconds,
+            include_orderbooks=include_orderbooks,
+            max_orderbooks=max_orderbooks,
+            output_path=output,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"kalshi_crypto_readonly_fetch_status=FAILED message={_safe_cli_text(exc)}")
+        return 1
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    summary = report["kalshi_crypto_readonly_summary"]
+    print(
+        "kalshi_crypto_readonly_fetch_status=OK "
+        f"markets_fetched={summary['markets_fetched']} "
+        f"active_markets={summary['active_markets']} "
+        f"future_markets={summary['future_markets']} "
+        f"btc_rows={summary['btc_rows']} "
+        f"eth_rows={summary['eth_rows']} "
+        f"typed_complete_rows={summary['typed_complete_rows']} "
+        f"orderbooks_fetched={summary['orderbooks_fetched']} "
+        f"orderbooks_enriched={summary['orderbooks_enriched']} "
+        f"settled_rows_excluded={summary['settled_rows_excluded']} "
+        f"output={output}"
+    )
+    return 0
+
+
+def build_kalshi_crypto_readonly_snapshot(
+    *,
+    assets: str,
+    limit: int = 1000,
+    max_pages: int = 20,
+    timeout_seconds: float = 10.0,
+    include_orderbooks: bool = False,
+    max_orderbooks: int | None = 200,
+    output_path: Path | None = None,
+    generated_at: datetime | None = None,
+    kalshi_client: Any | None = None,
+    kalshi_orderbook_client: Any | None = None,
+) -> dict[str, Any]:
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    if max_pages <= 0:
+        raise ValueError("max_pages must be positive")
+    if max_orderbooks is not None and max_orderbooks < 0:
+        raise ValueError("max_orderbooks must be non-negative")
+    captured_at = generated_at or datetime.now(timezone.utc)
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        raise ValueError("generated_at must include timezone information")
+    parsed_assets = _parse_kalshi_crypto_assets(assets)
+    series_tickers = _kalshi_crypto_series_for_assets(parsed_assets)
+    client = kalshi_client or KalshiReadOnlyClient(
+        base_url=os.environ.get("KALSHI_BASE_URL", "https://external-api.kalshi.com/trade-api/v2"),
+        timeout_seconds=timeout_seconds,
+    )
+
+    snapshots: list[dict[str, Any]] = []
+    series_results: list[dict[str, Any]] = []
+    skip_counts: Counter[str] = Counter()
+    for series in series_tickers:
+        try:
+            snapshot = client.fetch_market_snapshot(
+                limit=limit,
+                max_pages=max_pages,
+                series_ticker=series,
+                filter_options=KalshiMarketFilterOptions(),
+            )
+        except TypeError:
+            # Test doubles and older client-like objects may not accept filter_options.
+            snapshot = client.fetch_market_snapshot(limit=limit, max_pages=max_pages, series_ticker=series)
+        except Exception as exc:
+            series_results.append(
+                {
+                    "series_ticker": series,
+                    "status": "FAILED",
+                    "error_category": _error_category(exc),
+                    "message": _safe_cli_text(exc),
+                    "result_count": 0,
+                }
+            )
+            continue
+        series_results.append(
+            {
+                "series_ticker": series,
+                "status": "OK",
+                "market_count": int(snapshot.get("market_count") or 0),
+                "result_count": int(snapshot.get("normalized_count") or 0),
+                "skipped_closed_count": int(snapshot.get("skipped_closed_count") or 0),
+                "skipped_inactive_count": int(snapshot.get("skipped_inactive_count") or 0),
+                "skipped_past_close_time_count": int(snapshot.get("skipped_past_close_time_count") or 0),
+            }
+        )
+        for key in ("skipped_closed_count", "skipped_inactive_count", "skipped_past_close_time_count"):
+            skip_counts[key] += int(snapshot.get(key) or 0)
+        snapshots.append(snapshot)
+
+    combined = _combine_overlap_snapshots(snapshots, source_id="kalshi")
+    combined["captured_at"] = captured_at.isoformat()
+    combined["source"] = "kalshi_markets"
+    combined["source_id"] = "kalshi"
+    combined["live_fetch_attempted"] = True
+    combined["live_fetch_succeeded"] = True
+    rows = _normalized_market_rows(combined)
+    retained: list[dict[str, Any]] = []
+    settled_rows_excluded = skip_counts["skipped_closed_count"] + skip_counts["skipped_past_close_time_count"]
+    inactive_rows_excluded = skip_counts["skipped_inactive_count"]
+    for row in rows:
+        row_copy = json.loads(json.dumps(row))
+        if not _kalshi_crypto_row_is_current_future(row_copy, captured_at):
+            settled_rows_excluded += 1
+            continue
+        _attach_kalshi_crypto_typed_fields(row_copy)
+        retained.append(row_copy)
+    combined["normalized_markets"] = retained
+    combined["normalized_count"] = len(retained)
+    combined["market_count"] = len(retained)
+    combined["event_count"] = len({row.get("event_id") for row in retained if row.get("event_id")})
+    combined["raw_response"] = {
+        "series_results": series_results,
+        "requested_assets": parsed_assets,
+        "attempted_series_tickers": series_tickers,
+    }
+    _attach_live_provenance(combined, source_id="kalshi")
+    combined = _redact_secretish_fields(combined)
+
+    orderbook_limit = max_orderbooks if max_orderbooks is not None else None
+    if include_orderbooks and retained and orderbook_limit != 0:
+        combined = enrich_orderbook_snapshot(
+            combined,
+            venue="kalshi",
+            captured_at=captured_at,
+            max_snapshot_age_hours=1.0,
+            kalshi_client=kalshi_orderbook_client
+            or KalshiOrderbookClient(
+                base_url=os.environ.get("KALSHI_BASE_URL", "https://external-api.kalshi.com/trade-api/v2"),
+                timeout_seconds=timeout_seconds,
+            ),
+            polymarket_client=PolymarketOrderbookClient(timeout_seconds=timeout_seconds),
+            source_snapshot_path=str(output_path) if output_path is not None else None,
+            preserve_raw_orderbook=False,
+            max_markets=orderbook_limit,
+        )
+
+    summary = _kalshi_crypto_readonly_summary(
+        combined,
+        requested_assets=parsed_assets,
+        attempted_series_tickers=series_tickers,
+        series_results=series_results,
+        include_orderbooks=include_orderbooks,
+        max_orderbooks=orderbook_limit,
+        settled_rows_excluded=settled_rows_excluded,
+        inactive_rows_excluded=inactive_rows_excluded,
+        generated_at=captured_at,
+    )
+    combined["kalshi_crypto_readonly_summary"] = summary
+    combined["kalshi_crypto_readonly"] = {
+        "schema_version": 1,
+        "source": "kalshi_crypto_readonly_fetch",
+        "diagnostic_only": True,
+        "research_only": True,
+        "requested_assets": parsed_assets,
+        "attempted_series_tickers": series_tickers,
+        "uses_public_readonly_markets_endpoint": True,
+        "uses_public_readonly_orderbook_endpoint": bool(include_orderbooks),
+        "orderbook_fetch_cap": orderbook_limit,
+        "forbidden_private_endpoints_used": False,
+        "default_scan_live_fetch_attempted": False,
+    }
+    combined["safety"] = {
+        "diagnostic_only": True,
+        "research_only": True,
+        "execution_enabled": False,
+        "orders_enabled": False,
+        "private_or_auth_endpoints_used": False,
+        "account_or_position_endpoints_used": False,
+        "same_payoff_asserted": False,
+        "paper_candidate_emitted": False,
+        "evaluator_gates_changed": False,
+    }
+    return combined
+
+
+def _parse_kalshi_crypto_assets(value: str) -> list[str]:
+    assets = [item.strip().upper() for item in str(value or "").split(",") if item.strip()]
+    if not assets:
+        raise ValueError("at least one asset is required")
+    unsupported = [asset for asset in assets if asset not in _KALSHI_CRYPTO_SERIES_BY_ASSET]
+    if unsupported:
+        raise ValueError(f"unsupported crypto asset(s): {','.join(unsupported)}")
+    return list(dict.fromkeys(assets))
+
+
+def _kalshi_crypto_series_for_assets(assets: list[str]) -> list[str]:
+    series: list[str] = []
+    for asset in assets:
+        series.extend(_KALSHI_CRYPTO_SERIES_BY_ASSET[asset])
+    return list(dict.fromkeys(series))
+
+
+def _kalshi_crypto_row_is_current_future(row: dict[str, Any], now: datetime) -> bool:
+    if row.get("closed") is True:
+        return False
+    status = str(row.get("status") or "").strip().lower()
+    if status and status not in {"open", "active"}:
+        return False
+    close_time = _parse_datetime_or_none(row.get("close_time"))
+    if close_time is not None and close_time < now:
+        return False
+    return True
+
+
+def _attach_kalshi_crypto_typed_fields(row: dict[str, Any]) -> None:
+    raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+    ticker = row.get("ticker") or row.get("market_id")
+    event_ticker = row.get("event_id") or raw.get("event_ticker")
+    title = row.get("title") or row.get("question") or raw.get("title")
+    rules_text = "\n\n".join(
+        str(value)
+        for value in (raw.get("rules_primary"), raw.get("rules_secondary"))
+        if value is not None and str(value).strip()
+    )
+    threshold, secondary_threshold = _kalshi_crypto_extract_threshold(ticker=str(ticker) if ticker else None)
+    shape, comparator_from_shape = _kalshi_crypto_classify_shape(
+        rules_text=rules_text,
+        ticker=str(ticker) if ticker else None,
+        has_secondary=bool(secondary_threshold),
+    )
+    comparator = _kalshi_crypto_extract_comparator(
+        rules_text=rules_text,
+        fallback=comparator_from_shape,
+        shape=shape,
+    )
+    target_date, target_time, timezone_label = _kalshi_crypto_extract_target_datetime(
+        rules_text=rules_text,
+        close_time_iso=row.get("close_time") or raw.get("close_time"),
+        resolution_time_iso=raw.get("expected_expiration_time") or raw.get("expiration_time"),
+    )
+    settlement_source = _kalshi_crypto_extract_settlement_source(rules_text=rules_text)
+    asset = _kalshi_crypto_extract_asset(
+        ticker=str(ticker) if ticker else None,
+        event_ticker=str(event_ticker) if event_ticker else None,
+        title=str(title) if title else None,
+    )
+    typed_complete = all(
+        value not in (None, "")
+        for value in (asset, threshold, comparator, target_date, target_time, timezone_label, settlement_source)
+    )
+    typed_keys = {
+        "asset": asset,
+        "threshold": threshold,
+        "threshold_lower": secondary_threshold,
+        "comparator": comparator,
+        "target_date": target_date,
+        "target_time": target_time,
+        "timezone": timezone_label,
+        "settlement_source": settlement_source,
+        "settlement_source_url": None,
+        "market_shape": shape,
+        "typed_complete": typed_complete,
+        "source": "public_kalshi_markets_rules_text",
+    }
+    row["kalshi_crypto_typed_keys"] = typed_keys
+    for key, value in typed_keys.items():
+        if key != "source":
+            row[key] = value
+
+
+def _kalshi_crypto_readonly_summary(
+    snapshot: dict[str, Any],
+    *,
+    requested_assets: list[str],
+    attempted_series_tickers: list[str],
+    series_results: list[dict[str, Any]],
+    include_orderbooks: bool,
+    max_orderbooks: int | None,
+    settled_rows_excluded: int,
+    inactive_rows_excluded: int,
+    generated_at: datetime,
+) -> dict[str, Any]:
+    rows = _normalized_market_rows(snapshot)
+    asset_counts: Counter[str] = Counter(str(row.get("asset") or "UNKNOWN").upper() for row in rows)
+    active_markets = sum(1 for row in rows if row.get("active") is True or str(row.get("status") or "").lower() in {"open", "active"})
+    future_markets = sum(1 for row in rows if _kalshi_crypto_row_is_current_future(row, generated_at))
+    typed_complete = sum(1 for row in rows if row.get("typed_complete") is True)
+    orderbook_summary = snapshot.get("orderbook_enrichment") if isinstance(snapshot.get("orderbook_enrichment"), dict) else {}
+    orderbook_market_rows = int(orderbook_summary.get("market_count") or 0) if include_orderbooks else 0
+    orderbook_cap_skips = int(orderbook_summary.get("skipped_due_to_max_markets_count") or 0) if include_orderbooks else 0
+    orderbooks_fetched = max(0, orderbook_market_rows - orderbook_cap_skips)
+    orderbooks_enriched = int(orderbook_summary.get("enriched_count") or 0) if include_orderbooks else 0
+    return {
+        "markets_fetched": sum(int(item.get("market_count") or 0) for item in series_results),
+        "markets_retained": len(rows),
+        "active_markets": active_markets,
+        "future_markets": future_markets,
+        "btc_rows": asset_counts.get("BTC", 0),
+        "eth_rows": asset_counts.get("ETH", 0),
+        "typed_complete_rows": typed_complete,
+        "orderbooks_requested": bool(include_orderbooks),
+        "orderbook_fetch_cap": max_orderbooks,
+        "orderbook_market_rows": orderbook_market_rows,
+        "orderbooks_fetched": orderbooks_fetched,
+        "orderbooks_enriched": orderbooks_enriched,
+        "orderbooks_skipped_due_to_cap": orderbook_cap_skips,
+        "settled_rows_excluded": settled_rows_excluded,
+        "inactive_rows_excluded": inactive_rows_excluded,
+        "requested_assets": requested_assets,
+        "attempted_series_tickers": attempted_series_tickers,
+        "series_results": series_results,
+        "exact_ready_rows": 0,
+        "paper_candidate_rows": 0,
+    }
+
+
 def fetch_the_odds_api(
     *,
     sport_key: str,
@@ -6550,10 +10399,18 @@ def fetch_sx_bet_readonly(
     query: str | None = None,
     label: str | None = None,
     output: Path | None = None,
+    output_dir: Path | None = None,
+    json_output: Path | None = None,
+    coverage_output: Path | None = None,
+    client_factory: Any | None = None,
 ) -> int:
-    output = output or _sx_bet_research_snapshot_path(label)
+    captured_at = datetime.now(timezone.utc)
+    output = output or _sx_bet_public_snapshot_output_path(output_dir=output_dir, label=label, captured_at=captured_at)
+    if coverage_output is None and json_output is not None:
+        coverage_output = PROJECT_ROOT / "reports" / "sx_bet_normalized_draft_coverage.json"
+    client = (client_factory or SXBetReadOnlyClient)(timeout_seconds=timeout_seconds)
     try:
-        snapshot = SXBetReadOnlyClient(timeout_seconds=timeout_seconds).fetch_research_snapshot(
+        snapshot = client.fetch_research_snapshot(
             max_markets=max_markets,
             sport=sport,
             league=league,
@@ -6596,6 +10453,21 @@ def fetch_sx_bet_readonly(
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
+    normalized_summary_text = ""
+    if json_output is not None and coverage_output is not None:
+        outputs = write_sx_bet_saved_normalization_files(
+            project_root=PROJECT_ROOT,
+            input_dir=output.parent,
+            json_output=json_output,
+            coverage_output=coverage_output,
+            include_fixture_dir=False,
+        )
+        coverage_summary = outputs["coverage"]["summary"]
+        normalized_summary_text = (
+            f" normalized_json={json_output}"
+            f" coverage={coverage_output}"
+            f" normalized_rows={coverage_summary['normalized_records']}"
+        )
     print(
         "sx_bet_readonly_fetch_status=OK "
         f"schema_kind={snapshot.get('schema_kind')} "
@@ -6613,6 +10485,7 @@ def fetch_sx_bet_readonly(
         "can_create_candidate_pair=false "
         "can_create_paper_candidate=false "
         f"output={output}"
+        f"{normalized_summary_text}"
     )
     if sport or league or query:
         print(
@@ -6667,6 +10540,21 @@ def _sx_bet_research_snapshot_path(label: str | None = None) -> Path:
     if label:
         return PROJECT_ROOT / "reports" / "sx_bet" / _safe_pipeline_label(label) / "sx_bet_research_snapshot.json"
     return PROJECT_ROOT / "reports" / "sx_bet_research_snapshot.json"
+
+
+def _sx_bet_public_snapshot_output_path(
+    *,
+    output_dir: Path | None,
+    label: str | None,
+    captured_at: datetime,
+) -> Path:
+    if output_dir is None:
+        return _sx_bet_research_snapshot_path(label)
+    timestamp = captured_at.strftime("%Y%m%d_%H%M%SZ")
+    parts = [output_dir, Path(timestamp)]
+    if label:
+        parts.append(Path(_safe_pipeline_label(label)))
+    return Path(*parts) / "sx_bet_research_snapshot.json"
 
 
 def _sx_bet_reference_json_path(label: str | None = None) -> Path:
@@ -7711,7 +11599,21 @@ def enrich_orderbooks(
     output: Path,
     timeout_seconds: float = 10.0,
     max_snapshot_age_hours: float = 24.0,
+    preserve_raw_orderbook: bool = False,
+    max_markets: int | None = None,
+    progress_every: int = 0,
+    retry_failed_once: bool = False,
+    failure_sample_limit: int = 10,
 ) -> int:
+    import sys
+
+    def _stderr_progress(event: dict[str, object]) -> None:
+        sys.stderr.write(
+            f"orderbook_enrichment_progress venue={venue} "
+            f"processed={event.get('processed')} total={event.get('total')} "
+            f"enriched={event.get('enriched_count')} fetch_failed={event.get('fetch_failed_count')}\n"
+        )
+
     try:
         payload = enrich_orderbook_snapshot_file(
             snapshot_path=snapshot,
@@ -7719,12 +11621,23 @@ def enrich_orderbooks(
             output_path=output,
             timeout_seconds=timeout_seconds,
             max_snapshot_age_hours=max_snapshot_age_hours,
+            preserve_raw_orderbook=preserve_raw_orderbook,
+            max_markets=max_markets,
+            progress_every=progress_every,
+            retry_failed_once=retry_failed_once,
+            progress_callback=_stderr_progress if progress_every > 0 else None,
+            failure_sample_limit=failure_sample_limit,
         )
     except ValueError as exc:
         print(f"orderbook_enrichment_status=FAILED venue={venue} message={exc}")
         return 1
 
     summary = payload["orderbook_enrichment"]
+    by_reason = summary.get("fetch_failed_by_reason") or {}
+    top_reasons = ",".join(
+        f"{reason}:{count}"
+        for reason, count in sorted(by_reason.items(), key=lambda kv: -kv[1])[:5]
+    ) or "none"
     print(
         "orderbook_enrichment_status=OK "
         f"venue={venue} markets={summary['market_count']} "
@@ -7734,6 +11647,14 @@ def enrich_orderbooks(
         f"full_orderbook_missing={summary.get('full_orderbook_missing_count', summary['unenriched_count'])} "
         f"fetch_failed={summary.get('fetch_failed_count', 0)} "
         f"stale_existing_top_of_book={summary.get('stale_existing_top_of_book_count', 0)} "
+        f"closed_or_settled={summary.get('closed_or_settled_count', 0)} "
+        f"empty_book_no_levels={summary.get('empty_book_no_levels_count', 0)} "
+        f"endpoint_errors={summary.get('endpoint_error_count', 0)} "
+        f"timeouts={summary.get('timeout_count', 0)} "
+        f"missing_ticker={summary.get('missing_ticker_count', 0)} "
+        f"retry_attempts={summary.get('retry_attempts', 0)} "
+        f"retry_successes={summary.get('retry_successes', 0)} "
+        f"top_failure_reasons={top_reasons} "
         f"output={output}"
     )
     return 0

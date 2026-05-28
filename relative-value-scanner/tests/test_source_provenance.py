@@ -116,6 +116,11 @@ def test_source_readiness_rows_cover_requested_checklist_sources(monkeypatch) ->
     assert rows["ProphetX"]["source_mode_currently_used"] == "NOT_IMPLEMENTED"
     assert rows["ProphetX"]["source_type"] == "EXECUTABLE_VENUE"
     assert rows["ProphetX"]["can_participate_in_candidate_pair"] is False
+    assert rows["IBKR / ForecastEx"]["live_fetch_implemented"] is True
+    assert rows["IBKR / ForecastEx"]["live_fetch_currently_used_by_scan_py"] is False
+    assert rows["IBKR / ForecastEx"]["can_participate_in_candidate_pair"] is False
+    assert rows["IBKR / ForecastEx"]["can_create_paper_candidate"] is False
+    assert "candidate-pair participation disabled" in rows["IBKR / ForecastEx"]["next_required_connection_step"]
 
 
 def test_source_readiness_optional_json_output(tmp_path: Path, monkeypatch) -> None:

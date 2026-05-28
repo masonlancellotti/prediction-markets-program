@@ -53,6 +53,10 @@ class NormalizedMarket:
     captured_at: Optional[datetime] = None
     settlement_rule: str = ""
     is_executable: bool = False
+    source_platform: Optional[str] = None
+    access_platform: Optional[str] = None
+    exchange_venue: Optional[str] = None
+    executable_venue: Optional[str] = None
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False)
 
     def __post_init__(self) -> None:
@@ -107,6 +111,10 @@ class NormalizedMarket:
             "captured_at": self.captured_at.isoformat() if self.captured_at else None,
             "settlement_rule": self.settlement_rule,
             "is_executable": self.is_executable,
+            "source_platform": self.source_platform,
+            "access_platform": self.access_platform,
+            "exchange_venue": self.exchange_venue,
+            "executable_venue": self.executable_venue,
         }
 
 

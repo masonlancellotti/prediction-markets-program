@@ -101,6 +101,17 @@ SOURCE_REGISTRY: dict[str, SourceEntry] = {
         allowed_effects=(),
         notes="Potential executable venue later; design-only read-only boundary exists, but live transport is blocked by account/API permission and instrument work.",
     ),
+    "crypto_com_predict_cdna": SourceEntry(
+        source_id="crypto_com_predict_cdna",
+        display_name="Crypto.com Predict / CDNA",
+        source_type=SourceType.EXECUTABLE_VENUE,
+        implementation_status=ImplementationStatus.PLANNED_NOT_IMPLEMENTED,
+        allowed_effects=(),
+        notes=(
+            "Regulated event-contract exchange / CDNA; not a generic crypto exchange and not a reference/truth "
+            "feed. No live transport, auth, account, balance, position, order, wallet, or signing code exists."
+        ),
+    ),
     "sx_bet": SourceEntry(
         source_id="sx_bet",
         display_name="SX Bet",

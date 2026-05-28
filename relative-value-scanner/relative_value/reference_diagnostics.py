@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from relative_value.live_snapshot_matcher import load_reference_snapshot
+from relative_value.reference_odds import load_saved_reference_odds_rows
 
 
 DEFAULT_REFERENCE_MATCH_MIN_SCORE = 0.35
+REFERENCE_FV_SOURCE = "reference_odds_fv_residuals_v1"
+DEFAULT_EVENT_TIME_TOLERANCE_SECONDS = 12 * 60 * 60
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOPWORDS = {
     "a",
@@ -96,6 +100,448 @@ def explain_reference_context_files(
             "title similarity is not settlement equivalence; no action promotion is performed."
         ),
     }
+
+
+def build_reference_odds_fv_report(
+    *,
+    input_dir: Path,
+    generated_at: datetime | None = None,
+    event_time_tolerance_seconds: int = DEFAULT_EVENT_TIME_TOLERANCE_SECONDS,
+) -> dict[str, Any]:
+    generated = generated_at or datetime.now(timezone.utc)
+    if generated.tzinfo is None or generated.utcoffset() is None:
+        raise ValueError("generated_at must include timezone information")
+
+    reference_payload = load_saved_reference_odds_rows(input_dir)
+    reference_rows = [row for row in reference_payload["rows"] if isinstance(row, dict)]
+    targets = _load_saved_sports_targets(input_dir)
+    residual_rows: list[dict[str, Any]] = []
+    matched_reference_keys: set[tuple[Any, ...]] = set()
+    for reference in reference_rows:
+        reference_key = _reference_key(reference)
+        for target in targets:
+            match = _structured_sports_match(
+                reference,
+                target,
+                event_time_tolerance_seconds=event_time_tolerance_seconds,
+            )
+            if not match["matched"]:
+                continue
+            matched_reference_keys.add(reference_key)
+            residual_rows.append(_residual_row(reference, target, match))
+
+    residual_rows.sort(
+        key=lambda row: (
+            row.get("residual_abs") is not None,
+            row.get("residual_abs") or 0.0,
+            str(row.get("reference_event_id") or ""),
+            str(row.get("target_market_id") or ""),
+        ),
+        reverse=True,
+    )
+    blockers = Counter()
+    for row in residual_rows:
+        blockers.update(row.get("blockers") or [])
+    unmatched_count = sum(1 for row in reference_rows if _reference_key(row) not in matched_reference_keys)
+    summary = {
+        "odds_events_read": reference_payload["odds_events_read"],
+        "reference_markets_read": len(reference_rows),
+        "matched_rows": len(residual_rows),
+        "unmatched_reference_rows": unmatched_count,
+        "residual_rows": len(residual_rows),
+        "top_residuals": residual_rows[:10],
+        "blockers_by_count": [{"blocker": key, "count": value} for key, value in blockers.most_common()],
+        "target_rows_considered": len(targets),
+        "warnings": len(reference_payload["warnings"]),
+    }
+    return {
+        "schema_version": 1,
+        "source": REFERENCE_FV_SOURCE,
+        "generated_at": generated.isoformat(),
+        "input_dir": str(input_dir),
+        "summary": summary,
+        "reference_summary": {
+            "files_read": reference_payload["files_read"],
+            "warnings": reference_payload["warnings"],
+        },
+        "residual_rows": residual_rows,
+        "warnings": reference_payload["warnings"],
+        "safety": {
+            "saved_files_only": True,
+            "live_api_calls_attempted": False,
+            "authenticated_endpoints_used": False,
+            "orders_or_cancellations": False,
+            "reference_only_source": True,
+            "executable_leg": False,
+            "candidate_pair_creation": False,
+            "paper_candidate_emitted": False,
+            "affects_evaluator_gates": False,
+        },
+    }
+
+
+def write_reference_odds_fv_files(
+    *,
+    input_dir: Path,
+    json_output: Path,
+    markdown_output: Path,
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
+    report = build_reference_odds_fv_report(input_dir=input_dir, generated_at=generated_at)
+    json_output.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    json_output.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    markdown_output.write_text(render_reference_odds_fv_markdown(report), encoding="utf-8")
+    return report
+
+
+def render_reference_odds_fv_markdown(report: dict[str, Any]) -> str:
+    summary = report.get("summary") or {}
+    lines = [
+        "# The Odds API Fair-Value Residual Diagnostics",
+        "",
+        "Saved-snapshot-only reference diagnostics. The Odds API is reference-only and never an executable leg.",
+        "",
+        "## Summary",
+        "",
+        f"- odds_events_read: `{summary.get('odds_events_read', 0)}`",
+        f"- reference_markets_read: `{summary.get('reference_markets_read', 0)}`",
+        f"- matched_rows: `{summary.get('matched_rows', 0)}`",
+        f"- unmatched_reference_rows: `{summary.get('unmatched_reference_rows', 0)}`",
+        f"- residual_rows: `{summary.get('residual_rows', 0)}`",
+        "",
+        "## Top Residuals",
+        "",
+    ]
+    top = summary.get("top_residuals") or []
+    if top:
+        lines.extend(["| Reference | Target | Market | Residual | Action | Blockers |", "|---|---|---|---:|---|---|"])
+        for row in top[:10]:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _md(row.get("reference_event_title")),
+                        _md(row.get("target_title")),
+                        _md(row.get("market_type")),
+                        _md(row.get("residual_abs")),
+                        _md(row.get("allowed_next_action")),
+                        _md(", ".join(row.get("blockers") or [])),
+                    ]
+                )
+                + " |"
+            )
+    else:
+        lines.append("(none)")
+    lines.extend(["", "## Blockers", ""])
+    blockers = summary.get("blockers_by_count") or []
+    if blockers:
+        lines.extend(["| Blocker | Count |", "|---|---:|"])
+        for row in blockers[:12]:
+            lines.append(f"| {_md(row.get('blocker'))} | {_md(row.get('count'))} |")
+    else:
+        lines.append("(none)")
+    lines.extend(
+        [
+            "",
+            "## Safety",
+            "",
+            "- saved_files_only: `true`",
+            "- live_api_calls_attempted: `false`",
+            "- authenticated_endpoints_used: `false`",
+            "- orders_or_cancellations: `false`",
+            "- reference_only_source: `true`",
+            "- executable_leg: `false`",
+            "- candidate_pair_creation: `false`",
+            "- paper_candidate_emitted: `false`",
+            "- affects_evaluator_gates: `false`",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _load_saved_sports_targets(input_dir: Path) -> list[dict[str, Any]]:
+    targets: list[dict[str, Any]] = []
+    targets.extend(_targets_from_sx_bet_typed_keys(input_dir / "sx_bet_sports_typed_keys.json"))
+    targets.extend(_targets_from_normalized_markets(input_dir / "normalized_markets_v0.json"))
+    return targets
+
+
+def _targets_from_sx_bet_typed_keys(path: Path) -> list[dict[str, Any]]:
+    payload = _load_json_or_none(path)
+    if not isinstance(payload, dict) or payload.get("source") != "sx_bet_sports_typed_keys_v1":
+        return []
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return []
+    targets: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        typed = row.get("typed_key") if isinstance(row.get("typed_key"), dict) else {}
+        participants = typed.get("participants") if isinstance(typed.get("participants"), list) else []
+        targets.append(
+            {
+                "source_report": str(path),
+                "venue": row.get("venue") or "sx_bet",
+                "market_id": row.get("market_id"),
+                "event_id": row.get("event_id"),
+                "title": row.get("title"),
+                "sport": typed.get("sport"),
+                "league": typed.get("league"),
+                "event_time": typed.get("event_time"),
+                "participants": participants,
+                "home_team": typed.get("home_team"),
+                "away_team": typed.get("away_team"),
+                "market_type": _market_type_to_reference(typed.get("market_type")),
+                "line": typed.get("line") if typed.get("line") is not None else typed.get("threshold"),
+                "outcome_name": typed.get("side"),
+                "probability": _target_probability(row),
+                "executable": bool(row.get("usable_as_executable_market")),
+                "reference_only": row.get("reference_only_status") == "REFERENCE_ONLY_UNUSABLE",
+            }
+        )
+    return targets
+
+
+def _targets_from_normalized_markets(path: Path) -> list[dict[str, Any]]:
+    payload = _load_json_or_none(path)
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("normalized_markets")
+    if not isinstance(rows, list):
+        return []
+    targets: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        participants = _participants_from_any(row)
+        if not participants:
+            continue
+        targets.append(
+            {
+                "source_report": str(path),
+                "venue": row.get("venue"),
+                "market_id": row.get("market_id") or row.get("ticker"),
+                "event_id": row.get("event_id") or row.get("event_slug"),
+                "title": row.get("title") or row.get("question") or row.get("event_title"),
+                "sport": row.get("sport") or row.get("category"),
+                "league": row.get("league") or row.get("sport"),
+                "event_time": row.get("event_time") or row.get("close_time") or row.get("resolution_time"),
+                "participants": participants,
+                "home_team": row.get("home_team"),
+                "away_team": row.get("away_team"),
+                "market_type": _market_type_to_reference(row.get("market_type")),
+                "line": row.get("line") or row.get("threshold"),
+                "outcome_name": row.get("outcome_name") or row.get("side"),
+                "probability": _target_probability(row),
+                "executable": False,
+                "reference_only": False,
+            }
+        )
+    return targets
+
+
+def _structured_sports_match(
+    reference: dict[str, Any],
+    target: dict[str, Any],
+    *,
+    event_time_tolerance_seconds: int,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    mismatches: list[str] = []
+    ref_league = _normalize_token(reference.get("league") or reference.get("sport"))
+    target_league = _normalize_token(target.get("league") or target.get("sport"))
+    if ref_league and target_league and ref_league != target_league:
+        mismatches.append("league_mismatch")
+    elif ref_league and target_league:
+        reasons.append("league_exact")
+
+    ref_teams = _team_set([reference.get("home_team"), reference.get("away_team")])
+    target_teams = _team_set(target.get("participants") or [target.get("home_team"), target.get("away_team")])
+    if not ref_teams or not target_teams:
+        mismatches.append("missing_structured_participants")
+    elif ref_teams != target_teams:
+        mismatches.append("participant_mismatch")
+    else:
+        reasons.append("participants_exact")
+
+    ref_time = _parse_datetime_or_none(str(reference.get("commence_time") or ""))
+    target_time = _parse_datetime_or_none(str(target.get("event_time") or ""))
+    if ref_time is None or target_time is None:
+        mismatches.append("missing_event_time")
+    else:
+        delta = abs((ref_time - target_time).total_seconds())
+        if delta > event_time_tolerance_seconds:
+            mismatches.append("event_time_mismatch")
+        else:
+            reasons.append("event_time_within_tolerance")
+
+    ref_market_type = _market_type_to_reference(reference.get("market_type"))
+    target_market_type = _market_type_to_reference(target.get("market_type"))
+    if not ref_market_type or not target_market_type:
+        mismatches.append("missing_market_type")
+    elif ref_market_type != target_market_type:
+        mismatches.append("market_type_mismatch")
+    else:
+        reasons.append("market_type_exact")
+
+    if ref_market_type in {"spreads", "totals"}:
+        ref_line = _number_or_none(reference.get("line") if reference.get("line") is not None else reference.get("point"))
+        target_line = _number_or_none(target.get("line"))
+        if ref_line is None or target_line is None:
+            mismatches.append("missing_line")
+        elif abs(ref_line - target_line) > 0.000001:
+            mismatches.append("line_mismatch")
+        else:
+            reasons.append("line_exact")
+
+    return {
+        "matched": not mismatches,
+        "match_reasons": reasons,
+        "mismatches": mismatches,
+    }
+
+
+def _residual_row(reference: dict[str, Any], target: dict[str, Any], match: dict[str, Any]) -> dict[str, Any]:
+    reference_probability = _number_or_none(reference.get("no_vig_probability"))
+    target_probability = _number_or_none(target.get("probability"))
+    residual = None
+    blockers = ["reference_only_source", "not_executable", "no_same_payoff_claim"]
+    if reference_probability is None:
+        blockers.append("vig_removal_ambiguous")
+    if target_probability is None:
+        blockers.append("missing_target_probability")
+    if reference_probability is not None and target_probability is not None:
+        residual = round(target_probability - reference_probability, 6)
+    return {
+        "diagnostic_only": True,
+        "affects_evaluator_gates": False,
+        "allowed_next_action": "FAIR_VALUE_WATCH" if residual is not None else "IGNORE_LOW_CONFIDENCE",
+        "reference_only_source": True,
+        "executable_leg": False,
+        "paper_candidate_emitted": False,
+        "reference_event_id": reference.get("event_id"),
+        "reference_event_title": _reference_event_title(reference),
+        "reference_bookmaker": reference.get("bookmaker"),
+        "reference_market_type": reference.get("market_type"),
+        "reference_outcome_name": reference.get("outcome_name"),
+        "reference_no_vig_probability": reference_probability,
+        "reference_implied_probability": reference.get("implied_probability"),
+        "target_venue": target.get("venue"),
+        "target_market_id": target.get("market_id"),
+        "target_title": target.get("title"),
+        "target_probability": target_probability,
+        "market_type": reference.get("market_type"),
+        "line": reference.get("line"),
+        "residual_probability": residual,
+        "residual_abs": None if residual is None else round(abs(residual), 6),
+        "match_reasons": match.get("match_reasons") or [],
+        "blockers": sorted(set(blockers)),
+    }
+
+
+def _reference_key(reference: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        reference.get("raw_source_file"),
+        reference.get("raw_event_index"),
+        reference.get("bookmaker_key"),
+        reference.get("market_type"),
+        reference.get("outcome_name"),
+        reference.get("point"),
+    )
+
+
+def _reference_event_title(reference: dict[str, Any]) -> str:
+    away = reference.get("away_team")
+    home = reference.get("home_team")
+    if away and home:
+        return f"{away} at {home}"
+    return str(reference.get("event_id") or "")
+
+
+def _market_type_to_reference(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if text in {"moneyline", "h2h", "head_to_head"}:
+        return "h2h"
+    if text in {"spread", "spreads"}:
+        return "spreads"
+    if text in {"total", "totals", "over_under"}:
+        return "totals"
+    return text or None
+
+
+def _participants_from_any(row: dict[str, Any]) -> list[str]:
+    for key in ("participants", "teams", "outcomes"):
+        value = row.get(key)
+        if isinstance(value, list):
+            output = []
+            for item in value:
+                if isinstance(item, str):
+                    output.append(item)
+                elif isinstance(item, dict):
+                    name = item.get("name") or item.get("label") or item.get("team")
+                    if name:
+                        output.append(str(name))
+            if output:
+                return output
+    home = row.get("home_team")
+    away = row.get("away_team")
+    return [str(value) for value in (away, home) if value]
+
+
+def _team_set(values: Any) -> set[str]:
+    if not isinstance(values, list):
+        values = list(values) if isinstance(values, tuple) else [values]
+    return {_normalize_team(value) for value in values if _normalize_team(value)}
+
+
+def _normalize_team(value: Any) -> str:
+    return " ".join(_TOKEN_RE.findall(str(value or "").lower()))
+
+
+def _normalize_token(value: Any) -> str:
+    return " ".join(_TOKEN_RE.findall(str(value or "").lower()))
+
+
+def _target_probability(row: dict[str, Any]) -> float | None:
+    for key in (
+        "no_vig_probability",
+        "implied_probability",
+        "reference_probability",
+        "yes_reference_probability",
+        "probability",
+    ):
+        probability = _number_or_none(row.get(key))
+        if probability is not None:
+            return probability
+    quote = row.get("quote_depth") if isinstance(row.get("quote_depth"), dict) else {}
+    for key in ("best_yes_ask_price", "best_yes_bid_price"):
+        probability = _number_or_none(quote.get(key))
+        if probability is not None:
+            return probability
+    return None
+
+
+def _load_json_or_none(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _number_or_none(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _md(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("|", "\\|").replace("\n", " ")
 
 
 def _load_executable_snapshot(path: Path) -> dict[str, Any]:

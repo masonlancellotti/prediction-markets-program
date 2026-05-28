@@ -147,13 +147,17 @@ def source_readiness_report(*, env: dict[str, str] | None = None) -> dict[str, A
             account_needed="yes",
             api_key_needed="unknown",
             api_key_env_var=None,
-            live_fetch_implemented=False,
+            live_fetch_implemented=True,
             live_fetch_currently_used_by_scan_py=False,
             source_mode_currently_used=NOT_IMPLEMENTED,
             source_type=_registry_source_type("forecastex_ibkr"),
             can_participate_in_candidate_pair=False,
             can_create_paper_candidate=False,
-            next_required_connection_step="Resolve eligibility, auth/account, instrument, and read-only data boundaries before implementation.",
+            next_required_connection_step=(
+                "Live read-only diagnostic fetch exists after manual Gateway login; keep source registry planned, "
+                "candidate-pair participation disabled, and paper-candidate creation disabled until settlement, fee, "
+                "quote, and exact-payoff reviews are complete."
+            ),
             env=environment,
         ),
         _readiness_row(

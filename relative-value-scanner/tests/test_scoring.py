@@ -7,6 +7,7 @@ from relative_value.fees import FlatFeeModel, KalshiTieredFeeModel, NoFeeModel
 from relative_value.models import ACTION_SEVERITY
 from relative_value.models import Action, NormalizedMarket, SourceKind
 from relative_value.report import _REASON_PRIORITY
+from relative_value.scanner import RelativeValueScanner
 from relative_value.scoring import _reference_gap, score_pair
 
 
@@ -237,6 +238,69 @@ def test_executable_pair_direction_includes_both_venue_names() -> None:
     candidate = score_pair(left, right)
     assert "kalshi" in candidate.direction
     assert "polymarket" in candidate.direction
+
+
+def test_ibkr_accessed_kalshi_is_not_independent_from_direct_kalshi() -> None:
+    direct = _exchange("kalshi", 0.1, 0.2)
+    routed = NormalizedMarket(
+        venue="IBKR_KALSHI",
+        market_id="ibkr-kalshi:1",
+        event_name=direct.event_name,
+        outcome_name=direct.outcome_name,
+        source_kind=SourceKind.EXCHANGE,
+        yes_bid=0.32,
+        yes_ask=0.35,
+        liquidity_top_contracts=100,
+        settlement_time=BASE_TIME,
+        captured_at=BASE_TIME,
+        settlement_rule=direct.settlement_rule,
+        is_executable=True,
+        source_platform="IBKR",
+        access_platform="IBKR",
+        exchange_venue="KALSHI",
+        executable_venue="KALSHI",
+    )
+
+    candidate = score_pair(direct, routed, ScannerConfig(fee_model=NoFeeModel()))
+
+    assert candidate.action == Action.IGNORE
+    assert "ibkr_kalshi_is_same_exchange_as_direct_kalshi" in candidate.reasons
+    assert "broker_route_not_independent_venue" in candidate.reasons
+    assert "do_not_cross_compare_as_independent_arb" in candidate.reasons
+    assert "PAPER_CANDIDATE" not in str(candidate.to_dict())
+    default_scan = RelativeValueScanner(ScannerConfig(fee_model=NoFeeModel())).scan([direct, routed])
+    assert default_scan == []
+
+
+def test_ibkr_forecastex_remains_separate_from_direct_kalshi() -> None:
+    direct = _exchange("kalshi", 0.1, 0.2, captured_at=None)
+    forecastex = NormalizedMarket(
+        venue="IBKR_FORECASTEX",
+        market_id="ibkr-forecastex:1",
+        event_name=direct.event_name,
+        outcome_name=direct.outcome_name,
+        source_kind=SourceKind.EXCHANGE,
+        yes_bid=0.32,
+        yes_ask=0.35,
+        liquidity_top_contracts=100,
+        settlement_time=BASE_TIME,
+        captured_at=None,
+        settlement_rule=direct.settlement_rule,
+        is_executable=True,
+        source_platform="IBKR",
+        access_platform="IBKR",
+        exchange_venue="FORECASTX",
+        executable_venue="FORECASTX",
+    )
+
+    candidate = score_pair(direct, forecastex, ScannerConfig(fee_model=NoFeeModel()))
+
+    assert candidate.action != Action.IGNORE
+    assert "ibkr_kalshi_is_same_exchange_as_direct_kalshi" not in candidate.reasons
+    assert candidate.right.to_dict()["source_platform"] == "IBKR"
+    assert candidate.right.to_dict()["access_platform"] == "IBKR"
+    assert candidate.right.to_dict()["exchange_venue"] == "FORECASTX"
+    assert candidate.right.to_dict()["executable_venue"] == "FORECASTX"
 
 
 def test_reason_priority_covers_representative_scoring_reasons() -> None:

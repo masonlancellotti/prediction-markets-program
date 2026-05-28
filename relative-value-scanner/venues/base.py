@@ -41,5 +41,9 @@ class JsonExchangeFixtureAdapter(ReadOnlyVenueAdapter):
             captured_at=parse_datetime(row.get("captured_at")),
             settlement_rule=str(row.get("settlement_rule", "")),
             is_executable=bool(row.get("is_executable", False)),
+            source_platform=row.get("source_platform"),
+            access_platform=row.get("access_platform"),
+            exchange_venue=row.get("exchange_venue"),
+            executable_venue=row.get("executable_venue"),
             raw=row,
         )

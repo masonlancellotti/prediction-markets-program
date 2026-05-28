@@ -151,13 +151,33 @@ def test_kalshi_orderbook_enrichment_preserves_rows_and_adds_metrics() -> None:
         captured_at=NOW,
         kalshi_client=FakeKalshiOrderbookClient(),
         polymarket_client=FakePolymarketOrderbookClient(),
+        source_snapshot_path="reports/live_readonly/kalshi.json",
     )
 
     row = enriched["normalized_markets"][0]
     assert row["ticker"] == "KXTEST-YES"
     assert row["orderbook_enrichment"]["best_bid"] == 0.42
     assert row["orderbook_enrichment"]["enrichment_status"] == "enriched"
+    assert row["orderbook_enrichment"]["market_id"] == "KXTEST-YES"
+    assert row["orderbook_enrichment"]["ticker"] == "KXTEST-YES"
+    assert row["orderbook_enrichment"]["source_snapshot_path"] == "reports/live_readonly/kalshi.json"
     assert enriched["orderbook_enrichment"]["enriched_count"] == 1
+    assert enriched["orderbook_enrichment"]["enrichment_generated_at"] == NOW.isoformat()
+    assert enriched["orderbook_enrichment"]["source_snapshot_path"] == "reports/live_readonly/kalshi.json"
+
+
+def test_kalshi_orderbook_enrichment_can_preserve_raw_orderbook_when_explicit() -> None:
+    enriched = enrich_orderbook_snapshot(
+        _kalshi_snapshot(),
+        venue="kalshi",
+        captured_at=NOW,
+        kalshi_client=FakeKalshiOrderbookClient(),
+        polymarket_client=FakePolymarketOrderbookClient(),
+        preserve_raw_orderbook=True,
+    )
+
+    row = enriched["normalized_markets"][0]
+    assert row["orderbook_enrichment"]["raw_orderbook"]["orderbook"]["yes"][0] == [0.42, 10]
 
 
 def test_polymarket_orderbook_enrichment_uses_yes_token_id() -> None:
@@ -212,6 +232,30 @@ def test_stale_snapshot_marks_market_unenriched() -> None:
     assert summary["existing_top_of_book_present_count"] == 1
     assert summary["full_orderbook_missing_count"] == 1
     assert summary["stale_existing_top_of_book_count"] == 1
+
+
+def test_empty_kalshi_orderbook_fails_closed() -> None:
+    class EmptyKalshiOrderbookClient:
+        def endpoint_for(self, ticker: str) -> str:
+            return f"https://example.test/markets/{ticker}/orderbook"
+
+        def fetch_orderbook(self, ticker: str) -> dict:
+            return {"orderbook": {"yes": [], "no": []}}
+
+    enriched = enrich_orderbook_snapshot(
+        _kalshi_snapshot(),
+        venue="kalshi",
+        captured_at=NOW,
+        kalshi_client=EmptyKalshiOrderbookClient(),
+        polymarket_client=FakePolymarketOrderbookClient(),
+    )
+
+    enrichment = enriched["normalized_markets"][0]["orderbook_enrichment"]
+    assert enrichment["enrichment_status"] == "unenriched"
+    assert enrichment["enrichment_warnings"] == ["orderbook_unavailable"]
+    assert enrichment["best_bid"] is None
+    assert enrichment["best_ask"] is None
+    assert enrichment["depth_at_best_ask"] is None
 
 
 def test_kalshi_orderbook_client_url_contract_and_user_agent(monkeypatch) -> None:
@@ -310,6 +354,47 @@ def test_enrich_orderbooks_cli_uses_saved_json_without_network(monkeypatch, tmp_
     assert "fresh_orderbook_fetch_enriched=1" in stdout
     assert "existing_top_of_book_present=1" in stdout
     assert "full_orderbook_missing=0" in stdout
+
+
+def test_enrich_kalshi_orderbooks_cli_wraps_explicit_kalshi_enrichment(monkeypatch, tmp_path: Path, capsys) -> None:
+    snapshot_path = tmp_path / "kalshi_snapshot.json"
+    output = tmp_path / "kalshi_enriched.json"
+    snapshot_path.write_text(json.dumps(_kalshi_snapshot()), encoding="utf-8")
+
+    def fake_enrich_orderbook_snapshot_file(**kwargs):
+        assert kwargs["snapshot_path"] == snapshot_path
+        assert kwargs["venue"] == "kalshi"
+        assert kwargs["preserve_raw_orderbook"] is True
+        payload = _kalshi_snapshot()
+        payload["orderbook_enrichment"] = {
+            "market_count": 1,
+            "enriched_count": 1,
+            "unenriched_count": 0,
+            "fresh_orderbook_fetch_enriched_count": 1,
+            "existing_top_of_book_present_count": 0,
+            "full_orderbook_missing_count": 0,
+            "fetch_failed_count": 0,
+            "stale_existing_top_of_book_count": 0,
+        }
+        kwargs["output_path"].write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(scan, "enrich_orderbook_snapshot_file", fake_enrich_orderbook_snapshot_file)
+
+    result = scan.main(
+        [
+            "enrich-kalshi-orderbooks",
+            "--snapshot",
+            str(snapshot_path),
+            "--output",
+            str(output),
+            "--preserve-raw-orderbook",
+        ]
+    )
+
+    assert result == 0
+    stdout = capsys.readouterr().out
+    assert "orderbook_enrichment_status=OK venue=kalshi" in stdout
 
 
 def _paper_check_pairs() -> dict:
@@ -1333,3 +1418,232 @@ def test_mlb_world_series_paper_check_help_shows_required_arguments(capsys) -> N
     assert "--polymarket-snapshot POLYMARKET_SNAPSHOT" in stdout
     assert "--kalshi-snapshot KALSHI_SNAPSHOT" in stdout
     assert "--pairs PAIRS" in stdout
+
+
+# ---------------------------------------------------------------------------
+# Failure-reason aggregation (Part A diagnostics)
+# ---------------------------------------------------------------------------
+
+
+def _kalshi_failure_snapshot(rows: list[dict]) -> dict:
+    return {
+        "schema_version": 1,
+        "source": "kalshi_markets",
+        "captured_at": "2026-05-27T11:30:00+00:00",
+        "market_count": len(rows),
+        "normalized_count": len(rows),
+        "normalized_markets": rows,
+    }
+
+
+class _StatusKalshiClient:
+    """Fake Kalshi orderbook client that maps tickers to a scripted outcome.
+
+    Each ticker maps to one of:
+      - "empty"           -> return {} (empty orderbook → empty_book_no_levels)
+      - "settled"         -> return {} (settled, distinguished by row.close_time<now)
+      - "http_404"        -> raise OrderbookClientError("Kalshi orderbook API returned HTTP 404")
+      - "http_429"        -> raise OrderbookClientError("Kalshi orderbook API returned HTTP 429")
+      - "http_500"        -> raise OrderbookClientError("Kalshi orderbook API returned HTTP 500")
+      - "timeout"         -> raise OrderbookClientError("Kalshi orderbook API request timed out")
+      - "network_error"   -> raise OrderbookClientError("Kalshi orderbook API request failed: refused")
+      - "ok"              -> return a real one-level book
+    """
+
+    def __init__(self, mapping: dict[str, str]) -> None:
+        self.mapping = mapping
+        self.calls: list[str] = []
+
+    def endpoint_for(self, ticker: str) -> str:
+        return f"https://external-api.kalshi.com/trade-api/v2/markets/{ticker}/orderbook"
+
+    def fetch_orderbook(self, ticker: str) -> dict:
+        from venues.orderbooks import OrderbookClientError
+
+        self.calls.append(ticker)
+        outcome = self.mapping.get(ticker, "empty")
+        if outcome in ("empty", "settled"):
+            return {"orderbook": {"yes": [], "no": []}}
+        if outcome == "ok":
+            return {"orderbook": {"yes": [[40, 100]], "no": [[55, 80]]}}
+        if outcome == "http_404":
+            raise OrderbookClientError("Kalshi orderbook API returned HTTP 404")
+        if outcome == "http_429":
+            raise OrderbookClientError("Kalshi orderbook API returned HTTP 429")
+        if outcome == "http_500":
+            raise OrderbookClientError("Kalshi orderbook API returned HTTP 500")
+        if outcome == "timeout":
+            raise OrderbookClientError("Kalshi orderbook API request timed out")
+        if outcome == "network_error":
+            raise OrderbookClientError("Kalshi orderbook API request failed: connection refused")
+        raise RuntimeError(f"unknown outcome for ticker {ticker}: {outcome}")
+
+
+def test_enrich_orderbook_failure_reason_aggregation_classifies_each_row() -> None:
+    now = datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        # Settled (close_time < now).
+        {"venue": "kalshi", "ticker": "KX-SETTLED", "market_id": "KX-SETTLED", "active": True, "closed": False, "close_time": "2026-05-22T11:00:00Z"},
+        # Empty book but still active.
+        {"venue": "kalshi", "ticker": "KX-EMPTY", "market_id": "KX-EMPTY", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+        {"venue": "kalshi", "ticker": "KX-404", "market_id": "KX-404", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+        {"venue": "kalshi", "ticker": "KX-429", "market_id": "KX-429", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+        {"venue": "kalshi", "ticker": "KX-500", "market_id": "KX-500", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+        {"venue": "kalshi", "ticker": "KX-TIMEOUT", "market_id": "KX-TIMEOUT", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+        {"venue": "kalshi", "ticker": "KX-NET", "market_id": "KX-NET", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+        # Missing ticker.
+        {"venue": "kalshi", "ticker": "", "market_id": "", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+        # Healthy.
+        {"venue": "kalshi", "ticker": "KX-OK", "market_id": "KX-OK", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+    ]
+    mapping = {
+        "KX-SETTLED": "settled",
+        "KX-EMPTY": "empty",
+        "KX-404": "http_404",
+        "KX-429": "http_429",
+        "KX-500": "http_500",
+        "KX-TIMEOUT": "timeout",
+        "KX-NET": "network_error",
+        "KX-OK": "ok",
+    }
+    client = _StatusKalshiClient(mapping)
+    enriched = enrich_orderbook_snapshot(
+        _kalshi_failure_snapshot(rows),
+        venue="kalshi",
+        captured_at=now,
+        max_snapshot_age_hours=10_000.0,
+        kalshi_client=client,
+        polymarket_client=FakePolymarketOrderbookClient(),
+    )
+    block = enriched["orderbook_enrichment"]
+    assert block["market_count"] == 9
+    assert block["enriched_count"] == 1
+    by_reason = block["fetch_failed_by_reason"]
+    assert by_reason["closed_or_settled_empty_book"] == 1
+    assert by_reason["empty_book_no_levels"] == 1
+    assert by_reason["http_404_not_found_or_settled"] == 1
+    assert by_reason["http_429_rate_limited"] == 1
+    assert by_reason["http_5xx_server_error"] == 1
+    assert by_reason["timeout"] == 1
+    assert by_reason["network_error"] == 1
+    assert by_reason["missing_ticker"] == 1
+    # Aggregate totals.
+    assert block["missing_ticker_count"] == 1
+    assert block["closed_or_settled_count"] == 1
+    assert block["empty_book_no_levels_count"] == 1
+    assert block["endpoint_error_count"] == 3  # 404 + 429 + 500
+    assert block["timeout_count"] == 1
+    assert block["network_error_count"] == 1
+    # Sample failed markets capture the per-row reason.
+    samples = block["sample_failed_markets"]
+    assert samples
+    sample_tickers = {s["ticker"] for s in samples}
+    assert "KX-SETTLED" in sample_tickers
+    settled_sample = next(s for s in samples if s["ticker"] == "KX-SETTLED")
+    assert settled_sample["failure_reason"] == "closed_or_settled_empty_book"
+    assert settled_sample["market_settled"] is True
+    # Per-row enrichment retains the same classification.
+    row_by_ticker = {row.get("ticker"): row for row in enriched["normalized_markets"]}
+    assert row_by_ticker["KX-404"]["orderbook_enrichment"]["failure_reason"] == "http_404_not_found_or_settled"
+    assert row_by_ticker["KX-TIMEOUT"]["orderbook_enrichment"]["failure_reason"] == "timeout"
+    assert row_by_ticker["KX-OK"]["orderbook_enrichment"]["enrichment_status"] == "enriched"
+
+
+def test_enrich_orderbook_retry_failed_once_recovers_transient_failure() -> None:
+    now = datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        {"venue": "kalshi", "ticker": "KX-T", "market_id": "KX-T", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"},
+    ]
+
+    class FlakyClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def endpoint_for(self, ticker: str) -> str:
+            return f"https://external-api.kalshi.com/trade-api/v2/markets/{ticker}/orderbook"
+
+        def fetch_orderbook(self, ticker: str) -> dict:
+            from venues.orderbooks import OrderbookClientError
+
+            self.calls += 1
+            if self.calls == 1:
+                raise OrderbookClientError("Kalshi orderbook API returned HTTP 500")
+            return {"orderbook": {"yes": [[42, 10]], "no": [[55, 20]]}}
+
+    client = FlakyClient()
+    enriched = enrich_orderbook_snapshot(
+        _kalshi_failure_snapshot(rows),
+        venue="kalshi",
+        captured_at=now,
+        max_snapshot_age_hours=10_000.0,
+        kalshi_client=client,
+        polymarket_client=FakePolymarketOrderbookClient(),
+        retry_failed_once=True,
+    )
+    block = enriched["orderbook_enrichment"]
+    assert block["retry_attempts"] == 1
+    assert block["retry_successes"] == 1
+    assert block["enriched_count"] == 1
+
+
+def test_enrich_orderbook_max_markets_caps_fetch() -> None:
+    now = datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        {"venue": "kalshi", "ticker": f"KX-{i}", "market_id": f"KX-{i}", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"}
+        for i in range(5)
+    ]
+    client = _StatusKalshiClient({f"KX-{i}": "ok" for i in range(5)})
+    enriched = enrich_orderbook_snapshot(
+        _kalshi_failure_snapshot(rows),
+        venue="kalshi",
+        captured_at=now,
+        max_snapshot_age_hours=10_000.0,
+        kalshi_client=client,
+        polymarket_client=FakePolymarketOrderbookClient(),
+        max_markets=2,
+    )
+    block = enriched["orderbook_enrichment"]
+    assert block["enriched_count"] == 2
+    assert block["skipped_due_to_max_markets_count"] == 3
+    assert len(client.calls) == 2  # client never called beyond the cap.
+
+
+def test_enrich_orderbook_progress_callback_fires_every_n_markets() -> None:
+    now = datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        {"venue": "kalshi", "ticker": f"KX-{i}", "market_id": f"KX-{i}", "active": True, "closed": False, "close_time": "2026-12-31T11:00:00Z"}
+        for i in range(6)
+    ]
+    client = _StatusKalshiClient({f"KX-{i}": "ok" for i in range(6)})
+    events: list[dict] = []
+    enrich_orderbook_snapshot(
+        _kalshi_failure_snapshot(rows),
+        venue="kalshi",
+        captured_at=now,
+        max_snapshot_age_hours=10_000.0,
+        kalshi_client=client,
+        polymarket_client=FakePolymarketOrderbookClient(),
+        progress_every=2,
+        progress_callback=events.append,
+    )
+    assert [e["processed"] for e in events] == [2, 4, 6]
+
+
+def test_enrich_orderbook_stale_snapshot_classifies_failure_as_stale_snapshot() -> None:
+    # 5 days old snapshot, default max_snapshot_age_hours=24h triggers stale path.
+    now = datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [{"venue": "kalshi", "ticker": "KX-A", "market_id": "KX-A", "active": True, "closed": False}]
+    snapshot = _kalshi_failure_snapshot(rows)
+    snapshot["captured_at"] = "2026-05-22T12:00:00+00:00"
+    enriched = enrich_orderbook_snapshot(
+        snapshot,
+        venue="kalshi",
+        captured_at=now,
+        kalshi_client=_StatusKalshiClient({"KX-A": "ok"}),
+        polymarket_client=FakePolymarketOrderbookClient(),
+    )
+    block = enriched["orderbook_enrichment"]
+    assert block["enriched_count"] == 0
+    assert block["fetch_failed_by_reason"].get("stale_snapshot") == 1
+    row = enriched["normalized_markets"][0]
+    assert row["orderbook_enrichment"]["failure_reason"] == "stale_snapshot"

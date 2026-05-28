@@ -361,12 +361,25 @@ def _iter_market_records(payload: dict[str, Any]) -> list[tuple[dict[str, Any], 
             if isinstance(value, str) and value:
                 event_index[value] = event
     rows: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    # Dedupe by market_ticker so the same market does not surface twice when the
+    # snapshot contains both events[].markets and a synthesized normalized_markets
+    # view (e.g. after kalshi_event_metadata.join_kalshi_event_metadata enriches
+    # the snapshot). Events[] markets are seen first and win the dedupe — this
+    # preserves the existing behavior for snapshots that have only events[] or
+    # only normalized_markets.
+    seen_tickers: set[str] = set()
     for event in events:
         for market in event.get("markets", []) if isinstance(event.get("markets"), list) else []:
             if isinstance(market, dict):
                 merged = {**market}
                 merged.setdefault("event_ticker", event.get("event_ticker"))
                 merged.setdefault("event_id", event.get("event_id") or event.get("id"))
+                ticker = merged.get("market_ticker") or merged.get("ticker")
+                if isinstance(ticker, str) and ticker.strip():
+                    normalized_ticker = ticker.strip()
+                    if normalized_ticker in seen_tickers:
+                        continue
+                    seen_tickers.add(normalized_ticker)
                 rows.append((merged, event))
     markets = payload.get("normalized_markets")
     if not isinstance(markets, list):
@@ -375,6 +388,17 @@ def _iter_market_records(payload: dict[str, Any]) -> list[tuple[dict[str, Any], 
         if not isinstance(market, dict):
             continue
         raw = market.get("raw") if isinstance(market.get("raw"), dict) else {}
+        ticker = (
+            market.get("market_ticker")
+            or market.get("ticker")
+            or (raw.get("market_ticker") if isinstance(raw, dict) else None)
+            or (raw.get("ticker") if isinstance(raw, dict) else None)
+        )
+        if isinstance(ticker, str) and ticker.strip():
+            normalized_ticker = ticker.strip()
+            if normalized_ticker in seen_tickers:
+                continue
+            seen_tickers.add(normalized_ticker)
         event_key = market.get("event_ticker") or market.get("event_id") or raw.get("event_ticker") or raw.get("event_id")
         rows.append((market, event_index.get(event_key)))
     return rows
