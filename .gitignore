@@ -14,6 +14,7 @@
 *.db-shm
 *.sqlite
 *.sqlite3
+*.duckdb
 
 # Generated reports
 reports/*.json
@@ -22,6 +23,11 @@ reports/*.md
 **/reports/*.json
 **/reports/*.csv
 **/reports/*.md
+**/reports/**/*.json
+**/reports/**/*.csv
+**/reports/**/*.md
+**/reports/**/*.txt
+**/reports/**/*.html
 !**/reports/.gitkeep
 
 # Python
@@ -52,3 +58,4 @@ laptop_directory_listing.txt
 
 # Local generated live/read-only snapshots
 relative-value-scanner/reports/live_readonly/
+relative-value-scanner/reports/manual_snapshots/
