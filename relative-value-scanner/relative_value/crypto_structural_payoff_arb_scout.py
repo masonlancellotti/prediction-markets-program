@@ -75,11 +75,93 @@ CT_MONOTONICITY = "MONOTONICITY_VIOLATION"
 CT_MONOTONICITY_COVER = "THRESHOLD_MONOTONICITY_COVER"
 CT_THRESHOLD_TO_BUCKET = "THRESHOLD_TO_BUCKET_DIAGNOSTIC"
 CT_UP_DOWN = "UP_DOWN_SAME_WINDOW"
+CT_BARRIER = "BARRIER_TOUCH_DIAGNOSTIC"
+
+# Per-(asset, instant) cap on each sampled, non-positive guaranteed-cover bucket
+# (missing-quote / synthetic / net-negative). Bounds output on thin books while
+# still surfacing the best cross-venue & long-only near-misses, not just covers.
+_G2_SAMPLE_CAP = 25
+
+# Canonical buy-only / diagnostic candidate classes for generation-coverage.
+CANDIDATE_CLASSES = (
+    CT_UP_DOWN,
+    CT_MONOTONICITY_COVER,
+    CT_LONG_ONLY,
+    CT_CROSS_VENUE,
+    CT_BUCKET_TO_THRESHOLD,
+    "CDNA_FILL_FIRST",
+    CT_SAME_PAYOFF_CHEAPER,
+    "DIAGNOSTIC_ONLY_REQUIRES_SHORT",
+)
+
+QUOTE_COVERAGE_SIDE_KEYS = (
+    "kalshi_yes_ask_present",
+    "kalshi_no_ask_present",
+    "kalshi_yes_bid_present",
+    "kalshi_no_bid_present",
+    "polymarket_yes_ask_present",
+    "polymarket_no_ask_present",
+    "polymarket_yes_bid_present",
+    "polymarket_no_bid_present",
+    "cdna_display_yes_present",
+    "cdna_display_no_present",
+)
+
+QUOTE_COVERAGE_EXTRA_KEYS = (
+    "complement_quote_used_count",
+    "complement_quote_possible_but_missing_bid",
+    "explicit_ask_used_count",
+    "gamma_top_of_book_fallback_count",
+    "clob_book_used_count",
+)
 
 _KALSHI_FEE = KalshiTieredFeeModel()
 _POLY_FEE = PolymarketConservativeFeeModel()
 
 _PRICE_STATE_OBS = {"point_in_time_at_target", "range_at_target"}
+
+# Mason cannot short. A row that needs selling/shorting is never a tradable
+# candidate — it is diagnostic-only and must not pollute the actionable buy-only
+# blocker dashboard.
+_REQUIRES_SHORT_BLOCKERS = {"requires_short_or_not_guaranteed", "threshold_to_bucket_requires_short"}
+
+# Blocker buckets for the separated dashboards. The three buckets are kept
+# DISJOINT so the tables don't double-count: "actionable" = a fresh/complete
+# quote could flip the row tradable; "economic" = it priced but lost edge to
+# fees/basis; "diagnostic" = structurally non-tradable for a buy-only operator.
+ECONOMIC_REJECTION_BLOCKERS = {
+    "no_positive_net_edge_after_fees",
+    "no_positive_adjusted_net_edge_after_basis_buffer",
+}
+ACTIONABLE_BUY_ONLY_BLOCKERS = {
+    "missing_yes_lower_ask",
+    "missing_no_higher_ask",
+    "missing_lower_yes_ask",
+    "missing_higher_no_ask",
+    "missing_partner_yes_ask",
+    "missing_partner_no_ask",
+    "missing_partner_complement_ask",
+    "missing_kalshi_yes_ask",
+    "missing_kalshi_no_ask",
+    "missing_polymarket_yes_ask",
+    "missing_polymarket_no_ask",
+    "missing_cdna_display_yes",
+    "missing_cdna_display_no",
+    "missing_bucket_leg_ask",
+    "missing_cdna_display_price",
+    "missing_ask",
+    "missing_quote_depth",
+    "insufficient_available_notional",
+    "stale_or_missing_quote",
+    "threshold_order_invalid",
+}
+DIAGNOSTIC_ONLY_NON_TRADABLE_REASONS = {
+    "requires_short_or_not_guaranteed",
+    "threshold_to_bucket_requires_short",
+    "monotonicity_diagnostic_only",
+    "barrier_vs_terminal_mismatch",
+    "incompatible_shape",
+}
 
 
 # ---------------------------------------------------------------------------- #
@@ -103,6 +185,14 @@ class Leg:
     market_id_or_ticker: str | None
     hard_blockers: list[str] = field(default_factory=list)
     risk_notes: list[str] = field(default_factory=list)
+    complement_used: bool = False
+    complement_source: str | None = None
+    # Identity / quote provenance carried for audit packs (read-only metadata).
+    condition_id: str | None = None
+    token_ids: dict[str, Any] = field(default_factory=dict)
+    contract_id: str | None = None
+    quote_timestamp: str | None = None
+    depth_status: str | None = None
 
     def to_dict(self, payoff_vector: list[int] | None = None) -> dict[str, Any]:
         return {
@@ -118,9 +208,16 @@ class Leg:
             "available_size_or_cap": self.available_size_or_cap,
             "source_index": self.source_index,
             "market_id_or_ticker": self.market_id_or_ticker,
+            "condition_id": self.condition_id,
+            "token_ids": dict(self.token_ids or {}),
+            "contract_id": self.contract_id,
+            "quote_timestamp": self.quote_timestamp,
+            "depth_status": self.depth_status,
             "payoff_vector": payoff_vector,
             "hard_blockers": list(self.hard_blockers),
             "risk_notes": list(self.risk_notes),
+            "complement_used": bool(self.complement_used),
+            "complement_source": self.complement_source,
         }
 
 
@@ -193,6 +290,9 @@ def build_crypto_structural_payoff_arb_scout_report(
     operator_size_cap: float = 0.0,
     cdna_operator_size_cap: float = DEFAULT_CDNA_OPERATOR_SIZE_CAP,
     cdna_evidence_dir: Path | None = None,
+    cdna_timeseries_dir: Path | None = None,
+    max_cdna_snapshot_age_seconds: float = 60.0,
+    require_cdna_fresh_for_cdna_candidates: bool = True,
     max_quote_age_seconds: float = DEFAULT_MAX_QUOTE_AGE_SECONDS,
     min_available_notional: float = DEFAULT_MIN_AVAILABLE_NOTIONAL,
     max_basket_legs: int = DEFAULT_MAX_BASKET_LEGS,
@@ -220,6 +320,21 @@ def build_crypto_structural_payoff_arb_scout_report(
         generated=generated, http_get=http_get, sleep=sleep, rows_by_asset=rows_by_asset,
     )
 
+    # CDNA latest-snapshot rows (file only; no network/browser). Fresh, non-expired
+    # terminal-threshold rows are normalized into each asset's cdna_rows so they flow
+    # through the same payoff engine as Kalshi/Polymarket; stale rows are excluded and
+    # counted. This closes the CDNA_FILL_FIRST coverage gap (rows present, attempted=0).
+    cdna_snapshot_diag = _load_and_inject_cdna_snapshot(
+        loaded, asset_list=asset_list, include_cdna=include_cdna,
+        cdna_timeseries_dir=cdna_timeseries_dir, cdna_evidence_dir=cdna_evidence_dir,
+        max_age_seconds=float(max_cdna_snapshot_age_seconds),
+        require_fresh=bool(require_cdna_fresh_for_cdna_candidates),
+        size_cap=float(cdna_operator_size_cap), now=generated,
+    )
+    if cdna_snapshot_diag.get("cdna_rows_loaded"):
+        load_diag["cdna_rows_loaded"] = int(cdna_snapshot_diag["cdna_rows_loaded"])
+    load_diag["cdna_snapshot"] = cdna_snapshot_diag
+
     opts = _Opts(
         risk_mode=risk_mode, include_cdna=include_cdna,
         operator_accept_cdna=operator_accept_cdna_display_price_risk,
@@ -233,6 +348,9 @@ def build_crypto_structural_payoff_arb_scout_report(
     state_grids: list[dict[str, Any]] = []
     grammar_counts: Counter = Counter()
     mono_diag: Counter = Counter()
+    coverage: dict[str, Counter] = defaultdict(Counter)
+    quote_coverage = _empty_quote_coverage_diagnostics()
+    up_down_audit = _empty_up_down_audit()
     for asset in asset_list:
         rec = loaded.get(asset) or {}
         k = list(rec.get("kalshi_rows") or [])
@@ -243,12 +361,15 @@ def build_crypto_structural_payoff_arb_scout_report(
                 fam = _classify_row(row)
                 row["contract_family"] = fam
                 grammar_counts[fam] += 1
-        asset_rows, asset_grids, asset_mono = _scan_asset(asset=asset, kalshi=k, polymarket=p, cdna=c, opts=opts)
+        _merge_quote_coverage(quote_coverage, _quote_coverage_diagnostics(k + p + c, opts=opts))
+        _merge_up_down_audit(up_down_audit, _up_down_window_audit(asset, k + p + c))
+        asset_rows, asset_grids, asset_mono = _scan_asset(asset=asset, kalshi=k, polymarket=p, cdna=c, opts=opts, coverage=coverage)
         rows.extend(asset_rows)
         state_grids.extend(asset_grids)
         mono_diag.update(asset_mono)
 
-    # Dedup, normalize new fields on diagnostic rows, then sort by adjusted edge.
+    # Dedup, normalize new fields on diagnostic rows, classify execution type
+    # (only BUY_ONLY can be a paper candidate), then sort by adjusted edge.
     rows = _dedup_rows(rows)
     for r in rows:
         if "adjusted_net_edge_after_fees" not in r:
@@ -256,13 +377,36 @@ def build_crypto_structural_payoff_arb_scout_report(
         r.setdefault("comparability_tier", "DIAGNOSTIC_ONLY")
         r.setdefault("contract_family", CONTRACT_FAMILY_UNKNOWN)
         r.setdefault("source_basis_buffer", 0.0)
+        execution_type, buy_only, requires_short = _classify_execution(r)
+        r["candidate_execution_type"] = execution_type
+        r["tradable_buy_only"] = buy_only
+        r["requires_short_or_sell"] = requires_short
+        if not buy_only and r.get("paper_candidate"):
+            # Shorting is never a valid execution path -> never a paper candidate.
+            r["paper_candidate"] = False
+            r["paper_candidate_class"] = CLASS_NONE
+            r["action"] = ACTION_WATCH if not (r.get("hard_blockers")) else ACTION_IGNORE
+        r.setdefault("quote_side_diagnostics", [])
+        _annotate_row_operability(r)
     rows.sort(
         key=lambda r: (1 if r.get("paper_candidate") else 0, _safe_float(r.get("adjusted_net_edge_after_fees"))),
         reverse=True,
     )
 
+    _finish_up_down_audit(up_down_audit, rows)
+    _finish_quote_coverage(quote_coverage, rows)
+    candidate_generation_coverage = _finalize_coverage(coverage, rows)
+    cdna_match_diag = _cdna_match_diagnostics(loaded, asset_list=asset_list, cdna_snapshot=cdna_snapshot_diag, now=generated)
+    candidate_generation_coverage = _augment_cdna_coverage(
+        candidate_generation_coverage, rows=rows, cdna_snapshot=cdna_snapshot_diag, match_diag=cdna_match_diag)
+    cdna_participation = _build_cdna_participation(
+        rows=rows, cdna_snapshot=cdna_snapshot_diag, match_diag=cdna_match_diag, include_cdna=include_cdna)
     summary = _summary(rows, state_grids)
     summary["contract_grammar_counts"] = dict(grammar_counts)
+    summary["candidate_generation_coverage"] = candidate_generation_coverage
+    summary["cdna_participation"] = cdna_participation
+    summary["quote_coverage_diagnostics"] = quote_coverage
+    summary["up_down_audit"] = up_down_audit
     return {
         "schema_kind": SCHEMA_KIND,
         "schema_version": SCHEMA_VERSION,
@@ -290,6 +434,11 @@ def build_crypto_structural_payoff_arb_scout_report(
         "contract_grammar_counts": summary.get("contract_grammar_counts", {}),
         "candidate_type_counts": summary["candidate_type_counts"],
         "comparability_tier_counts": summary["comparability_tier_counts"],
+        "candidate_generation_coverage": candidate_generation_coverage,
+        "cdna_participation": cdna_participation,
+        "cdna_snapshot_diagnostics": cdna_snapshot_diag,
+        "quote_coverage_diagnostics": quote_coverage,
+        "up_down_audit": up_down_audit,
         "monotonicity_cover_diagnostics": {
             "monotonicity_pairs_checked": int(mono_diag.get("pairs_checked", 0)),
             "monotonicity_cover_candidates_generated": int(mono_diag.get("generated", 0)),
@@ -300,6 +449,18 @@ def build_crypto_structural_payoff_arb_scout_report(
         },
         "basis_buffer_sensitivity": _basis_buffer_sensitivity(rows, basis_buffer_edge),
         "top_blockers": summary["top_blockers"],
+        "actionable_buy_only_blockers": summary["actionable_buy_only_blockers"],
+        "diagnostic_only_non_tradable_reasons": summary["diagnostic_only_non_tradable_reasons"],
+        "economic_rejections": summary["economic_rejections"],
+        "diagnostic_only_short_required_rows": summary["diagnostic_only_short_required_rows"],
+        "top_buy_only_near_misses": summary["top_buy_only_near_misses"],
+        "monotonicity_covers_one_leg_missing": summary["monotonicity_covers_one_leg_missing"],
+        "near_miss_threshold_buckets": summary["near_miss_threshold_buckets"],
+        "quote_side_diagnostic_counts": summary["quote_side_diagnostic_counts"],
+        "near_miss_buy_only_rows": summary["near_miss_buy_only_rows"],
+        "manual_micro_test_candidate_rows": summary["manual_micro_test_candidate_rows"],
+        "complement_quote_rows": summary["complement_quote_rows"],
+        "cdna_fill_first_candidates": summary["cdna_fill_first_candidates"],
         "top_fee_drag_rows": summary["top_fee_drag_rows"],
         "safety": {
             "diagnostic_only": True,
@@ -388,6 +549,17 @@ def _load_rows(
         diag["source"] = "live_refresh"
         loaded = {str(r.get("asset")).upper(): r for r in summary.get("per_asset") or []}
         diag["assets_loaded"] = sorted(loaded.keys())
+        # Keep the collector's per-asset warnings / clob failures so the watcher
+        # can render a "Latest Iteration Errors" panel (purely diagnostic).
+        diag["per_asset_diagnostics"] = [
+            {
+                "asset": r.get("asset"),
+                "kalshi_diagnostics": (r.get("kalshi_diagnostics") or {}),
+                "polymarket_diagnostics": (r.get("polymarket_diagnostics") or {}),
+                "cdna_diagnostics": (r.get("cdna_diagnostics") or {}),
+            }
+            for r in summary.get("per_asset") or []
+        ]
         return loaded, diag
 
     diag["source"] = "saved_evidence"
@@ -411,12 +583,346 @@ def _load_rows(
     return loaded, diag
 
 
+def _load_and_inject_cdna_snapshot(
+    loaded: dict[str, dict[str, Any]], *, asset_list, include_cdna, cdna_timeseries_dir, cdna_evidence_dir,
+    max_age_seconds, require_fresh, size_cap, now,
+) -> dict[str, Any]:
+    """Load CDNA latest-snapshot rows (file only), freshness-gate, normalize fresh
+    rows to the scout's terminal-threshold row schema, and inject them into each
+    asset's ``cdna_rows`` so they flow through the same payoff engine. Stale/expired
+    rows are excluded and counted. Returns CDNA snapshot diagnostics."""
+    diag: dict[str, Any] = {
+        "cdna_supplied": False, "cdna_rows_loaded": 0, "cdna_fresh_rows": 0, "cdna_stale_rows": 0,
+        "cdna_injected_rows": 0, "blocked_missing_cdna_display": 0, "cdna_target_instants": [],
+        "cdna_top_of_hour_rows": 0, "cdna_20m_top_of_hour_rows": 0, "cdna_2h_rows": 0, "cdna_missing_reason": None,
+    }
+    if not include_cdna or (cdna_timeseries_dir is None and cdna_evidence_dir is None):
+        if include_cdna:
+            diag["cdna_missing_reason"] = "cdna_timeseries_dir_not_provided"
+        return diag
+    from relative_value.cdna_fast_snapshot import load_latest_cdna_snapshot, partition_cdna_rows
+    snap = load_latest_cdna_snapshot(timeseries_dir=cdna_timeseries_dir, evidence_dir=cdna_evidence_dir, now=now)
+    rows = snap.get("rows") or []
+    diag.update({"cdna_supplied": bool(snap.get("cdna_supplied")), "cdna_rows_loaded": len(rows),
+                 "cdna_missing_reason": snap.get("missing_reason")})
+    part = partition_cdna_rows(rows, now=now, max_age_seconds=float(max_age_seconds))
+    diag.update({"cdna_fresh_rows": len(part["fresh_rows"]), "cdna_stale_rows": len(part["stale_rows"]),
+                 "cdna_top_of_hour_rows": part["cdna_top_of_hour_rows"],
+                 "cdna_20m_top_of_hour_rows": part["cdna_20m_top_of_hour_rows"], "cdna_2h_rows": part["cdna_2h_rows"]})
+    usable = part["fresh_rows"] if require_fresh else (part["fresh_rows"] + part["stale_rows"])
+    asset_set = {str(a).upper() for a in asset_list}
+    instants: set[str] = set()
+    injected = missing_display = 0
+    for r in usable:
+        asset = str(r.get("asset") or "").upper()
+        if asset_set and asset not in asset_set:
+            continue
+        norm = _normalize_snapshot_cdna_row(r, size_cap=size_cap)
+        if norm is None:
+            missing_display += 1
+            continue
+        rec = loaded.setdefault(asset, {})
+        existing = rec.setdefault("cdna_rows", [])
+        sig = (norm.get("market_id_or_ticker"), norm.get("target_instant_utc"))
+        if any((e.get("market_id_or_ticker"), e.get("target_instant_utc")) == sig for e in existing):
+            continue  # already supplied by the collector; do not double-count
+        existing.append(norm)
+        injected += 1
+        if norm.get("target_instant_utc"):
+            instants.add(str(norm["target_instant_utc"]))
+    diag.update({"cdna_injected_rows": injected, "blocked_missing_cdna_display": missing_display,
+                 "cdna_target_instants": sorted(instants)})
+    return diag
+
+
+def _normalize_snapshot_cdna_row(row: dict[str, Any], *, size_cap: float) -> dict[str, Any] | None:
+    """latest.json CDNA row -> scout terminal-threshold row (prices under ``quote``).
+
+    The display prices become yes/no asks (the scout adds the CDNA fee); CDNA carries
+    no depth, so ask sizes are the operator size cap. Returns None when both display
+    prices are missing (counted as ``blocked_missing_cdna_display``)."""
+    dy = _to_float(row.get("display_yes"))
+    dn = _to_float(row.get("display_no"))
+    if dy is None and dn is None:
+        return None
+    return {
+        "asset": str(row.get("asset") or "").upper(), "platform": "cdna",
+        "market_shape": "point_in_time_threshold", "payoff_observation_type": "point_in_time_at_target",
+        "comparator": row.get("comparator") or "above", "threshold_or_strike": _to_float(row.get("threshold_or_strike")),
+        "bucket_floor": None, "bucket_cap": None, "reference_start_utc": row.get("reference_start_utc"),
+        "target_instant_utc": row.get("target_instant_utc"), "interval_length_seconds": row.get("interval_length_seconds"),
+        "price_source": "cdna_display", "market_id_or_ticker": row.get("symbol") or row.get("contract_id"),
+        "contract_family": CONTRACT_FAMILY_TERMINAL_THRESHOLD,
+        "quote": {"yes_ask": dy, "yes_ask_size": float(size_cap), "no_ask": dn, "no_ask_size": float(size_cap),
+                  "depth_status": "display_price_only", "quote_timestamp": row.get("quote_timestamp"),
+                  "quote_diagnostics": [], "blockers_remaining": []},
+    }
+
+
+def _kp_terminal_partner_legs(kalshi: list[dict[str, Any]], polymarket: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in list(kalshi) + list(polymarket):
+        fam = str(row.get("contract_family") or _classify_row(row))
+        if fam != CONTRACT_FAMILY_TERMINAL_THRESHOLD:
+            continue
+        out.append({
+            "platform": str(row.get("platform") or "").lower(), "asset": str(row.get("asset") or "").upper(),
+            "target_instant_utc": row.get("target_instant_utc"), "threshold_or_strike": _to_float(row.get("threshold_or_strike")),
+            "comparator": row.get("comparator") or "above", "contract_family": CONTRACT_FAMILY_TERMINAL_THRESHOLD,
+            "reference_start_utc": row.get("reference_start_utc"), "interval_length_seconds": row.get("interval_length_seconds"),
+        })
+    return out
+
+
+def _cdna_match_diagnostics(loaded, *, asset_list, cdna_snapshot, now) -> dict[str, Any]:
+    """Harmonic match accounting: CDNA terminal-threshold rows vs Kalshi/Polymarket
+    terminal-threshold partners (same target_instant_utc/strike; interval ignored).
+    Pure diagnostic — the candidate ROWS still come from the scout's payoff engine."""
+    considered = matches = 0
+    blockers: Counter = Counter()
+    by_instant: Counter = Counter()
+    if not cdna_snapshot.get("cdna_injected_rows"):
+        return {"cdna_candidates_considered": 0, "cdna_terminal_threshold_matches": 0,
+                "cdna_threshold_match_blockers": {}, "cdna_fill_first_candidates_by_instant": {}}
+    from relative_value.cdna_fast_snapshot import payoff_grammar_match
+    for asset in asset_list:
+        rec = loaded.get(asset) or {}
+        cdna_rows = [r for r in (rec.get("cdna_rows") or []) if str(r.get("platform") or "").lower() == "cdna"]
+        partners = _kp_terminal_partner_legs(rec.get("kalshi_rows") or [], rec.get("polymarket_rows") or [])
+        for c in cdna_rows:
+            cdna_m = {"asset": str(asset).upper(), "target_instant_utc": c.get("target_instant_utc"),
+                      "threshold_or_strike": _to_float(c.get("threshold_or_strike")), "comparator": c.get("comparator") or "above",
+                      "contract_family": CONTRACT_FAMILY_TERMINAL_THRESHOLD, "reference_start_utc": c.get("reference_start_utc"),
+                      "interval_length_seconds": c.get("interval_length_seconds")}
+            for p in partners:
+                considered += 1
+                m = payoff_grammar_match(cdna_m, p)
+                if m["match"]:
+                    matches += 1
+                    by_instant[str(c.get("target_instant_utc"))] += 1
+                else:
+                    blockers.update(m["blockers"])
+    return {"cdna_candidates_considered": considered, "cdna_terminal_threshold_matches": matches,
+            "cdna_threshold_match_blockers": dict(blockers), "cdna_fill_first_candidates_by_instant": dict(by_instant)}
+
+
+def _augment_cdna_coverage(cov_list, *, rows, cdna_snapshot, match_diag) -> list[dict[str, Any]]:
+    """Make CDNA_FILL_FIRST coverage reflect attempted CDNA rows (so present-but-
+    unmatched/all-stale shows attempted>0, not a false 'never attempted' gap) and add
+    the CDNA-specific blocked_* breakdown."""
+    rows_loaded = int(cdna_snapshot.get("cdna_rows_loaded") or 0)
+    if rows_loaded <= 0:
+        return cov_list
+    entry = next((e for e in cov_list if e.get("candidate_class") == "CDNA_FILL_FIRST"), None)
+    if entry is None:
+        entry = {"candidate_class": "CDNA_FILL_FIRST", "attempted": 0, "generated": 0, "priced": 0,
+                 "net_positive": 0, "paper_candidate": 0, "paper": 0, "blocked_missing_ask": 0,
+                 "blocked_stale": 0, "blocked_no_positive_net": 0, "blocked_shape_or_time": 0}
+        cov_list.append(entry)
+    mb = match_diag.get("cdna_threshold_match_blockers") or {}
+    entry["attempted"] = max(int(entry.get("attempted", 0)), int(entry.get("generated", 0)), rows_loaded)
+    entry["blocked_stale"] = int(entry.get("blocked_stale", 0)) + int(cdna_snapshot.get("cdna_stale_rows") or 0)
+    entry["blocked_missing_cdna_display"] = int(cdna_snapshot.get("blocked_missing_cdna_display") or 0)
+    entry["blocked_target_time_mismatch"] = int(mb.get("target_time_mismatch", 0))
+    entry["blocked_threshold_grid_mismatch"] = int(mb.get("threshold_grid_mismatch", 0))
+    entry.setdefault("blocked_no_positive_net", 0)
+    return cov_list
+
+
+def _build_cdna_participation(*, rows, cdna_snapshot, match_diag, include_cdna) -> dict[str, Any]:
+    cdna_rows_with_leg = [
+        r for r in rows
+        if str(r.get("paper_candidate_class") or "") == CLASS_CDNA
+        or any(str(l.get("platform") or "").lower() == "cdna" for l in r.get("basket_legs") or [])
+    ]
+    return {
+        "cdna_supplied": bool(cdna_snapshot.get("cdna_supplied")) or bool(cdna_rows_with_leg),
+        "cdna_rows_loaded": int(cdna_snapshot.get("cdna_rows_loaded") or 0),
+        "cdna_fresh_rows": int(cdna_snapshot.get("cdna_fresh_rows") or 0),
+        "cdna_stale_rows": int(cdna_snapshot.get("cdna_stale_rows") or 0),
+        "cdna_target_instants": list(cdna_snapshot.get("cdna_target_instants") or []),
+        "cdna_candidates_considered": int(match_diag.get("cdna_candidates_considered") or 0) or len(cdna_rows_with_leg),
+        "cdna_terminal_threshold_matches": int(match_diag.get("cdna_terminal_threshold_matches") or 0),
+        "cdna_fill_first_candidates": sum(1 for r in cdna_rows_with_leg if r.get("paper_candidate")),
+        "cdna_fill_first_candidate_rows": len(cdna_rows_with_leg),
+        "cdna_candidate_types_generated": dict(Counter(
+            str(r.get("candidate_type")) for r in cdna_rows_with_leg if r.get("candidate_type"))),
+        "cdna_fill_first_blockers": match_diag.get("cdna_threshold_match_blockers") or {},
+        "cdna_fill_first_candidates_by_instant": match_diag.get("cdna_fill_first_candidates_by_instant") or {},
+        "cdna_missing_reason": cdna_snapshot.get("cdna_missing_reason"),
+    }
+
+
+def _empty_quote_coverage_diagnostics() -> dict[str, Any]:
+    return {
+        "raw": {key: 0 for key in QUOTE_COVERAGE_SIDE_KEYS},
+        "usable": {key: 0 for key in QUOTE_COVERAGE_SIDE_KEYS},
+        **{key: 0 for key in QUOTE_COVERAGE_EXTRA_KEYS},
+    }
+
+
+def _quote_coverage_diagnostics(rows: list[dict[str, Any]], *, opts: "_Opts") -> dict[str, Any]:
+    out = _empty_quote_coverage_diagnostics()
+    for row in rows:
+        platform = str(row.get("platform") or "").lower()
+        quote = row.get("quote") or {}
+        stale = _stale(row, opts.generated, opts.max_quote_age_seconds)
+        diagnostics = quote.get("quote_diagnostics") or []
+        depth_status = str(quote.get("depth_status") or "").lower()
+        if "gamma_top_of_book_fallback_used" in diagnostics or "gamma_top_of_book_fallback" in depth_status:
+            out["gamma_top_of_book_fallback_count"] += 1
+        if "clob" in depth_status or "orderbook" in depth_status:
+            out["clob_book_used_count"] += 1
+        for side in ("yes", "no"):
+            ask_key = f"{side}_ask"
+            bid_key = f"{side}_bid"
+            raw_ask = _quote_metric_key(platform, side, "ask")
+            raw_bid = _quote_metric_key(platform, side, "bid")
+            if raw_ask and _to_float(quote.get(ask_key)) is not None:
+                out["raw"][raw_ask] += 1
+                if _valid_ask(quote.get(ask_key)) is not None and not stale:
+                    out["usable"][raw_ask] += 1
+            if raw_bid and _to_float(quote.get(bid_key)) is not None:
+                out["raw"][raw_bid] += 1
+                if _valid_bid(quote.get(bid_key)) is not None and not stale:
+                    out["usable"][raw_bid] += 1
+            if _valid_ask(quote.get(ask_key)) is None:
+                opposite_bid = quote.get("no_bid" if side == "yes" else "yes_bid")
+                if _valid_bid(opposite_bid) is None:
+                    out["complement_quote_possible_but_missing_bid"] += 1
+    return out
+
+
+def _quote_metric_key(platform: str, side: str, kind: str) -> str | None:
+    if platform == "cdna":
+        if kind == "ask":
+            return f"cdna_display_{side}_present"
+        return None
+    if platform in {"kalshi", "polymarket"}:
+        return f"{platform}_{side}_{kind}_present"
+    return None
+
+
+def _merge_quote_coverage(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for bucket in ("raw", "usable"):
+        for key, value in (source.get(bucket) or {}).items():
+            target[bucket][key] = int(target[bucket].get(key, 0)) + int(value or 0)
+    for key in QUOTE_COVERAGE_EXTRA_KEYS:
+        target[key] = int(target.get(key, 0)) + int(source.get(key, 0) or 0)
+
+
+def _finish_quote_coverage(coverage: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        if row.get("complement_quote_used"):
+            coverage["complement_quote_used_count"] += 1
+        for leg in row.get("basket_legs") or []:
+            if leg.get("complement_used"):
+                coverage["complement_quote_used_count"] += 1
+            elif _to_float(leg.get("ask")) is not None:
+                coverage["explicit_ask_used_count"] += 1
+
+
+def _empty_up_down_audit() -> dict[str, Any]:
+    return {
+        "up_down_kalshi_rows": 0,
+        "up_down_polymarket_rows": 0,
+        "up_down_exact_window_matches": 0,
+        "up_down_candidates_generated": 0,
+        "up_down_paper_candidates": 0,
+        "sample_kalshi_windows": [],
+        "sample_polymarket_windows": [],
+        "top_post_fee_up_down_rows": [],
+        "warning": "",
+    }
+
+
+def _up_down_window_audit(asset: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    out = _empty_up_down_audit()
+    ud = [
+        r for r in rows
+        if str(r.get("payoff_observation_type")) == "interval_start_to_end_change"
+        and r.get("target_instant_utc")
+    ]
+    by_platform = defaultdict(list)
+    for row in ud:
+        platform = str(row.get("platform") or "").lower()
+        by_platform[platform].append(row)
+        sample = {
+            "asset": asset,
+            "platform": platform,
+            "reference_start_utc": row.get("reference_start_utc"),
+            "target_instant_utc": row.get("target_instant_utc"),
+            "interval_length_seconds": row.get("interval_length_seconds"),
+            "market_id_or_ticker": row.get("market_id_or_ticker"),
+        }
+        if platform == "kalshi" and len(out["sample_kalshi_windows"]) < 5:
+            out["sample_kalshi_windows"].append(sample)
+        if platform == "polymarket" and len(out["sample_polymarket_windows"]) < 5:
+            out["sample_polymarket_windows"].append(sample)
+    out["up_down_kalshi_rows"] = len(by_platform.get("kalshi") or [])
+    out["up_down_polymarket_rows"] = len(by_platform.get("polymarket") or [])
+    for k in by_platform.get("kalshi") or []:
+        for p in by_platform.get("polymarket") or []:
+            if _up_down_exact_window_key(k) == _up_down_exact_window_key(p):
+                out["up_down_exact_window_matches"] += 1
+    return out
+
+
+def _up_down_exact_window_key(row: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+    return (
+        row.get("reference_start_utc"),
+        row.get("target_instant_utc"),
+        row.get("interval_length_seconds"),
+        row.get("payoff_observation_type"),
+    )
+
+
+def _merge_up_down_audit(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key in (
+        "up_down_kalshi_rows",
+        "up_down_polymarket_rows",
+        "up_down_exact_window_matches",
+        "up_down_candidates_generated",
+        "up_down_paper_candidates",
+    ):
+        target[key] = int(target.get(key, 0)) + int(source.get(key, 0) or 0)
+    for key in ("sample_kalshi_windows", "sample_polymarket_windows"):
+        target[key].extend((source.get(key) or [])[: max(0, 5 - len(target[key]))])
+
+
+def _finish_up_down_audit(audit: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    updown = [r for r in rows if r.get("candidate_type") == CT_UP_DOWN]
+    audit["up_down_candidates_generated"] = len(updown)
+    audit["up_down_paper_candidates"] = sum(1 for r in updown if r.get("paper_candidate"))
+    top = sorted(
+        [r for r in updown if r.get("net_edge_after_fees") is not None],
+        key=lambda r: _safe_float(r.get("net_edge_after_fees")),
+        reverse=True,
+    )
+    audit["top_post_fee_up_down_rows"] = [
+        {
+            "asset": r.get("asset"),
+            "target_instant_utc": r.get("target_instant_utc"),
+            "reference_start_utc": r.get("reference_start_utc"),
+            "net_edge_after_fees": r.get("net_edge_after_fees"),
+            "adjusted_net_edge_after_fees": r.get("adjusted_net_edge_after_fees"),
+            "hard_blockers": list(r.get("hard_blockers") or []),
+            "paper_candidate": bool(r.get("paper_candidate")),
+        }
+        for r in top[:10]
+    ]
+    if audit["up_down_kalshi_rows"] and audit["up_down_polymarket_rows"] and audit["up_down_exact_window_matches"] == 0:
+        audit["warning"] = "up_down_rows_exist_but_no_exact_window_matches"
+    elif audit["up_down_exact_window_matches"] and audit["up_down_candidates_generated"] == 0:
+        audit["warning"] = "up_down_exact_window_matches_exist_but_no_candidates_generated"
+
+
 # ---------------------------------------------------------------------------- #
 # Per-asset structural scan                                                    #
 # ---------------------------------------------------------------------------- #
 
 
-def _scan_asset(*, asset, kalshi, polymarket, cdna, opts: "_Opts") -> tuple[list[dict[str, Any]], list[dict[str, Any]], Counter]:
+def _scan_asset(*, asset, kalshi, polymarket, cdna, opts: "_Opts", coverage: dict[str, Counter] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Counter]:
     all_rows = list(kalshi) + list(polymarket) + list(cdna)
     for r in all_rows:
         if not r.get("contract_family"):
@@ -424,6 +930,8 @@ def _scan_asset(*, asset, kalshi, polymarket, cdna, opts: "_Opts") -> tuple[list
     rows_out: list[dict[str, Any]] = []
     grids_out: list[dict[str, Any]] = []
     mono_diag: Counter = Counter()
+    if coverage is None:
+        coverage = defaultdict(Counter)
 
     # Terminal-price lane: terminal_threshold + terminal_range share P_T, grouped
     # by instant. Directional/barrier never enter this state grid.
@@ -449,22 +957,24 @@ def _scan_asset(*, asset, kalshi, polymarket, cdna, opts: "_Opts") -> tuple[list
                 "synthetic_instruments": len(synthetics),
             }
         )
-        rows_out.extend(_generate_candidates(asset=asset, instant=instant, grid=grid, pool=pool, group=group, opts=opts, mono_diag=mono_diag))
+        rows_out.extend(_generate_candidates(asset=asset, instant=instant, grid=grid, pool=pool, group=group, opts=opts, mono_diag=mono_diag, coverage=coverage))
 
     # Directional-return lane (2-state, separate; never mixed with terminal price).
-    rows_out.extend(_updown_candidates(asset=asset, rows=all_rows, opts=opts))
+    rows_out.extend(_updown_candidates(asset=asset, rows=all_rows, opts=opts, coverage=coverage))
     # Barrier/touch lane (path-dependent; never matched to terminal or up/down).
-    rows_out.extend(_barrier_rows(asset=asset, rows=all_rows, opts=opts))
+    rows_out.extend(_barrier_rows(asset=asset, rows=all_rows, opts=opts, coverage=coverage))
     return rows_out, grids_out, mono_diag
 
 
-def _barrier_rows(*, asset, rows, opts: "_Opts") -> list[dict[str, Any]]:
+def _barrier_rows(*, asset, rows, opts: "_Opts", coverage: dict[str, Counter] | None = None) -> list[dict[str, Any]]:
     """Barrier/touch contracts are path-dependent. They are surfaced as
     DIAGNOSTIC_ONLY and explicitly flagged as not comparable to terminal price or
     up/down contracts at the same instant."""
+    cov = coverage if coverage is not None else defaultdict(Counter)
     out: list[dict[str, Any]] = []
     barrier = [r for r in rows if str(r.get("contract_family")) == CONTRACT_FAMILY_BARRIER_TOUCH]
     terminal_present = any(str(r.get("contract_family")) in TERMINAL_FAMILIES for r in rows)
+    cov[CT_BARRIER]["attempted"] += len(barrier)
     for r in barrier:
         blockers = ["barrier_vs_terminal_mismatch"] if terminal_present else []
         out.append(
@@ -569,16 +1079,21 @@ def _base_instruments(rows: list[dict[str, Any]], grid, opts: "_Opts") -> list[I
             continue
         no_vec = _complement(yes_vec)
         q = r.get("quote") or {}
-        for side, vec, ask_key, size_key in (
-            ("YES", yes_vec, "yes_ask", "yes_ask_size"),
-            ("NO", no_vec, "no_ask", "no_ask_size"),
-        ):
-            leg = _make_leg(r, platform, side, _valid_ask(q.get(ask_key)), _to_float(q.get(size_key)), opts)
+        # Complement-derive a missing executable ask from the opposite bid
+        # (NO ask = 1 - YES bid) only when the operator accepts limited-depth
+        # quotes (standard/aggressive). Conservative stays strict-ask-only.
+        allow_comp = opts.risk_mode in {"standard", "aggressive"}
+        for side, vec in (("YES", yes_vec), ("NO", no_vec)):
+            ask, size, comp_used, comp_src = _side_ask_with_complement(q, side, allow_complement=allow_comp)
+            leg = _make_leg(r, platform, side, ask, size, opts, complement_used=comp_used, complement_source=comp_src)
             out.append(Instrument(key=_leg_key(leg), vector=vec, legs=[leg], leg_vectors=[vec], label=f"{platform}:{side}:{leg.market_id_or_ticker}"))
     return out
 
 
-def _make_leg(r: dict[str, Any], platform: str, side: str, ask: float | None, size: float | None, opts: "_Opts") -> Leg:
+def _make_leg(
+    r: dict[str, Any], platform: str, side: str, ask: float | None, size: float | None, opts: "_Opts",
+    *, complement_used: bool = False, complement_source: str | None = None,
+) -> Leg:
     is_cdna = platform == "cdna"
     fee = _leg_fee(platform, ask)
     all_in = round(ask + fee, 8) if (ask is not None and fee is not None) else None
@@ -599,13 +1114,27 @@ def _make_leg(r: dict[str, Any], platform: str, side: str, ask: float | None, si
     else:
         avail = None
         blockers.append("missing_quote_depth")
+    if complement_used:
+        # A complement-derived ask is a limited-depth quote: cap to the operator
+        # size and flag it. Never treated as deep top-of-book.
+        if opts.depth_permissive and opts.operator_size_cap > 0:
+            avail = min(avail, opts.operator_size_cap) if avail is not None else opts.operator_size_cap
+        risk_notes.append(
+            f"{side} ask complement-derived ({complement_source}); limited depth, operator size cap applied."
+        )
     display_side = {"YES": "DISPLAY_YES", "NO": "DISPLAY_NO"}.get(side, side) if is_cdna else side
+    quote = r.get("quote") or {}
+    token_ids = r.get("token_ids") or {}
     return Leg(
         platform=platform, asset=str(r.get("asset")), target_instant_utc=str(r.get("target_instant_utc")),
         market_shape=str(r.get("market_shape")), payoff_observation_type=str(r.get("payoff_observation_type")),
         side=display_side, ask=ask, fee=fee, all_in_cost=all_in, available_size_or_cap=avail,
         source_index=r.get("price_source"), market_id_or_ticker=r.get("market_id_or_ticker"),
         hard_blockers=blockers, risk_notes=risk_notes,
+        complement_used=complement_used, complement_source=complement_source,
+        condition_id=r.get("condition_id"), token_ids=dict(token_ids) if isinstance(token_ids, dict) else {},
+        contract_id=r.get("contract_id"),
+        quote_timestamp=quote.get("quote_timestamp"), depth_status=quote.get("depth_status"),
     )
 
 
@@ -681,22 +1210,31 @@ def _bucket_leg(b: dict[str, Any], opts: "_Opts") -> Leg:
 # ---------------------------------------------------------------------------- #
 
 
-def _generate_candidates(*, asset, instant, grid, pool: list[Instrument], group, opts: "_Opts", mono_diag: Counter) -> list[dict[str, Any]]:
+def _generate_candidates(*, asset, instant, grid, pool: list[Instrument], group, opts: "_Opts", mono_diag: Counter, coverage: dict[str, Counter] | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     grid_view = _grid_view(grid)
+    cov = coverage if coverage is not None else defaultdict(Counter)
 
     # G1: single-instrument guaranteed payoff (e.g. exhaustive bucket cover < $1).
     for inst in pool:
         mn = min(inst.vector) if inst.vector else 0
         cost = inst.all_in_cost
-        if mn >= 1 and cost is not None and cost < mn:
-            rows.append(_candidate_row(asset, instant, grid_view, [inst], inst.vector, CT_LONG_ONLY, opts))
+        if mn >= 1:
+            cov[CT_LONG_ONLY]["attempted"] += 1
+            if cost is not None and cost < mn:
+                rows.append(_candidate_row(asset, instant, grid_view, [inst], inst.vector, CT_LONG_ONLY, opts))
 
     # G2: guaranteed pairs (cover all states). Emit positive-net covers always;
-    # emit blocked (missing-ask/stale) and synthetic covers for visibility, capped;
-    # skip net-negative non-synthetic covers to keep output bounded.
+    # blocked (missing-ask/stale), synthetic, AND a BOUNDED sample of net-negative
+    # covers are emitted too, so cross-venue / long-only near-misses are visible —
+    # not just monotonicity covers. Every guaranteed-cover attempt is counted in
+    # ``coverage`` even when the row itself is sampled out.
     n = len(pool)
-    emitted = 0
+    # PER-CLASS sample budgets so a numerous class (long-only) can't crowd a
+    # sparse one (cross-venue) out of the non-positive sample.
+    emitted_blocked: Counter = Counter()
+    emitted_synth: Counter = Counter()
+    emitted_negative: Counter = Counter()
     for i in range(n):
         a = pool[i]
         for j in range(i + 1, n):
@@ -707,21 +1245,29 @@ def _generate_candidates(*, asset, instant, grid, pool: list[Instrument], group,
             mn = min(combined)
             if mn < 1:
                 continue
+            ct = _classify_pair(a, b)
+            cov[ct]["attempted"] += 1
             cost = a.all_in_cost
             cost2 = b.all_in_cost
             missing = cost is None or cost2 is None
             total = None if missing else round(cost + cost2, 8)
             positive = total is not None and total < mn
             is_synth = a.key.startswith("synthetic_") or b.key.startswith("synthetic_")
-            if not (positive or missing or is_synth):
-                continue
-            # Positive-net covers are always emitted; blocked (missing-ask) and
-            # synthetic covers are sampled to keep the report readable on thin books.
-            if not positive and emitted >= 25:
-                continue
-            ct = _classify_pair(a, b)
-            rows.append(_candidate_row(asset, instant, grid_view, [a, b], combined, ct, opts))
-            emitted += 1
+            emit = positive
+            if not emit and missing:
+                emit = emitted_blocked[ct] < _G2_SAMPLE_CAP
+                if emit:
+                    emitted_blocked[ct] += 1
+            elif not emit and is_synth:
+                emit = emitted_synth[ct] < _G2_SAMPLE_CAP
+                if emit:
+                    emitted_synth[ct] += 1
+            elif not emit:  # net-negative non-synthetic: sample so near-misses show
+                emit = emitted_negative[ct] < _G2_SAMPLE_CAP
+                if emit:
+                    emitted_negative[ct] += 1
+            if emit:
+                rows.append(_candidate_row(asset, instant, grid_view, [a, b], combined, ct, opts))
 
     # G3: same-payoff cheaper basket (identical vector, different cost) -> relative value.
     by_vec: dict[tuple[int, ...], list[Instrument]] = defaultdict(list)
@@ -735,17 +1281,25 @@ def _generate_candidates(*, asset, instant, grid, pool: list[Instrument], group,
         cheapest = insts_sorted[0]
         for other in insts_sorted[1:]:
             if other.all_in_cost - cheapest.all_in_cost > 1e-9 and cheapest.platforms != other.platforms:
+                cov[CT_SAME_PAYOFF_CHEAPER]["attempted"] += 1
                 rows.append(
                     _same_payoff_row(asset, instant, grid_view, cheapest, other, vec, opts)
                 )
 
     # G4: monotonicity diagnostic per (platform, source, instant).
-    rows.extend(_monotonicity_rows(asset, instant, grid_view, group, opts))
+    g4 = _monotonicity_rows(asset, instant, grid_view, group, opts)
+    cov[CT_MONOTONICITY]["attempted"] += len(g4)
+    rows.extend(g4)
     # G5: threshold->bucket diagnostic (adjacent thresholds imply a range; needs shorting).
-    rows.extend(_threshold_to_bucket_rows(asset, instant, grid_view, group, opts))
+    g5 = _threshold_to_bucket_rows(asset, instant, grid_view, group, opts)
+    cov[CT_THRESHOLD_TO_BUCKET]["attempted"] += len(g5)
+    rows.extend(g5)
     # G6: threshold monotonicity covers — YES(>L) + NO(>U) for L<U, the buy-only
     # actionable expression of a monotonicity relationship/violation.
-    rows.extend(_monotonicity_cover_rows(asset, instant, grid, grid_view, group, opts, mono_diag))
+    pairs_before = int(mono_diag.get("pairs_checked", 0))
+    g6 = _monotonicity_cover_rows(asset, instant, grid, grid_view, group, opts, mono_diag)
+    cov[CT_MONOTONICITY_COVER]["attempted"] += int(mono_diag.get("pairs_checked", 0)) - pairs_before
+    rows.extend(g6)
     return rows
 
 
@@ -787,26 +1341,103 @@ def _no_ask_with_complement(row: dict[str, Any]) -> tuple[float | None, float | 
     """Return ``(no_ask, no_size, complement_used)``. Prefer the direct NO ask;
     fall back to a complement-derived ask from an executable YES bid
     (NO ask = 1 - YES bid) — a limited-depth quote, flagged for the operator."""
-    q = row.get("quote") or {}
-    direct = _valid_ask(q.get("no_ask"))
+    ask, size, used, _src = _side_ask_with_complement(row.get("quote") or {}, "NO")
+    return ask, size, used
+
+
+def _side_ask_with_complement(
+    quote: dict[str, Any], side: str, *, allow_complement: bool = True
+) -> tuple[float | None, float | None, bool, str | None]:
+    """Return ``(ask, size, complement_used, complement_source)`` for ``side``.
+
+    Prefer the direct executable ask. When it is missing, fall back to the binary
+    complement of the *opposite executable bid* — ``NO ask = 1 - YES bid`` (or
+    ``YES ask = 1 - NO bid``). This is venue-valid for a two-outcome binary market
+    (YES + NO settle to $1) and is flagged for the operator as a limited-depth
+    quote. Never a midpoint."""
+    is_yes = str(side).upper().endswith("YES")
+    direct_key = "yes_ask" if is_yes else "no_ask"
+    direct_size_key = "yes_ask_size" if is_yes else "no_ask_size"
+    direct = _valid_ask(quote.get(direct_key))
     if direct is not None:
-        return direct, _to_float(q.get("no_ask_size")), False
-    yes_bid = _to_float(q.get("yes_bid"))
-    if yes_bid is not None and 0.0 <= yes_bid <= 1.0:
-        return round(1.0 - yes_bid, 6), _to_float(q.get("yes_bid_size")), True
-    return None, None, False
+        return direct, _to_float(quote.get(direct_size_key)), False, None
+    if not allow_complement:
+        return None, None, False, None
+    opp_bid_key = "no_bid" if is_yes else "yes_bid"
+    opp_bid_size_key = "no_bid_size" if is_yes else "yes_bid_size"
+    opp_bid = _to_float(quote.get(opp_bid_key))
+    if opp_bid is not None and 0.0 <= opp_bid <= 1.0:
+        source = f"{'yes_ask' if is_yes else 'no_ask'} = 1 - {opp_bid_key}"
+        return round(1.0 - opp_bid, 6), _to_float(quote.get(opp_bid_size_key)), True, source
+    return None, None, False, None
+
+
+# Venue + side-specific "which exact buy leg is missing" labels. These are
+# DIAGNOSTIC ONLY (not policy hard-blockers): they live on the row's
+# ``quote_side_diagnostics`` so the dashboard can name the precise unquoted leg
+# without changing candidate gating.
+def _venue_side_missing_label(leg: Leg) -> str:
+    platform = str(leg.platform)
+    is_yes = str(leg.side).upper().endswith("YES")
+    if platform == "cdna":
+        return "missing_cdna_display_yes" if is_yes else "missing_cdna_display_no"
+    if platform == "kalshi":
+        return "missing_kalshi_yes_ask" if is_yes else "missing_kalshi_no_ask"
+    if platform == "polymarket":
+        return "missing_polymarket_yes_ask" if is_yes else "missing_polymarket_no_ask"
+    return f"missing_{platform}_{'yes' if is_yes else 'no'}_ask"
+
+
+def _venue_stale_label(platform: str) -> str:
+    p = str(platform)
+    if p in {"kalshi", "polymarket", "cdna"}:
+        return f"stale_{p}_quote"
+    return f"stale_{p}_quote"
+
+
+def _is_specific_missing_ask_label(label: Any) -> bool:
+    text = str(label or "")
+    return text.startswith("missing_") and (
+        text.endswith("_ask") or text in {"missing_cdna_display_yes", "missing_cdna_display_no"}
+    ) and text != "missing_ask"
+
+
+def _leg_quote_side_diagnostics(legs: list[Leg], opts: "_Opts") -> list[str]:
+    """Precise venue+side missing-ask / stale / complement diagnostics for a row."""
+    out: list[str] = []
+    for leg in legs:
+        if leg.ask is None:
+            out.append(_venue_side_missing_label(leg))
+        if "stale_or_missing_quote" in leg.hard_blockers:
+            out.append(_venue_stale_label(leg.platform))
+        if leg.complement_used:
+            label = "complement_quote_used"
+            if leg.complement_source:
+                label = f"complement_quote_used:{leg.complement_source}"
+            out.append(label)
+    # Stable, de-duplicated order for readable dashboards.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in out:
+        if item not in seen:
+            seen.add(item)
+            deduped.append(item)
+    return deduped
 
 
 def _build_mono_cover(asset, instant, grid, grid_view, lo, hi, low_strike, high_strike, opts: "_Opts", mono_diag: Counter) -> dict[str, Any]:
     q_lo = lo.get("quote") or {}
     yes_lower_ask = _valid_ask(q_lo.get("yes_ask"))
     yes_lower_size = _to_float(q_lo.get("yes_ask_size"))
-    no_higher_ask, no_higher_size, complement_used = _no_ask_with_complement(hi)
+    no_higher_ask, no_higher_size, complement_used, complement_source = _side_ask_with_complement(hi.get("quote") or {}, "NO")
     if complement_used:
         mono_diag["complement_quote_used"] += 1
 
     leg_yes = _make_leg(lo, str(lo["platform"]), "YES", yes_lower_ask, yes_lower_size, opts)
-    leg_no = _make_leg(hi, str(hi["platform"]), "NO", no_higher_ask, no_higher_size, opts)
+    leg_no = _make_leg(
+        hi, str(hi["platform"]), "NO", no_higher_ask, no_higher_size, opts,
+        complement_used=complement_used, complement_source=complement_source,
+    )
     legs = [leg_yes, leg_no]
 
     blockers: list[str] = []
@@ -886,6 +1517,7 @@ def _build_mono_cover(asset, instant, grid, grid_view, lo, hi, low_strike, high_
         "yes_lower_ask": yes_lower_ask,
         "no_higher_ask": no_higher_ask,
         "complement_quote_used": complement_used,
+        "quote_side_diagnostics": _leg_quote_side_diagnostics(legs, opts),
         "state_grid": grid_view,
         "basket_legs": [leg_yes.to_dict(list(_vector_above(grid, low_strike))), leg_no.to_dict(list(_vector_at_or_below(grid, high_strike)))],
         "payoff_vector": list(payoff_vec),
@@ -914,6 +1546,24 @@ def _classify_pair(a: Instrument, b: Instrument) -> str:
     return CT_LONG_ONLY
 
 
+def _missing_ask_blocker(leg: Leg, is_synthetic: bool) -> str:
+    if leg.platform == "cdna":
+        return _venue_side_missing_label(leg)
+    if is_synthetic:
+        return "missing_bucket_leg_ask"
+    return _venue_side_missing_label(leg)
+
+
+def _leg_hard_blockers_for_row(leg: Leg, is_synthetic: bool) -> list[str]:
+    out: list[str] = []
+    for blocker in leg.hard_blockers:
+        if blocker == "missing_ask":
+            out.append(_missing_ask_blocker(leg, is_synthetic))
+        else:
+            out.append(blocker)
+    return out
+
+
 def _candidate_row(asset, instant, grid_view, instruments: list[Instrument], vector, candidate_type, opts: "_Opts") -> dict[str, Any]:
     legs: list[Leg] = [leg for inst in instruments for leg in inst.legs]
     leg_vecs = [lv for inst in instruments for lv in inst.leg_vectors]
@@ -922,10 +1572,13 @@ def _candidate_row(asset, instant, grid_view, instruments: list[Instrument], vec
     net = round(min_payoff - total_cost, 8) if total_cost is not None else None
 
     blockers: list[str] = []
-    for leg in legs:
-        blockers.extend(leg.hard_blockers)
+    for inst in instruments:
+        is_synth = inst.key.startswith("synthetic_")
+        for leg in inst.legs:
+            blockers.extend(_leg_hard_blockers_for_row(leg, is_synth))
     if total_cost is None or net is None:
-        blockers.append("missing_ask")
+        if not any(_is_specific_missing_ask_label(b) for b in blockers):
+            blockers.append("missing_ask")
     elif net <= 0:
         blockers.append("no_positive_net_edge_after_fees")
     if len(legs) > opts.max_basket_legs:
@@ -952,11 +1605,14 @@ def _candidate_row(asset, instant, grid_view, instruments: list[Instrument], vec
     )
 
     depth_used = opts.depth_permissive and "missing_quote_depth" in blockers
+    complement_used = any(leg.complement_used for leg in legs)
     assumptions: list[str] = []
     if accepted_basis and cross_source:
         assumptions.append("source_index_mismatch")
     if depth_used:
         assumptions.append("limited_depth_operator_size_cap_applied")
+    if complement_used:
+        assumptions += ["complement_quote_used", "limited_depth_operator_size_cap_applied"]
     if accepted_cdna:
         assumptions += ["cdna_display_price_only", "cdna_executable_size_unverified"]
     assumptions = sorted(set(assumptions))
@@ -976,16 +1632,21 @@ def _candidate_row(asset, instant, grid_view, instruments: list[Instrument], vec
             paper_class = CLASS_CDNA
             candidate_action = "FILL_CDNA_FIRST_THEN_HEDGE_EXACT_FILLED_QUANTITY"
             risk_notes.append("CDNA leg is display-price/fill-first; fill CDNA first, then hedge the exact filled quantity.")
-        elif cross_source or depth_used:
+        elif cross_source or depth_used or complement_used:
             paper_class = CLASS_OPERATOR
             candidate_action = "PAPER_TEST_OR_MANUAL_MICRO_TEST"
         else:
             paper_class = CLASS_STRICT
             candidate_action = "PAPER_TEST_OR_MANUAL_MICRO_TEST"
         action = ACTION_PAPER
+    if complement_used:
+        risk_notes.append("One or more legs used a complement-derived ask (1 - opposite bid); limited depth.")
 
-    tier = _comparability_tier(candidate_type, is_cdna=is_cdna, cross_source=cross_source, depth_used=depth_used)
+    tier = _comparability_tier(
+        candidate_type, is_cdna=is_cdna, cross_source=cross_source, depth_used=(depth_used or complement_used),
+    )
     available = _basket_available(legs, opts, paper)
+    quote_side_diagnostics = _leg_quote_side_diagnostics(legs, opts)
     return {
         "action": action,
         "paper_candidate": paper,
@@ -1006,6 +1667,8 @@ def _candidate_row(asset, instant, grid_view, instruments: list[Instrument], vec
         "available_size_or_cap": available,
         "assumptions_accepted": assumptions,
         "hard_blockers": hard,
+        "quote_side_diagnostics": quote_side_diagnostics,
+        "complement_quote_used": complement_used,
         "risk_notes": risk_notes,
         "candidate_action": candidate_action,
         "strict_exact_arb": bool(paper and paper_class == CLASS_STRICT),
@@ -1140,9 +1803,11 @@ def _threshold_to_bucket_rows(asset, instant, grid_view, group, opts: "_Opts") -
     return rows
 
 
-def _updown_candidates(*, asset, rows, opts: "_Opts") -> list[dict[str, Any]]:
+def _updown_candidates(*, asset, rows, opts: "_Opts", coverage: dict[str, Counter] | None = None) -> list[dict[str, Any]]:
+    cov = coverage if coverage is not None else defaultdict(Counter)
     ud = [r for r in rows if str(r.get("payoff_observation_type")) == "interval_start_to_end_change" and r.get("target_instant_utc")]
     out: list[dict[str, Any]] = []
+    allow_comp = opts.risk_mode in {"standard", "aggressive"}
     for i in range(len(ud)):
         for j in range(i + 1, len(ud)):
             a, b = ud[i], ud[j]
@@ -1152,15 +1817,19 @@ def _updown_candidates(*, asset, rows, opts: "_Opts") -> list[dict[str, Any]]:
                 continue
             if not a.get("reference_start_utc") or a.get("reference_start_utc") != b.get("reference_start_utc"):
                 continue
+            if a.get("interval_length_seconds") != b.get("interval_length_seconds"):
+                continue
+            cov[CT_UP_DOWN]["attempted"] += 1
             # 2-state grid (down, up). a "up" YES + b "down" (=b up NO) covers both.
+            # NO ask falls back to the binary complement of an executable YES bid.
             qa = a.get("quote") or {}
             qb = b.get("quote") or {}
-            a_up = _valid_ask(qa.get("yes_ask"))
-            b_down = _valid_ask(qb.get("no_ask"))
-            leg_a = _make_leg(a, str(a["platform"]), "YES", a_up, _to_float(qa.get("yes_ask_size")), opts)
-            leg_b = _make_leg(b, str(b["platform"]), "NO", b_down, _to_float(qb.get("no_ask_size")), opts)
+            a_up, a_up_size, a_comp, a_src = _side_ask_with_complement(qa, "YES", allow_complement=allow_comp)
+            b_down, b_down_size, b_comp, b_src = _side_ask_with_complement(qb, "NO", allow_complement=allow_comp)
+            leg_a = _make_leg(a, str(a["platform"]), "YES", a_up, a_up_size, opts, complement_used=a_comp, complement_source=a_src)
+            leg_b = _make_leg(b, str(b["platform"]), "NO", b_down, b_down_size, opts, complement_used=b_comp, complement_source=b_src)
             legs = [leg_a, leg_b]
-            blockers = leg_a.hard_blockers + leg_b.hard_blockers
+            blockers = _leg_hard_blockers_for_row(leg_a, False) + _leg_hard_blockers_for_row(leg_b, False)
             total = None
             net = None
             cross_source = bool(a.get("price_source") and b.get("price_source") and a.get("price_source") != b.get("price_source"))
@@ -1170,16 +1839,20 @@ def _updown_candidates(*, asset, rows, opts: "_Opts") -> list[dict[str, Any]]:
                 if net <= 0:
                     blockers.append("no_positive_net_edge_after_fees")
             else:
-                blockers.append("missing_ask")
+                if not any(_is_specific_missing_ask_label(b) for b in blockers):
+                    blockers.append("missing_ask")
             if cross_source:
                 blockers.append("source_index_mismatch")
             basis_buffer = opts.basis_buffer_edge if cross_source else 0.0
             adjusted = round(net - basis_buffer, 8) if net is not None else None
             if net is not None and net > 0 and adjusted is not None and adjusted <= 0:
                 blockers.append("no_positive_adjusted_net_edge_after_basis_buffer")
+            complement_used = bool(a_comp or b_comp)
             hard = collect_hard_blockers(blockers, accepted_basis=opts.risk_mode in {"standard", "aggressive"}, accepted_top_of_book_size_cap=opts.depth_permissive)
             paper = bool(net is not None and net > 0 and adjusted is not None and adjusted > 0 and not hard)
             assumptions = ["source_index_mismatch"] if (paper and "source_index_mismatch" in blockers) else []
+            if complement_used:
+                assumptions += ["complement_quote_used", "limited_depth_operator_size_cap_applied"]
             out.append(
                 {
                     "action": ACTION_PAPER if paper else (ACTION_IGNORE if hard else ACTION_WATCH),
@@ -1187,7 +1860,7 @@ def _updown_candidates(*, asset, rows, opts: "_Opts") -> list[dict[str, Any]]:
                     "paper_candidate_class": CLASS_OPERATOR if paper else CLASS_NONE,
                     "candidate_type": CT_UP_DOWN, "asset": asset,
                     "contract_family": CONTRACT_FAMILY_DIRECTIONAL_RETURN,
-                    "comparability_tier": "OPERATOR_RELATIVE_VALUE" if cross_source else "EXACT_SAME_PAYOFF",
+                    "comparability_tier": "OPERATOR_RELATIVE_VALUE" if (cross_source or complement_used) else "EXACT_SAME_PAYOFF",
                     "target_instant_utc": a.get("target_instant_utc"),
                     "reference_start_utc": a.get("reference_start_utc"),
                     "state_grid": ["down", "up"], "basket_legs": [leg_a.to_dict([0, 1]), leg_b.to_dict([1, 0])],
@@ -1195,7 +1868,9 @@ def _updown_candidates(*, asset, rows, opts: "_Opts") -> list[dict[str, Any]]:
                     "net_edge_after_fees": net, "source_basis_buffer": basis_buffer,
                     "adjusted_net_edge_after_fees": adjusted,
                     "available_size_or_cap": _basket_available(legs, opts, paper),
-                    "assumptions_accepted": assumptions, "hard_blockers": hard, "risk_notes": [],
+                    "assumptions_accepted": sorted(set(assumptions)), "hard_blockers": hard, "risk_notes": [],
+                    "quote_side_diagnostics": _leg_quote_side_diagnostics(legs, opts),
+                    "complement_quote_used": complement_used,
                     "candidate_action": "PAPER_TEST_OR_MANUAL_MICRO_TEST" if paper else "",
                     "strict_exact_arb": False,
                 }
@@ -1271,6 +1946,13 @@ def _valid_ask(value: Any) -> float | None:
     return ask
 
 
+def _valid_bid(value: Any) -> float | None:
+    bid = _to_float(value)
+    if bid is None or not 0.0 <= bid <= 1.0:
+        return None
+    return bid
+
+
 def _stale(row: dict[str, Any], generated: datetime, max_age: float) -> bool:
     ts = (row.get("quote") or {}).get("quote_timestamp")
     parsed = _parse_dt(ts)
@@ -1311,14 +1993,270 @@ def _safe_float(value: Any) -> float:
         return -1e9
 
 
+def _classify_execution(row: dict[str, Any]) -> tuple[str, bool, bool]:
+    """Return ``(candidate_execution_type, tradable_buy_only, requires_short_or_sell)``.
+
+    Mason cannot short, so anything needing a sell/short leg is non-tradable and
+    diagnostic-only; only BUY_ONLY rows are eligible to be paper candidates.
+    """
+    blockers = set(row.get("hard_blockers") or [])
+    ct = row.get("candidate_type")
+    if blockers & _REQUIRES_SHORT_BLOCKERS or ct == CT_THRESHOLD_TO_BUCKET:
+        return "REQUIRES_SHORT", False, True
+    if ct == CT_MONOTONICITY or row.get("lane") == "barrier":
+        return "DIAGNOSTIC_ONLY", False, False
+    return "BUY_ONLY", True, False
+
+
+# Quote gaps that a fresh/complete book could fix -> a row is a "near-miss".
+_MISSING_ASK_LIKE = {
+    "missing_ask", "missing_yes_lower_ask", "missing_no_higher_ask",
+    "missing_partner_yes_ask", "missing_partner_no_ask", "missing_bucket_leg_ask",
+    "missing_cdna_display_price", "missing_quote_depth", "stale_or_missing_quote",
+    "missing_lower_yes_ask", "missing_higher_no_ask", "missing_partner_complement_ask",
+    "missing_kalshi_yes_ask", "missing_kalshi_no_ask",
+    "missing_polymarket_yes_ask", "missing_polymarket_no_ask",
+    "missing_cdna_display_yes", "missing_cdna_display_no",
+}
+# A buy-only row this close to positive after fees is worth watching for a quote tick.
+_NEAR_MISS_NET_TOL = 0.02
+
+_MISSING_HUMAN = {
+    "missing_no_higher_ask": "NO ask on higher threshold",
+    "missing_yes_lower_ask": "YES ask on lower threshold",
+    "missing_higher_no_ask": "NO ask on higher threshold",
+    "missing_lower_yes_ask": "YES ask on lower threshold",
+    "missing_partner_no_ask": "NO ask on partner venue",
+    "missing_partner_yes_ask": "YES ask on partner venue",
+    "missing_partner_complement_ask": "partner complement bid for missing ask",
+    "missing_kalshi_yes_ask": "Kalshi YES ask",
+    "missing_kalshi_no_ask": "Kalshi NO ask",
+    "missing_polymarket_yes_ask": "Polymarket YES ask",
+    "missing_polymarket_no_ask": "Polymarket NO ask",
+    "missing_cdna_display_yes": "CDNA display YES",
+    "missing_cdna_display_no": "CDNA display NO",
+    "missing_bucket_leg_ask": "YES ask on a bucket leg",
+    "missing_cdna_display_price": "CDNA display price",
+    "missing_quote_depth": "executable quote depth",
+    "stale_or_missing_quote": "a fresh (non-stale) quote",
+    "missing_ask": "a buy-leg ask",
+}
+
+
+def _human_missing(blocker: str) -> str:
+    return _MISSING_HUMAN.get(blocker, blocker)
+
+
+def _annotate_row_operability(row: dict[str, Any]) -> dict[str, Any]:
+    """Tag buy-only rows with near-miss / manual-micro-test operator fields.
+
+    ``manual_micro_test_candidate`` is only ever true for a fully-valid buy-only
+    paper candidate (quotes exist, post-fee edge positive, no unaccepted hard
+    blockers). ``near_miss`` flags a buy-only row that is one fixable quote gap —
+    or a couple of cents of fee drag — away from qualifying."""
+    buy_only = bool(row.get("tradable_buy_only"))
+    paper = bool(row.get("paper_candidate"))
+    blockers = list(row.get("hard_blockers") or [])
+    net = row.get("net_edge_after_fees")
+    row["manual_micro_test_candidate"] = bool(paper and buy_only and row.get("action") == ACTION_PAPER)
+
+    near = False
+    reason = ""
+    missing_to: list[str] = []
+    if buy_only and not paper:
+        missing = [b for b in blockers if b in _MISSING_ASK_LIKE]
+        if missing:
+            near = True
+            human = sorted({_human_missing(b) for b in missing})
+            reason = "needs " + ", ".join(human)
+            missing_to = human
+        elif isinstance(net, (int, float)) and -_NEAR_MISS_NET_TOL <= float(net) <= 0:
+            near = True
+            reason = f"net edge {float(net):+.4f} after fees (within {_NEAR_MISS_NET_TOL:.3f} of positive)"
+            missing_to = [f"positive net edge (currently {float(net):+.4f})"]
+        elif "no_positive_adjusted_net_edge_after_basis_buffer" in blockers:
+            near = True
+            reason = "positive net before the source-basis buffer; buffer removed the edge"
+            missing_to = ["a smaller basis buffer or tighter cross-venue quotes"]
+    row["near_miss"] = near
+    row["near_miss_reason"] = reason
+    row["missing_to_candidate"] = missing_to
+    return row
+
+
+def _finalize_coverage(coverage: dict[str, Counter], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-candidate-class funnel: attempted (structural opportunities evaluated),
+    generated (rows emitted), priced (computable net edge), paper (qualified).
+
+    The attempted>generated gap reveals classes that ARE evaluated but sampled out
+    or dropped (e.g. net-negative cross-venue covers), so "only monotonicity
+    covers show up" can be distinguished from "nothing else was even attempted"."""
+    generated: Counter = Counter()
+    priced: Counter = Counter()
+    net_positive: Counter = Counter()
+    paper: Counter = Counter()
+    blocked_missing_ask: Counter = Counter()
+    blocked_stale: Counter = Counter()
+    blocked_no_positive_net: Counter = Counter()
+    blocked_shape_or_time: Counter = Counter()
+    for r in rows:
+        ct = _coverage_class_for_row(r)
+        if not ct:
+            continue
+        generated[ct] += 1
+        if r.get("net_edge_after_fees") is not None:
+            priced[ct] += 1
+            if _safe_float(r.get("net_edge_after_fees")) > 0:
+                net_positive[ct] += 1
+        if r.get("paper_candidate"):
+            paper[ct] += 1
+        blockers = list(r.get("hard_blockers") or []) + list(r.get("quote_side_diagnostics") or [])
+        if any(_coverage_missing_ask_blocker(b) for b in blockers):
+            blocked_missing_ask[ct] += 1
+        if any("stale" in str(b) for b in blockers):
+            blocked_stale[ct] += 1
+        if "no_positive_net_edge_after_fees" in blockers:
+            blocked_no_positive_net[ct] += 1
+        if any(str(b) in {"target_time_mismatch", "target_date_mismatch", "timezone_mismatch", "incompatible_shape", "reference_start_mismatch", "interval_length_mismatch", "barrier_vs_terminal_mismatch"} for b in blockers):
+            blocked_shape_or_time[ct] += 1
+    classes: list[str] = list(CANDIDATE_CLASSES)
+    coverage_keys = [_coverage_class_for_candidate_type(ct) for ct in coverage.keys()]
+    for ct in list(generated.keys()) + coverage_keys:
+        if ct not in classes:
+            classes.append(str(ct))
+    out: list[dict[str, Any]] = []
+    for ct in classes:
+        attempted = sum(
+            int(counter.get("attempted", 0))
+            for raw_ct, counter in coverage.items()
+            if _coverage_class_for_candidate_type(raw_ct) == ct
+        )
+        gen = int(generated.get(ct, 0))
+        out.append({
+            "candidate_class": ct,
+            "attempted": max(attempted, gen),
+            "generated": gen,
+            "priced": int(priced.get(ct, 0)),
+            "net_positive": int(net_positive.get(ct, 0)),
+            "paper_candidate": int(paper.get(ct, 0)),
+            "paper": int(paper.get(ct, 0)),
+            "blocked_missing_ask": int(blocked_missing_ask.get(ct, 0)),
+            "blocked_stale": int(blocked_stale.get(ct, 0)),
+            "blocked_no_positive_net": int(blocked_no_positive_net.get(ct, 0)),
+            "blocked_shape_or_time": int(blocked_shape_or_time.get(ct, 0)),
+        })
+    return out
+
+
+def _coverage_class_for_candidate_type(candidate_type: Any) -> str:
+    ct = str(candidate_type or "")
+    if ct in {CT_MONOTONICITY, CT_THRESHOLD_TO_BUCKET, CT_BARRIER}:
+        return "DIAGNOSTIC_ONLY_REQUIRES_SHORT" if ct == CT_THRESHOLD_TO_BUCKET else ct
+    return ct
+
+
+def _coverage_class_for_row(row: dict[str, Any]) -> str:
+    if row.get("paper_candidate_class") == CLASS_CDNA or any(
+        str(leg.get("platform") or "").lower() == "cdna" for leg in row.get("basket_legs") or []
+    ):
+        return "CDNA_FILL_FIRST"
+    if row.get("requires_short_or_sell"):
+        return "DIAGNOSTIC_ONLY_REQUIRES_SHORT"
+    return _coverage_class_for_candidate_type(row.get("candidate_type"))
+
+
+def _coverage_missing_ask_blocker(value: Any) -> bool:
+    text = str(value or "")
+    return text == "missing_ask" or (
+        text.startswith("missing_")
+        and (text.endswith("_ask") or "_display_" in text or text == "missing_cdna_display_price")
+    )
+
+
+def _primary_near_miss_reason(r: dict[str, Any]) -> str:
+    """One normalized reason a buy-only row is not yet a candidate:
+    ``missing_quote`` / ``stale_quote`` / ``negative_net`` / ``basis_buffer`` / ``other``."""
+    labels = list(r.get("hard_blockers") or []) + list(r.get("quote_side_diagnostics") or [])
+    if any(str(b) in _MISSING_ASK_LIKE for b in (r.get("hard_blockers") or [])) or any(
+        str(x).startswith("missing_") for x in (r.get("quote_side_diagnostics") or [])
+    ):
+        return "missing_quote"
+    if any("stale" in str(b) for b in labels):
+        return "stale_quote"
+    if "no_positive_adjusted_net_edge_after_basis_buffer" in labels:
+        return "basis_buffer"
+    net = r.get("net_edge_after_fees")
+    if isinstance(net, (int, float)) and net <= 0:
+        return "negative_net"
+    return "other"
+
+
 def _summary(rows: list[dict[str, Any]], grids: list[dict[str, Any]]) -> dict[str, Any]:
     actions = Counter(r.get("action") for r in rows)
     ctypes = Counter(r.get("candidate_type") for r in rows)
     paper_ctypes = Counter(r.get("candidate_type") for r in rows if r.get("paper_candidate"))
     classes = Counter(r.get("paper_candidate_class") for r in rows if r.get("paper_candidate"))
-    hard_counter: Counter = Counter()
+    # Separate blocker accounting so non-tradable (short-required) diagnostics do
+    # NOT dominate the actionable buy-only dashboard.
+    actionable = Counter()
+    diagnostic = Counter()
+    economic = Counter()
     for r in rows:
-        hard_counter.update(r.get("hard_blockers") or [])
+        hb = r.get("hard_blockers") or []
+        if r.get("tradable_buy_only"):
+            for b in hb:
+                if b in ACTIONABLE_BUY_ONLY_BLOCKERS:
+                    actionable[b] += 1
+                if b in ECONOMIC_REJECTION_BLOCKERS:
+                    economic[b] += 1
+        else:
+            for b in hb:
+                if b in DIAGNOSTIC_ONLY_NON_TRADABLE_REASONS:
+                    diagnostic[b] += 1
+    diagnostic_short_rows = sum(1 for r in rows if r.get("requires_short_or_sell"))
+
+    buy_only = [r for r in rows if r.get("tradable_buy_only")]
+    near = sorted(
+        [r for r in buy_only if _safe_float(r.get("net_edge_after_fees")) > -1e8],
+        key=lambda r: _safe_float(r.get("net_edge_after_fees")), reverse=True,
+    )
+    top_buy_only_near_misses = [_near_miss_view(r) for r in near[:10]]
+    # How many buy-only priced rows are within 2c / 5c / 10c of break-even (nested).
+    near_buckets = {"within_2c": 0, "within_5c": 0, "within_10c": 0}
+    for r in buy_only:
+        net = r.get("net_edge_after_fees")
+        if isinstance(net, (int, float)) and net <= 0:
+            if net >= -0.02:
+                near_buckets["within_2c"] += 1
+            if net >= -0.05:
+                near_buckets["within_5c"] += 1
+            if net >= -0.10:
+                near_buckets["within_10c"] += 1
+    mono_one_leg_missing = sum(
+        1 for r in rows
+        if r.get("candidate_type") == CT_MONOTONICITY_COVER
+        and (("missing_yes_lower_ask" in (r.get("hard_blockers") or [])) != ("missing_no_higher_ask" in (r.get("hard_blockers") or [])))
+    )
+
+    # Precise venue+side "which buy leg was missing" counts, buy-only rows only.
+    quote_side_counts: Counter = Counter()
+    for r in buy_only:
+        for label in r.get("quote_side_diagnostics") or []:
+            quote_side_counts[label] += 1
+    near_miss_rows = sum(1 for r in rows if r.get("near_miss"))
+    micro_test_rows = sum(1 for r in rows if r.get("manual_micro_test_candidate"))
+    complement_rows = sum(1 for r in rows if r.get("complement_quote_used"))
+    cdna_fill_first = [
+        {
+            "asset": r.get("asset"), "candidate_type": r.get("candidate_type"),
+            "target_instant_utc": r.get("target_instant_utc"),
+            "adjusted_net_edge_after_fees": r.get("adjusted_net_edge_after_fees"),
+            "candidate_action": r.get("candidate_action"),
+        }
+        for r in rows
+        if r.get("paper_candidate") and r.get("paper_candidate_class") == CLASS_CDNA
+    ]
+
     fee_drag = sorted(
         (
             {
@@ -1333,6 +2271,8 @@ def _summary(rows: list[dict[str, Any]], grids: list[dict[str, Any]]) -> dict[st
     )
     return {
         "rows": len(rows),
+        "buy_only_rows": len(buy_only),
+        "diagnostic_only_short_required_rows": diagnostic_short_rows,
         "state_grids_built": len(grids),
         "paper_candidate_rows": sum(1 for r in rows if r.get("paper_candidate")),
         "strict_paper_candidate_rows": classes.get(CLASS_STRICT, 0),
@@ -1343,8 +2283,41 @@ def _summary(rows: list[dict[str, Any]], grids: list[dict[str, Any]]) -> dict[st
         "candidate_type_counts": dict(ctypes),
         "paper_candidate_type_counts": dict(paper_ctypes),
         "comparability_tier_counts": dict(Counter(r.get("comparability_tier") for r in rows)),
-        "top_blockers": [{"blocker": k, "count": v} for k, v in hard_counter.most_common(15)],
+        # ``top_blockers`` is ACTIONABLE-only so requires_short never tops it.
+        "top_blockers": [{"blocker": k, "count": v} for k, v in actionable.most_common(15)],
+        "actionable_buy_only_blockers": dict(actionable),
+        "diagnostic_only_non_tradable_reasons": dict(diagnostic),
+        "economic_rejections": dict(economic),
+        "top_buy_only_near_misses": top_buy_only_near_misses,
+        "monotonicity_covers_one_leg_missing": mono_one_leg_missing,
+        "near_miss_threshold_buckets": near_buckets,
+        "quote_side_diagnostic_counts": dict(quote_side_counts),
+        "near_miss_buy_only_rows": near_miss_rows,
+        "manual_micro_test_candidate_rows": micro_test_rows,
+        "complement_quote_rows": complement_rows,
+        "cdna_fill_first_candidates": cdna_fill_first,
         "top_fee_drag_rows": fee_drag[:10],
+    }
+
+
+def _near_miss_view(r: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "asset": r.get("asset"),
+        "candidate_type": r.get("candidate_type"),
+        "paper_candidate": bool(r.get("paper_candidate")),
+        "near_miss": bool(r.get("near_miss")),
+        "near_miss_reason": r.get("near_miss_reason") or "",
+        "near_miss_primary_reason": _primary_near_miss_reason(r),
+        "missing_to_candidate": list(r.get("missing_to_candidate") or []),
+        "manual_micro_test_candidate": bool(r.get("manual_micro_test_candidate")),
+        "complement_quote_used": bool(r.get("complement_quote_used")),
+        "net_edge_after_fees": r.get("net_edge_after_fees"),
+        "adjusted_net_edge_after_fees": r.get("adjusted_net_edge_after_fees"),
+        "lower_strike": r.get("lower_strike"),
+        "higher_strike": r.get("higher_strike"),
+        "target_instant_utc": r.get("target_instant_utc"),
+        "quote_side_diagnostics": list(r.get("quote_side_diagnostics") or []),
+        "hard_blockers": list(r.get("hard_blockers") or []),
     }
 
 
@@ -1407,6 +2380,9 @@ def render_crypto_structural_payoff_arb_scout_markdown(report: dict[str, Any]) -
         f"- contract_grammar_counts: `{_md(_fmt_counter(report.get('contract_grammar_counts') or {}))}`",
         f"- state_grids_built: `{counts.get('state_grids_built', 0)}`  rows: `{counts.get('rows', 0)}`  "
         f"paper_candidate_rows: `{counts.get('paper_candidate_rows', 0)}`",
+        f"- tradable_buy_only_rows: `{counts.get('buy_only_rows', 0)}`  "
+        f"diagnostic_only_short_required_rows: `{counts.get('diagnostic_only_short_required_rows', 0)}` "
+        f"(excluded from actionable/paper pressure — Mason cannot short)",
         f"- candidate_type_counts: `{_md(_fmt_counter(counts.get('candidate_type_counts') or {}))}`",
         f"- comparability_tier_counts: `{_md(_fmt_counter(counts.get('comparability_tier_counts') or {}))}`",
         f"- paper by class: strict=`{counts.get('strict_paper_candidate_rows', 0)}` "
@@ -1416,11 +2392,81 @@ def render_crypto_structural_payoff_arb_scout_markdown(report: dict[str, Any]) -
         f"(edge `{report.get('source_basis_buffer_edge', 0)}`)  "
         f"absolute: `{_md(_fmt_counter(report.get('source_basis_buffer_absolute') or {}) )}`",
         "",
+        "## 1b. Candidate Generation Coverage",
+        "",
+        "Per class: attempted (structural opportunities evaluated) -> generated (rows) -> "
+        "priced (computable net) -> paper. A big attempted>generated gap means the class IS "
+        "evaluated but sampled out / not yet quotable — not that it was never tried.",
+        "",
+        "| Candidate class | Attempted | Generated | Priced | Net+ | Paper | Missing ask | Stale | No positive net | Shape/time |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    cgc = report.get("candidate_generation_coverage") or counts.get("candidate_generation_coverage") or []
+    if not cgc:
+        lines.append("| none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |")
+    for c in cgc:
+        lines.append(
+            f"| {_md(c.get('candidate_class'))} | {_md(c.get('attempted', 0))} | {_md(c.get('generated', 0))} | "
+            f"{_md(c.get('priced', 0))} | {_md(c.get('net_positive', 0))} | "
+            f"{_md(c.get('paper_candidate', c.get('paper', 0)))} | {_md(c.get('blocked_missing_ask', 0))} | "
+            f"{_md(c.get('blocked_stale', 0))} | {_md(c.get('blocked_no_positive_net', 0))} | "
+            f"{_md(c.get('blocked_shape_or_time', 0))} |"
+        )
+    nb = counts.get("near_miss_threshold_buckets") or report.get("near_miss_threshold_buckets") or {}
+    qcov = report.get("quote_coverage_diagnostics") or counts.get("quote_coverage_diagnostics") or {}
+    raw_qcov = qcov.get("raw") or {}
+    usable_qcov = qcov.get("usable") or {}
+    lines.extend([
+        "",
+        "## 1c. Raw vs Usable Quote Coverage",
+        "",
+        "| Metric | Raw | Usable |",
+        "|---|---:|---:|",
+    ])
+    for key in QUOTE_COVERAGE_SIDE_KEYS:
+        lines.append(f"| {_md(key)} | {_md(raw_qcov.get(key, 0))} | {_md(usable_qcov.get(key, 0))} |")
+    lines.extend([
+        "",
+        f"- complement_quote_used_count: `{qcov.get('complement_quote_used_count', 0)}`",
+        f"- complement_quote_possible_but_missing_bid: `{qcov.get('complement_quote_possible_but_missing_bid', 0)}`",
+        f"- explicit_ask_used_count: `{qcov.get('explicit_ask_used_count', 0)}`",
+        f"- gamma_top_of_book_fallback_count: `{qcov.get('gamma_top_of_book_fallback_count', 0)}`",
+        f"- clob_book_used_count: `{qcov.get('clob_book_used_count', 0)}`",
+    ])
+    uda = report.get("up_down_audit") or counts.get("up_down_audit") or {}
+    lines.extend([
+        "",
+        "## 1d. Direct Up/Down Window Audit",
+        "",
+        f"- up_down_kalshi_rows: `{uda.get('up_down_kalshi_rows', 0)}`",
+        f"- up_down_polymarket_rows: `{uda.get('up_down_polymarket_rows', 0)}`",
+        f"- up_down_exact_window_matches: `{uda.get('up_down_exact_window_matches', 0)}`",
+        f"- up_down_candidates_generated: `{uda.get('up_down_candidates_generated', 0)}`",
+        f"- up_down_paper_candidates: `{uda.get('up_down_paper_candidates', 0)}`",
+        f"- warning: `{_md(uda.get('warning') or 'none')}`",
+        "",
+        "| Sample | Platform | Start | End | Interval seconds |",
+        "|---|---|---|---|---:|",
+    ])
+    samples = (uda.get("sample_kalshi_windows") or [])[:3] + (uda.get("sample_polymarket_windows") or [])[:3]
+    if not samples:
+        lines.append("| none |  |  |  |  |")
+    for sample in samples:
+        lines.append(
+            f"| {_md(sample.get('asset'))} | {_md(sample.get('platform'))} | "
+            f"{_md(sample.get('reference_start_utc'))} | {_md(sample.get('target_instant_utc'))} | "
+            f"{_md(sample.get('interval_length_seconds'))} |"
+        )
+    lines.extend([
+        "",
+        f"- near-miss buckets (buy-only, below break-even): within_2c=`{nb.get('within_2c', 0)}`  "
+        f"within_5c=`{nb.get('within_5c', 0)}`  within_10c=`{nb.get('within_10c', 0)}`",
+        "",
         "## 2. Paper Candidates (sorted by adjusted net edge after fees)",
         "",
         "| Class | Tier | Type | Asset | Instant (UTC) | Legs | Net edge | Adj net | Size/cap | Assumptions | Candidate action |",
         "|---|---|---|---|---|---:|---:|---:|---:|---|---|",
-    ]
+    ])
     if not paper:
         lines.append("| none |  |  |  |  |  |  |  |  |  |  |")
     for r in paper[:50]:
@@ -1548,11 +2594,115 @@ def render_crypto_structural_payoff_arb_scout_markdown(report: dict[str, Any]) -
             f"{_md(d.get('adjusted_net_edge_after_fees'))} |"
         )
 
-    lines.extend(["", "## 12. Hard blockers (top across rows)", "", "| Blocker | Count |", "|---|---:|"])
-    if not report.get("top_blockers"):
+    def _blocker_table(title: str, note: str, counter: dict[str, int]) -> None:
+        lines.extend(["", title, "", note, "", "| Blocker | Count |", "|---|---:|"])
+        items = sorted((counter or {}).items(), key=lambda kv: (-kv[1], kv[0]))
+        if not items:
+            lines.append("| none | 0 |")
+        for k, v in items[:15]:
+            lines.append(f"| {_md(k)} | {_md(v)} |")
+
+    _blocker_table(
+        "## 12a. Actionable Buy-Only Blockers",
+        "Blockers on tradable buy-only rows only. Shorting-required diagnostics are excluded so they never dominate.",
+        report.get("actionable_buy_only_blockers") or {},
+    )
+    _blocker_table(
+        "## 12b. Diagnostic-Only Non-Tradable Reasons",
+        "Why non-tradable rows are diagnostic-only (e.g. requires_short_or_not_guaranteed). Not actionable; never paper candidates.",
+        report.get("diagnostic_only_non_tradable_reasons") or {},
+    )
+    _blocker_table(
+        "## 12c. Economic Rejections",
+        "Buy-only rows that priced but lost edge to fees / basis buffer.",
+        report.get("economic_rejections") or {},
+    )
+
+    lines.extend(
+        [
+            "",
+            "## 12d. Diagnostic Only: Requires Shorting / Not Tradable Buy-Only",
+            "",
+            "Mason cannot short; these rows are informational only and are excluded from actionable "
+            "and paper-blocker pressure.",
+            "",
+            f"- diagnostic_only_short_required_rows: `{counts.get('diagnostic_only_short_required_rows', 0)}`",
+            "",
+            "| Type | Asset | Instant | Lower K | Higher K | Reason |",
+            "|---|---|---|---:|---:|---|",
+        ]
+    )
+    short_rows = [r for r in rows if r.get("requires_short_or_sell")]
+    if not short_rows:
+        lines.append("| none |  |  |  |  |  |")
+    for r in short_rows[:40]:
+        reasons = [b for b in (r.get("hard_blockers") or []) if b in _REQUIRES_SHORT_BLOCKERS] or ["requires_short_or_not_guaranteed"]
+        lines.append(
+            f"| {_md(r.get('candidate_type'))} | {_md(r.get('asset'))} | {_md(r.get('target_instant_utc'))} | "
+            f"{_md(r.get('lower_strike'))} | {_md(r.get('higher_strike'))} | {_md(', '.join(reasons))} |"
+        )
+
+    near = counts.get("top_buy_only_near_misses") or []
+    lines.extend(
+        [
+            "",
+            "## 12e. Top Buy-Only Near-Misses (by net edge after fees)",
+            "",
+            f"- buy_only_rows: `{counts.get('buy_only_rows', 0)}`  "
+            f"near_miss_buy_only_rows: `{counts.get('near_miss_buy_only_rows', 0)}`  "
+            f"manual_micro_test_candidate_rows: `{counts.get('manual_micro_test_candidate_rows', 0)}`  "
+            f"monotonicity_covers_one_leg_missing: `{counts.get('monotonicity_covers_one_leg_missing', 0)}`",
+            "",
+            "| Asset | Type | Paper | Net edge | Adj net | Near-miss reason | Missing to candidate |",
+            "|---|---|---|---:|---:|---|---|",
+        ]
+    )
+    if not near:
+        lines.append("| none |  |  |  |  |  |  |")
+    for d in near[:10]:
+        lines.append(
+            f"| {_md(d.get('asset'))} | {_md(d.get('candidate_type'))} | "
+            f"{_md('yes' if d.get('paper_candidate') else 'no')} | {_md(d.get('net_edge_after_fees'))} | "
+            f"{_md(d.get('adjusted_net_edge_after_fees'))} | {_md(d.get('near_miss_reason') or '')} | "
+            f"{_md('; '.join(d.get('missing_to_candidate') or []) or ', '.join(d.get('hard_blockers') or []))} |"
+        )
+
+    qsd = counts.get("quote_side_diagnostic_counts") or {}
+    lines.extend(
+        [
+            "",
+            "## 12f. Missing Buy-Side Quote Diagnostics (venue + side)",
+            "",
+            "Exactly which buy leg prevented pricing, on buy-only rows. `complement_quote_used:*` "
+            "means a NO/YES ask was derived from the opposite executable bid (never a midpoint).",
+            "",
+            "| Diagnostic | Count |",
+            "|---|---:|",
+        ]
+    )
+    qsd_items = sorted(qsd.items(), key=lambda kv: (-kv[1], kv[0]))
+    if not qsd_items:
         lines.append("| none | 0 |")
-    for item in report.get("top_blockers") or []:
-        lines.append(f"| {_md(item.get('blocker'))} | {_md(item.get('count'))} |")
+    for k, v in qsd_items[:20]:
+        lines.append(f"| {_md(k)} | {_md(v)} |")
+
+    cdna_cands = counts.get("cdna_fill_first_candidates") or []
+    lines.extend(
+        [
+            "",
+            "## 12g. CDNA Fill-First Candidates",
+            "",
+            "| Asset | Type | Instant | Adj net | Candidate action |",
+            "|---|---|---|---:|---|",
+        ]
+    )
+    if not cdna_cands:
+        lines.append("| none |  |  |  |  |")
+    for d in cdna_cands[:15]:
+        lines.append(
+            f"| {_md(d.get('asset'))} | {_md(d.get('candidate_type'))} | {_md(d.get('target_instant_utc'))} | "
+            f"{_md(d.get('adjusted_net_edge_after_fees'))} | {_md(d.get('candidate_action'))} |"
+        )
 
     lines.extend(
         [

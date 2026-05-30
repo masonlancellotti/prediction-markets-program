@@ -58,7 +58,11 @@ FASTPATH_SCHEMA_KIND = "crypto_fast_path_trigger_v1"
 
 def build_active_candidate_universe(
     *, assets: list[str], operator_risk_mode: str = "aggressive", include_cdna: bool = False,
-    cdna_evidence_dir: Path | None = None, operator_size_cap: float = 10.0, cdna_operator_size_cap: float = 1.0,
+    operator_accept_cdna_display_price_risk: bool = False,
+    cdna_evidence_dir: Path | None = None, cdna_timeseries_dir: Path | None = None,
+    max_cdna_snapshot_age_seconds: float = 60.0, require_cdna_fresh_for_cdna_candidates: bool = True,
+    allow_top_of_book_depth: bool = True,
+    operator_size_cap: float = 10.0, cdna_operator_size_cap: float = 1.0, max_basket_legs: int = 12,
     source_basis_buffer_bps: float = 0.0, lookahead_hours: float = 8.0, min_net_edge: float = 0.0,
     max_candidates: int = 50, output_path: Path | None = None, generated_at: datetime | None = None,
     report_builder: Callable[..., dict[str, Any]] | None = None, http_get: Any = None,
@@ -67,10 +71,10 @@ def build_active_candidate_universe(
     builder = report_builder or _default_report_builder
     report = builder(
         assets=[a.strip().upper() for a in assets if a.strip()], operator_risk_mode=operator_risk_mode,
-        include_cdna=include_cdna, operator_accept_cdna_display_price_risk=include_cdna,
-        allow_top_of_book_depth=True, operator_size_cap=operator_size_cap,
+        include_cdna=include_cdna, operator_accept_cdna_display_price_risk=bool(operator_accept_cdna_display_price_risk or include_cdna),
+        allow_top_of_book_depth=bool(allow_top_of_book_depth), operator_size_cap=operator_size_cap,
         cdna_operator_size_cap=cdna_operator_size_cap, cdna_evidence_dir=cdna_evidence_dir,
-        max_basket_legs=12, source_basis_buffer_bps=source_basis_buffer_bps, lookahead_hours=lookahead_hours,
+        max_basket_legs=int(max_basket_legs), source_basis_buffer_bps=source_basis_buffer_bps, lookahead_hours=lookahead_hours,
         generated_at=gen, refresh_kalshi_polymarket=True, http_get=http_get,
     )
     rows = report.get("rows") or []
@@ -82,6 +86,33 @@ def build_active_candidate_universe(
     ]
     buy_only.sort(key=lambda r: _opt_f(r.get("net_edge_after_fees")) or -1e9, reverse=True)
     candidates = [_universe_candidate(r) for r in buy_only[: int(max_candidates)]]
+
+    # CDNA harmonic terminal-threshold candidates from the latest saved snapshot
+    # (file only). Matched to Kalshi/Polymarket partners by target_instant_utc/strike,
+    # NOT interval length. Display-price / fill-first; size-capped; never pre-fill arb.
+    cdna_diagnostics: dict[str, Any] = {"cdna_supplied": False, "cdna_missing_reason": "cdna_timeseries_dir_not_provided"}
+    if cdna_timeseries_dir is not None or cdna_evidence_dir is not None:
+        from relative_value.cdna_fast_snapshot import load_latest_cdna_snapshot, build_cdna_fill_first_candidates
+        snap = load_latest_cdna_snapshot(timeseries_dir=cdna_timeseries_dir, evidence_dir=cdna_evidence_dir, now=gen)
+        gen_out = build_cdna_fill_first_candidates(
+            cdna_rows=snap.get("rows") or [], partner_legs=_partner_terminal_legs(rows), now=gen,
+            max_age_seconds=float(max_cdna_snapshot_age_seconds), cdna_operator_size_cap=float(cdna_operator_size_cap),
+            operator_risk_mode=operator_risk_mode, require_fresh=bool(require_cdna_fresh_for_cdna_candidates),
+            min_net_edge=float(min_net_edge))
+        cdna_to_add = [c for c in gen_out["candidates"]
+                       if _opt_f(c.get("net_edge_after_fees")) is not None
+                       and _opt_f(c.get("net_edge_after_fees")) >= float(min_net_edge)
+                       and not c.get("hard_blockers") and not c.get("requires_short_or_sell")]
+        candidates = candidates + cdna_to_add[: int(max_candidates)]
+        cdna_diagnostics = {k: v for k, v in gen_out.items() if k != "candidates"}
+        cdna_diagnostics.update({
+            "cdna_supplied": bool(snap.get("cdna_supplied")), "cdna_rows_loaded": snap.get("rows_loaded"),
+            "cdna_latest_snapshot_generated_at": snap.get("generated_at"), "cdna_missing_reason": snap.get("missing_reason"),
+            "cdna_candidates_added_to_universe": len(cdna_to_add[: int(max_candidates)]),
+            "require_cdna_fresh_for_cdna_candidates": bool(require_cdna_fresh_for_cdna_candidates),
+            "max_cdna_snapshot_age_seconds": float(max_cdna_snapshot_age_seconds),
+        })
+
     watched: dict[str, dict[str, Any]] = {}
     for c in candidates:
         for leg in c["legs"]:
@@ -92,10 +123,15 @@ def build_active_candidate_universe(
         "schema_kind": UNIVERSE_SCHEMA_KIND, "generated_at": gen.isoformat(),
         "min_net_edge_at_discovery": float(min_net_edge), "assets": [a.strip().upper() for a in assets if a.strip()],
         "candidate_count": len(candidates), "watched_leg_count": len(watched),
+        "cdna_candidate_count": sum(1 for c in candidates if _has_cdna_leg(c)),
         "candidates": candidates, "watched_legs": list(watched.values()),
+        "cdna_diagnostics": cdna_diagnostics,
         "discovery_params": {
             "assets": [a.strip().upper() for a in assets if a.strip()], "operator_risk_mode": operator_risk_mode,
             "include_cdna": bool(include_cdna), "cdna_evidence_dir": str(cdna_evidence_dir) if cdna_evidence_dir else None,
+            "cdna_timeseries_dir": str(cdna_timeseries_dir) if cdna_timeseries_dir else None,
+            "max_cdna_snapshot_age_seconds": float(max_cdna_snapshot_age_seconds),
+            "require_cdna_fresh_for_cdna_candidates": bool(require_cdna_fresh_for_cdna_candidates),
             "operator_size_cap": float(operator_size_cap), "cdna_operator_size_cap": float(cdna_operator_size_cap),
             "source_basis_buffer_bps": float(source_basis_buffer_bps), "lookahead_hours": float(lookahead_hours),
             "min_net_edge": float(min_net_edge), "max_candidates": int(max_candidates),
@@ -137,6 +173,43 @@ def _universe_candidate(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _partner_terminal_legs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Kalshi/Polymarket terminal-threshold legs from scout rows, as CDNA match partners.
+
+    Interval length is deliberately NOT part of the identity — CDNA matches partners by
+    asset + target_instant_utc + strike (terminal-threshold payoff grammar)."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple] = set()
+    for r in rows or []:
+        asset = r.get("asset")
+        row_instant = r.get("target_instant_utc")
+        for leg in r.get("basket_legs") or []:
+            plat = str(leg.get("platform") or "").lower()
+            if plat not in ("kalshi", "polymarket"):
+                continue
+            shape = str(leg.get("market_shape") or "").lower()
+            fam = str(leg.get("contract_family") or "").lower()
+            if shape != "point_in_time_threshold" and fam != "terminal_threshold":
+                continue
+            instant = leg.get("target_instant_utc") or row_instant
+            strike = leg.get("threshold_or_strike") if leg.get("threshold_or_strike") is not None else leg.get("strike")
+            key = (plat, leg.get("market_id_or_ticker"), str(leg.get("side") or "").upper(), instant, strike)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "platform": plat, "asset": asset, "target_instant_utc": instant, "threshold_or_strike": strike,
+                "comparator": leg.get("comparator") or "above", "market_shape": "point_in_time_threshold",
+                "contract_family": "terminal_threshold", "reference_start_utc": leg.get("reference_start_utc"),
+                "interval_length_seconds": leg.get("interval_length_seconds"),
+                "ask": leg.get("ask"), "fee": leg.get("fee"), "market_id_or_ticker": leg.get("market_id_or_ticker"),
+                "token_id_yes": leg.get("token_id_yes"), "token_id_no": leg.get("token_id_no"),
+                "token_id": leg.get("token_id"), "source_index": leg.get("source_index"),
+                "available_size_or_cap": leg.get("available_size_or_cap"),
+            })
+    return out
+
+
 # ---------------------------------------------------------------------------- #
 # Phases 2+3: fast quote loop + trigger evaluator                              #
 # ---------------------------------------------------------------------------- #
@@ -162,10 +235,17 @@ def run_crypto_fast_path_trigger(
     max_residual_exposure: float = 5.0,
     execution_style: str = "manual",
     output_dir: Path = Path("reports/crypto_fast_path_trigger"),
+    quote_source: str = "reference",
     dry_run: bool = True,
     live: bool = False,
     i_understand_this_places_real_orders: bool = False,
     quote_refresher: Callable[..., dict[str, Any]] | None = None,
+    http_get: Any = None,
+    cdna_timeseries_dir: Path | None = None,
+    cdna_evidence_dir: Path | None = None,
+    max_cdna_snapshot_age_seconds: float = 60.0,
+    require_cdna_fresh_for_cdna_candidates: bool = True,
+    cdna_operator_size_cap: float = 1.0,
     discovery_fn: Callable[[], dict[str, Any]] | None = None,
     adapters: dict[str, Any] | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -179,7 +259,29 @@ def run_crypto_fast_path_trigger(
     emit = console or print
     env = env if env is not None else os.environ
     kill_switch = Path(kill_switch_path) if kill_switch_path is not None else DEFAULT_KILL_SWITCH
-    refresher = quote_refresher or _universe_quote_refresher
+    if quote_refresher is not None:
+        base_refresher = quote_refresher
+    elif str(quote_source).lower() == "public_live":
+        from relative_value.crypto_fast_quote_refresher import make_public_live_refresher
+        base_refresher = make_public_live_refresher(http_get=http_get)
+    else:
+        base_refresher = _universe_quote_refresher
+
+    # CDNA: file-only, reload-on-change snapshot source (display-price/fill-first).
+    # CDNA legs are served from the latest saved snapshot with strict freshness gates;
+    # never from the network. Non-CDNA legs keep using the base refresher untouched.
+    cdna_source = None
+    if cdna_timeseries_dir is not None or cdna_evidence_dir is not None:
+        from relative_value.cdna_fast_snapshot import CdnaFastQuoteSource
+        cdna_source = CdnaFastQuoteSource(
+            timeseries_dir=cdna_timeseries_dir, evidence_dir=cdna_evidence_dir,
+            max_age_seconds=float(max_cdna_snapshot_age_seconds), clock=now_fn)
+
+    def refresher(*, leg: dict[str, Any], now: datetime) -> dict[str, Any]:
+        if cdna_source is not None and str(leg.get("platform") or "").lower() == "cdna":
+            return cdna_source.quote(leg=leg, now=now)
+        return base_refresher(leg=leg, now=now)
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -210,13 +312,21 @@ def run_crypto_fast_path_trigger(
 
     quote_cache: dict[str, dict[str, Any]] = {}
     cache_path = output_dir / "quote_cache.jsonl"
+    refresh_log_path = output_dir / "quote_refresh_log.jsonl"
     decisions: list[dict[str, Any]] = []
+    tick_metrics: list[dict[str, Any]] = []
     recognized_first: dict[str, datetime] = {}
     discovery_runs = 0
+    cdna_excluded_reasons: dict[str, int] = {}
+    cdna_excluded_ids: set[str] = set()
     last_discovery_at = now_fn()  # the loaded universe file is the t0 discovery
 
     for tick in range(max(1, int(iterations))):
         tick_now = now_fn()
+        # CDNA snapshot is file-only; reload it ONLY when the latest file changed
+        # (never per leg, never over the network).
+        if cdna_source is not None:
+            cdna_source.reload_if_changed(tick_now)
         # Periodic re-discovery on a SLOW cadence — the full scout runs here, never
         # per quote tick. Bounded by refresh_universe_every_seconds.
         if discovery_fn is not None and (tick_now - last_discovery_at).total_seconds() >= params["refresh_universe_every_seconds"]:
@@ -237,8 +347,30 @@ def run_crypto_fast_path_trigger(
             _append_jsonl(cache_path, {"tick": tick, "leg_key": leg["leg_key"], **q})
         refresh_completed = now_fn()
 
+        legs_requested = len(watched)
+        legs_refreshed = sum(1 for l in watched if _opt_f((quote_cache.get(l["leg_key"]) or {}).get("ask")) is not None)
+        tick_metric = {
+            "tick": tick, "quote_source": str(quote_source),
+            "quote_refresh_started_at": refresh_started.isoformat(),
+            "quote_refresh_completed_at": refresh_completed.isoformat(),
+            "quote_refresh_latency_ms": _delta_ms(refresh_started, refresh_completed),
+            "legs_requested": legs_requested, "legs_refreshed": legs_refreshed,
+            "legs_missing_quote": legs_requested - legs_refreshed,
+        }
+        tick_metrics.append(tick_metric)
+        _append_jsonl(refresh_log_path, tick_metric)
+        emit(f"fastpath tick={tick} quote_source={quote_source} legs_refreshed={legs_refreshed}/{legs_requested} "
+             f"quote_refresh_latency_ms={tick_metric['quote_refresh_latency_ms']}")
+
         for cand in candidates:
             rec = _recompute_edge_from_cache(cand, quote_cache, params)
+            # CDNA-involved candidate blocked by a stale/missing snapshot: record the
+            # reason and exclude it. Kalshi/Polymarket-only candidates are untouched.
+            if _has_cdna_leg(cand):
+                blocked = _cdna_block_reason(cand, quote_cache)
+                if blocked:
+                    cdna_excluded_ids.add(cand["candidate_id"])
+                    cdna_excluded_reasons[blocked] = cdna_excluded_reasons.get(blocked, 0) + 1
             if not (rec["all_quotes_present"] and rec["net_edge_after_fees"] is not None
                     and rec["net_edge_after_fees"] >= params["min_net_edge"]
                     and rec["net_edge_after_fees_at_max_limits"] is not None
@@ -261,19 +393,66 @@ def run_crypto_fast_path_trigger(
     summary = {
         "schema_kind": FASTPATH_SCHEMA_KIND, "generated_at": now_fn().isoformat(),
         "candidate_universe": str(candidate_universe), "universe_candidate_count": len(candidates),
-        "watched_leg_count": len(watched), "mode": mode, "live_flags": live_flags, "parameters": params,
+        "watched_leg_count": len(watched), "mode": mode, "quote_source": str(quote_source),
+        "live_flags": live_flags, "parameters": params,
         "ticks": int(max(1, iterations)), "decisions": len(decisions),
         "discovery_runs_during_loop": discovery_runs,
         "full_scout_runs_per_tick": 0,
+        "quote_refresh_metrics": _summarize_refresh(tick_metrics),
+        "tick_metrics": tick_metrics[:50],
         "decisions_that_would_trade": sum(1 for d in decisions if d["do_trade"]),
         "decision_records": [{"trigger_id": d["trigger_id"], "asset": d["asset"], "do_trade": d["do_trade"],
                               "latency": d["latency"], "do_not_trade_reasons": d["do_not_trade_reasons"],
                               "trigger_dir": d["trigger_dir"]} for d in decisions],
         "quote_cache_path": str(cache_path), "kill_switch_present": kill_switch.exists(),
+        "cdna": _cdna_summary(cdna_source, candidates, universe, cdna_excluded_ids, cdna_excluded_reasons,
+                              require_cdna_fresh_for_cdna_candidates, now_fn()),
         "safety": _safety(),
     }
     _write_json(output_dir / "fast_path_run_summary.json", summary)
     return summary
+
+
+def _has_cdna_leg(cand: dict[str, Any]) -> bool:
+    return any(str(l.get("platform") or "").lower() == "cdna" for l in cand.get("legs") or [])
+
+
+def _cdna_block_reason(cand: dict[str, Any], cache: dict[str, dict[str, Any]]) -> str | None:
+    """Return the CDNA freshness blocker for a CDNA leg of this candidate, if any."""
+    for leg in cand.get("legs") or []:
+        if str(leg.get("platform") or "").lower() != "cdna":
+            continue
+        q = cache.get(leg["leg_key"]) or {}
+        blockers = q.get("hard_blockers") or []
+        for reason in ("cdna_snapshot_stale", "cdna_target_expired", "missing_cdna_snapshot_row",
+                       "missing_cdna_quote_timestamp", "missing_cdna_display_yes", "missing_cdna_display_no"):
+            if reason in blockers:
+                return reason
+        if _opt_f(q.get("ask")) is None:
+            return "cdna_quote_unavailable"
+    return None
+
+
+def _cdna_summary(cdna_source, candidates, universe, excluded_ids, excluded_reasons, require_fresh, now) -> dict[str, Any]:
+    cdna_cands = [c for c in candidates if _has_cdna_leg(c)]
+    if cdna_source is None:
+        base = {"cdna_supplied": False, "cdna_rows_loaded": 0, "cdna_latest_snapshot_age_seconds": None,
+                "cdna_snapshot_loaded_at": None, "cdna_stale_rows": 0, "cdna_fresh_rows": 0,
+                "cdna_missing_reason": "cdna_timeseries_dir_not_provided", "cdna_reloads_during_loop": 0,
+                "cdna_top_of_hour_rows": 0, "cdna_20m_top_of_hour_rows": 0, "cdna_2h_rows": 0}
+    else:
+        base = cdna_source.diagnostics(now=now)
+    base.update({
+        "require_cdna_fresh_for_cdna_candidates": bool(require_fresh),
+        "cdna_candidates_considered": len(cdna_cands),
+        "cdna_fill_first_candidates": sum(1 for c in cdna_cands
+                                          if c.get("paper_candidate_class") == "CDNA_FILL_FIRST") or len(cdna_cands),
+        "cdna_excluded_stale_candidate_count": len(excluded_ids),
+        "cdna_excluded_stale_candidate_ids": sorted(excluded_ids)[:50],
+        "cdna_excluded_reasons": dict(excluded_reasons),
+        "cdna_universe_diagnostics": (universe.get("cdna_diagnostics") if isinstance(universe, dict) else None),
+    })
+    return base
 
 
 def _decide_and_intent(*, cand, rec, params, live_flags, mode, used_adapters, recognized_at,
@@ -543,6 +722,19 @@ def _safety() -> dict[str, Any]:
     return {"dry_run_default": True, "protected_limit_buy_only": True, "market_orders_disabled": True,
             "shorting_disabled": True, "hot_path_no_full_scan": True, "hot_path_no_markdown_before_decision": True,
             "browser_automation_added": False, "reads_credentials": False, "prints_secrets": False, "logs_redacted": True}
+
+
+def _summarize_refresh(tick_metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    lats = [m["quote_refresh_latency_ms"] for m in tick_metrics if m.get("quote_refresh_latency_ms") is not None]
+    return {
+        "ticks": len(tick_metrics),
+        "legs_requested_last": tick_metrics[-1]["legs_requested"] if tick_metrics else 0,
+        "legs_refreshed_last": tick_metrics[-1]["legs_refreshed"] if tick_metrics else 0,
+        "legs_missing_quote_last": tick_metrics[-1]["legs_missing_quote"] if tick_metrics else 0,
+        "quote_refresh_latency_ms_last": tick_metrics[-1]["quote_refresh_latency_ms"] if tick_metrics else None,
+        "quote_refresh_latency_ms_avg": round(sum(lats) / len(lats), 3) if lats else None,
+        "quote_refresh_latency_ms_max": max(lats) if lats else None,
+    }
 
 
 def _leg_key(leg: dict[str, Any]) -> str:

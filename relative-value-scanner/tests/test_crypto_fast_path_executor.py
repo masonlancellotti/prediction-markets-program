@@ -279,3 +279,86 @@ def test_no_browser_secret_or_midpoint_code() -> None:
     for pat in (r"\bplaywright\b", r"\bselenium\b", r"\bwebdriver\b", r"\bmidpoint\b", r"\bhttpx\b",
                 r"\bapi_key\b", r"\bgetenv\b", r"\bdotenv\b", r"requests\.(get|post)"):
         assert re.search(pat, code, re.IGNORECASE) is None, f"forbidden {pat}"
+
+
+# ---------------------------------------------------------------------------- #
+# CDNA latest-snapshot support (file-only; freshness gated)                    #
+# ---------------------------------------------------------------------------- #
+CDNA_NOW = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+CDNA_TARGET = (CDNA_NOW + timedelta(hours=1)).isoformat()
+
+
+def _cdna_partner_row():
+    leg = {"platform": "kalshi", "side": "NO", "market_id_or_ticker": "K-BTC-73000", "ask": 0.50, "fee": 0.01,
+           "all_in_cost": 0.51, "available_size_or_cap": 50.0, "source_index": "brti",
+           "quote_timestamp": CDNA_NOW.isoformat(), "market_shape": "point_in_time_threshold",
+           "threshold_or_strike": 73000.0, "target_instant_utc": CDNA_TARGET, "comparator": "above"}
+    return {"asset": "BTC", "candidate_type": "PARTNER", "target_instant_utc": CDNA_TARGET, "payoff_vector": [1],
+            "min_payoff": 1.0, "net_edge_after_fees": 0.0, "adjusted_net_edge_after_fees": 0.0,
+            "total_cost_after_fees": 0.51, "tradable_buy_only": True, "requires_short_or_sell": False,
+            "paper_candidate": False, "hard_blockers": [], "assumptions_accepted": [], "source_indexes": ["brti"],
+            "dedup_key": "PNR", "iteration_timestamp": "20260530T120000Z", "basket_legs": [leg]}
+
+
+def _write_cdna_latest(tmp_path: Path, qts: str) -> Path:
+    p = tmp_path / "cdna" / "cdna_crypto_latest.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    row = {"contract_id": "CID1", "symbol": "CDNA-BTC-1", "asset": "BTC", "target_instant_utc": CDNA_TARGET,
+           "reference_start_utc": CDNA_NOW.isoformat(), "interval_length_seconds": 1200,
+           "contract_family": "terminal_threshold", "payoff_observation_type": "point_in_time_at_target",
+           "comparator": "above", "threshold_or_strike": 73000.0, "display_yes": 0.30, "display_no": 0.68,
+           "exchange_fee": 0.01, "technology_fee": 0.01, "quote_timestamp": qts}
+    p.write_text(json.dumps({"generated_at": CDNA_NOW.isoformat(), "contracts": [row]}), encoding="utf-8")
+    return p.parent
+
+
+def _build_cdna_universe(tmp_path: Path, *, qts: str, extra_rows=None):
+    cdir = _write_cdna_latest(tmp_path, qts)
+    rows = [_cdna_partner_row()] + list(extra_rows or [])
+    build_active_candidate_universe(
+        assets=["BTC"], report_builder=lambda **k: {"generated_at": CDNA_NOW.isoformat(), "rows": rows},
+        cdna_timeseries_dir=cdir, max_cdna_snapshot_age_seconds=60, min_net_edge=0.10,
+        output_path=tmp_path / "ucdna.json", generated_at=CDNA_NOW)
+    return tmp_path / "ucdna.json", cdir
+
+
+def _all_decisions(out: Path):
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(out.glob("*/decision.json"))]
+
+
+def test_fresh_cdna_row_participates_in_universe_and_fast_path(tmp_path: Path) -> None:
+    uni, cdir = _build_cdna_universe(tmp_path, qts=(CDNA_NOW - timedelta(seconds=10)).isoformat())
+    u = json.loads(uni.read_text(encoding="utf-8"))
+    assert u["cdna_candidate_count"] >= 1  # fresh CDNA row participates in the candidate universe
+    assert u["cdna_diagnostics"]["cdna_supplied"] is True and u["cdna_diagnostics"]["cdna_rows_loaded"] == 1
+    summary = _run(tmp_path, universe=uni, refresher=_fresh, clock=lambda: CDNA_NOW,
+                   cdna_timeseries_dir=cdir, max_cdna_snapshot_age_seconds=60)
+    assert summary["cdna"]["cdna_supplied"] is True and summary["cdna"]["cdna_rows_loaded"] == 1
+    assert summary["cdna"]["cdna_fill_first_candidates"] >= 1
+    cdna_d = [d for d in _all_decisions(tmp_path / "fp") if d["candidate_type"] == "CDNA_FILL_FIRST"]
+    assert cdna_d, "expected a CDNA decision"
+    assert cdna_d[0]["do_trade"] is False  # CDNA is fill-first; never auto-trades
+    assert "cdna_requires_manual_fill_first_no_confirmed_fill" in cdna_d[0]["do_not_trade_reasons"]
+
+
+def test_stale_cdna_snapshot_excluded_from_fast_path(tmp_path: Path) -> None:
+    uni, cdir = _build_cdna_universe(tmp_path, qts=(CDNA_NOW - timedelta(seconds=10)).isoformat())
+    _write_cdna_latest(tmp_path, (CDNA_NOW - timedelta(seconds=3600)).isoformat())  # snapshot went stale
+    summary = _run(tmp_path, universe=uni, refresher=_fresh, clock=lambda: CDNA_NOW,
+                   cdna_timeseries_dir=cdir, max_cdna_snapshot_age_seconds=60)
+    cdna = summary["cdna"]
+    assert cdna["cdna_stale_rows"] >= 1
+    assert cdna["cdna_excluded_stale_candidate_count"] >= 1
+    assert "cdna_snapshot_stale" in cdna["cdna_excluded_reasons"]
+    assert [d for d in _all_decisions(tmp_path / "fp") if d["candidate_type"] == "CDNA_FILL_FIRST"] == []
+
+
+def test_cdna_missing_does_not_block_kalshi_polymarket(tmp_path: Path) -> None:
+    # standard Kalshi/Polymarket universe, pointed at a non-existent CDNA dir.
+    summary = _run(tmp_path, cdna_timeseries_dir=tmp_path / "no_cdna_here", max_cdna_snapshot_age_seconds=60)
+    assert summary["decisions"] == 1  # the K/P candidate still produces a decision
+    assert summary["cdna"]["cdna_supplied"] is False
+    assert summary["cdna"]["cdna_missing_reason"] == "cdna_latest_file_not_found"
+    # and with no CDNA configured at all.
+    summary2 = _run(tmp_path)
+    assert summary2["decisions"] == 1 and summary2["cdna"]["cdna_supplied"] is False

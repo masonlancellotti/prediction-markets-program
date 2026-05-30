@@ -151,6 +151,8 @@ from relative_value.crypto_fast_path_executor import (
     build_active_candidate_universe,
     run_crypto_fast_path_trigger,
 )
+from relative_value.daily_summary_notifier import write_and_send_daily_summary
+from relative_value.notification_providers import PROVIDER_NAMES
 from relative_value.championship_operator_scout_generic import write_championship_operator_scout_generic_files
 from relative_value.three_venue_operator_scout import write_three_venue_operator_scout_files
 from relative_value.manual_evidence_requirements import (
@@ -252,6 +254,10 @@ def build_fixture_adapters(fixture_dir: Path) -> list[object]:
         FixturePolymarketAdapter(fixture_dir / "polymarket_markets.json"),
         FixtureTheOddsApiAdapter(fixture_dir / "the_odds_api_events.json"),
     ]
+
+
+def _str2bool(value: str) -> bool:
+    return str(value).strip().lower() in ("true", "1", "yes", "y", "on")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2188,6 +2194,10 @@ def main(argv: list[str] | None = None) -> int:
     structural_arb_parser.add_argument("--operator-size-cap", type=float, default=0.0)
     structural_arb_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
     structural_arb_parser.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    structural_arb_parser.add_argument("--cdna-timeseries-dir", type=Path, default=None,
+                                       help="Dir holding cdna_crypto_latest.json (file only; no network).")
+    structural_arb_parser.add_argument("--max-cdna-snapshot-age-seconds", type=float, default=60.0)
+    structural_arb_parser.add_argument("--require-cdna-fresh-for-cdna-candidates", type=_str2bool, default=True)
     structural_arb_parser.add_argument("--max-quote-age-seconds", type=float, default=300.0)
     structural_arb_parser.add_argument("--min-available-notional", type=float, default=1.0)
     structural_arb_parser.add_argument("--max-basket-legs", type=int, default=12)
@@ -2241,6 +2251,10 @@ def main(argv: list[str] | None = None) -> int:
     watch_structural_parser.add_argument("--operator-size-cap", type=float, default=0.0)
     watch_structural_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
     watch_structural_parser.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    watch_structural_parser.add_argument("--cdna-timeseries-dir", type=Path, default=None,
+                                         help="Dir holding cdna_crypto_latest.json (file only; no network).")
+    watch_structural_parser.add_argument("--max-cdna-snapshot-age-seconds", type=float, default=60.0)
+    watch_structural_parser.add_argument("--require-cdna-fresh-for-cdna-candidates", type=_str2bool, default=True)
     watch_structural_parser.add_argument("--max-quote-age-seconds", type=float, default=180.0)
     watch_structural_parser.add_argument("--min-available-notional", type=float, default=1.0)
     watch_structural_parser.add_argument("--max-basket-legs", type=int, default=12)
@@ -2440,8 +2454,16 @@ def main(argv: list[str] | None = None) -> int:
     universe_parser.add_argument("--assets", default="BTC,ETH,SOL,XRP,DOGE")
     universe_parser.add_argument("--operator-risk-mode", choices=("conservative", "standard", "aggressive"), default="aggressive")
     universe_parser.add_argument("--include-cdna", action="store_true")
+    universe_parser.add_argument("--operator-accept-cdna-display-price-risk", action="store_true")
     universe_parser.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    universe_parser.add_argument("--cdna-timeseries-dir", type=Path, default=None,
+                                 help="Dir holding cdna_crypto_latest.json (file only; no network).")
+    universe_parser.add_argument("--max-cdna-snapshot-age-seconds", type=float, default=60.0)
+    universe_parser.add_argument("--require-cdna-fresh-for-cdna-candidates", type=_str2bool, default=True)
+    universe_parser.add_argument("--allow-top-of-book-depth", action="store_true")
     universe_parser.add_argument("--operator-size-cap", type=float, default=10.0)
+    universe_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    universe_parser.add_argument("--max-basket-legs", type=int, default=12)
     universe_parser.add_argument("--min-net-edge", type=float, default=0.0)
     universe_parser.add_argument("--max-candidates", type=int, default=50)
     universe_parser.add_argument("--source-basis-buffer-bps", type=float, default=0.0)
@@ -2456,6 +2478,13 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     fast.add_argument("--candidate-universe", type=Path, default=PROJECT_ROOT / "reports" / "active_crypto_candidate_universe.json")
+    fast.add_argument("--quote-source", choices=("reference", "public_live"), default="reference")
+    fast.add_argument("--cdna-timeseries-dir", type=Path, default=None,
+                      help="Dir holding cdna_crypto_latest.json; CDNA legs are served from this file (no network).")
+    fast.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    fast.add_argument("--max-cdna-snapshot-age-seconds", type=float, default=60.0)
+    fast.add_argument("--require-cdna-fresh-for-cdna-candidates", type=_str2bool, default=True)
+    fast.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
     fast.add_argument("--quote-loop-interval-ms", type=float, default=500.0)
     fast.add_argument("--iterations", type=int, default=1)
     fast.add_argument("--min-net-edge", type=float, default=0.10)
@@ -2476,6 +2505,24 @@ def main(argv: list[str] | None = None) -> int:
     fast.add_argument("--dry-run", action="store_true")
     fast.add_argument("--live", action="store_true")
     fast.add_argument("--i-understand-this-places-real-orders", action="store_true")
+
+    # --- Daily phone summary notifier (reporting only) ------------------------ #
+    summary_parser = subparsers.add_parser(
+        "send-daily-summary",
+        help=(
+            "Build a daily crypto-arb summary from local reports and (only with --send) deliver a concise "
+            "phone message via a notification provider. Reporting only; never trades; default provider dry_run."
+        ),
+    )
+    summary_parser.add_argument("--date", default=None, help="YYYY-MM-DD (default: today, local).")
+    summary_parser.add_argument("--reports-root", type=Path, default=PROJECT_ROOT / "reports")
+    summary_parser.add_argument("--provider", choices=PROVIDER_NAMES, default="dry_run")
+    summary_parser.add_argument("--send", action="store_true",
+                                help="Actually deliver via the provider. Without it, nothing is sent.")
+    summary_parser.add_argument("--json-output", type=Path, default=None)
+    summary_parser.add_argument("--markdown-output", type=Path, default=None)
+    summary_parser.add_argument("--message-output", type=Path, default=None)
+    summary_parser.add_argument("--max-message-chars", type=int, default=1500)
 
     batch_readiness_parser = subparsers.add_parser(
         "batch-evidence-import-readiness",
@@ -5120,6 +5167,9 @@ def main(argv: list[str] | None = None) -> int:
             operator_size_cap=args.operator_size_cap,
             cdna_operator_size_cap=args.cdna_operator_size_cap,
             cdna_evidence_dir=args.cdna_evidence_dir,
+            cdna_timeseries_dir=args.cdna_timeseries_dir,
+            max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
+            require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
             max_quote_age_seconds=args.max_quote_age_seconds,
             min_available_notional=args.min_available_notional,
             max_basket_legs=args.max_basket_legs,
@@ -5176,6 +5226,9 @@ def main(argv: list[str] | None = None) -> int:
             operator_size_cap=args.operator_size_cap,
             cdna_operator_size_cap=args.cdna_operator_size_cap,
             cdna_evidence_dir=args.cdna_evidence_dir,
+            cdna_timeseries_dir=args.cdna_timeseries_dir,
+            max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
+            require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
             max_quote_age_seconds=args.max_quote_age_seconds,
             min_available_notional=args.min_available_notional,
             max_basket_legs=args.max_basket_legs,
@@ -5235,14 +5288,21 @@ def main(argv: list[str] | None = None) -> int:
         asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
         universe = build_active_candidate_universe(
             assets=asset_list, operator_risk_mode=args.operator_risk_mode, include_cdna=args.include_cdna,
-            cdna_evidence_dir=args.cdna_evidence_dir, operator_size_cap=args.operator_size_cap,
-            min_net_edge=args.min_net_edge, max_candidates=args.max_candidates,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            cdna_evidence_dir=args.cdna_evidence_dir, cdna_timeseries_dir=args.cdna_timeseries_dir,
+            max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
+            require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
+            allow_top_of_book_depth=args.allow_top_of_book_depth,
+            operator_size_cap=args.operator_size_cap, cdna_operator_size_cap=args.cdna_operator_size_cap,
+            max_basket_legs=args.max_basket_legs, min_net_edge=args.min_net_edge, max_candidates=args.max_candidates,
             source_basis_buffer_bps=args.source_basis_buffer_bps, output_path=args.output,
         )
         print(
             "build_crypto_candidate_universe=OK diagnostic_only=true discovery_pass=true "
             f"assets={','.join(asset_list)} candidate_count={universe.get('candidate_count')} "
-            f"watched_leg_count={universe.get('watched_leg_count')} output={args.output}"
+            f"cdna_candidate_count={universe.get('cdna_candidate_count')} "
+            f"watched_leg_count={universe.get('watched_leg_count')} "
+            f"cdna_diagnostics={universe.get('cdna_diagnostics')} output={args.output}"
         )
         return 0
     if args.command == "trigger-crypto-fast-path":
@@ -5257,7 +5317,11 @@ def main(argv: list[str] | None = None) -> int:
                 return build_active_candidate_universe(
                     assets=_dp.get("assets") or [], operator_risk_mode=_dp.get("operator_risk_mode", "aggressive"),
                     include_cdna=bool(_dp.get("include_cdna")), cdna_evidence_dir=(Path(_dp["cdna_evidence_dir"]) if _dp.get("cdna_evidence_dir") else None),
-                    operator_size_cap=_dp.get("operator_size_cap", 10.0), min_net_edge=_dp.get("min_net_edge", 0.0),
+                    cdna_timeseries_dir=(args.cdna_timeseries_dir or (Path(_dp["cdna_timeseries_dir"]) if _dp.get("cdna_timeseries_dir") else None)),
+                    max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
+                    require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
+                    operator_size_cap=_dp.get("operator_size_cap", 10.0), cdna_operator_size_cap=args.cdna_operator_size_cap,
+                    min_net_edge=_dp.get("min_net_edge", 0.0),
                     max_candidates=_dp.get("max_candidates", 50), source_basis_buffer_bps=_dp.get("source_basis_buffer_bps", 0.0),
                     output_path=args.candidate_universe,
                 )
@@ -5266,7 +5330,10 @@ def main(argv: list[str] | None = None) -> int:
             iterations=args.iterations, min_net_edge=args.min_net_edge, max_decision_age_ms=args.max_decision_age_ms,
             max_quote_age_ms=args.max_quote_age_ms, refresh_universe_every_seconds=args.refresh_universe_every_seconds,
             source_basis_buffer_bps=args.source_basis_buffer_bps, discovery_fn=_discovery_fn,
-            max_slippage_cents=args.max_slippage_cents,
+            quote_source=args.quote_source, cdna_timeseries_dir=args.cdna_timeseries_dir,
+            cdna_evidence_dir=args.cdna_evidence_dir, max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
+            require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
+            cdna_operator_size_cap=args.cdna_operator_size_cap, max_slippage_cents=args.max_slippage_cents,
             order_timeout_ms=args.order_timeout_ms, max_total_notional=args.max_total_notional,
             max_platform_notional=args.max_platform_notional, max_leg_notional=args.max_leg_notional,
             operator_size_cap=args.operator_size_cap, max_orders=args.max_orders,
@@ -5277,10 +5344,33 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "trigger_crypto_fast_path=OK dry_run_default=true protected_limit_buy_only=true market_orders=false "
             "shorting=false hot_path_no_full_scan=true hot_path_no_markdown=true "
-            f"mode={summary.get('mode')} universe_candidate_count={summary.get('universe_candidate_count')} "
+            f"mode={summary.get('mode')} quote_source={summary.get('quote_source')} "
+            f"universe_candidate_count={summary.get('universe_candidate_count')} "
+            f"watched_leg_count={summary.get('watched_leg_count')} "
+            f"quote_refresh_metrics={summary.get('quote_refresh_metrics')} "
             f"ticks={summary.get('ticks')} decisions={summary.get('decisions')} "
             f"decisions_that_would_trade={summary.get('decisions_that_would_trade')} "
+            f"cdna={summary.get('cdna')} "
             f"kill_switch_present={summary.get('kill_switch_present')} output_dir={args.output_dir}"
+        )
+        return 0
+    if args.command == "send-daily-summary":
+        date = args.date or datetime.now().strftime("%Y-%m-%d")
+        base_dir = Path(args.reports_root) / "daily_summaries" / date
+        json_output = args.json_output or (base_dir / "daily_summary.json")
+        markdown_output = args.markdown_output or (base_dir / "daily_summary.md")
+        message_output = args.message_output or (base_dir / "daily_summary_message.txt")
+        result = write_and_send_daily_summary(
+            reports_root=args.reports_root, date=date, provider_name=args.provider, send=args.send,
+            json_output=json_output, markdown_output=markdown_output, message_output=message_output,
+            max_message_chars=args.max_message_chars,
+        )
+        note = result["notification"]
+        print(
+            "send_daily_summary=OK reporting_only=true no_trading=true "
+            f"date={date} provider={note.get('provider')} send_flag={bool(args.send)} "
+            f"delivery_status={note.get('status')} redacted_config={note.get('redacted_config')} "
+            f"json={json_output} markdown={markdown_output} message={message_output}"
         )
         return 0
     if args.command == "crypto-arb-surface-coverage-audit":

@@ -204,12 +204,20 @@ def test_updown_same_window_matches_only_when_start_and_target_match() -> None:
     )
     ud = _rows(matched, "UP_DOWN_SAME_WINDOW")
     assert ud and ud[0]["paper_candidate"] is True
+    assert matched["up_down_audit"]["up_down_kalshi_rows"] == 1
+    assert matched["up_down_audit"]["up_down_polymarket_rows"] == 1
+    assert matched["up_down_audit"]["up_down_exact_window_matches"] == 1
+    assert matched["up_down_audit"]["up_down_candidates_generated"] > 0
+    assert matched["up_down_audit"]["up_down_paper_candidates"] > 0
 
     mismatched = _build(
         polymarket=[_tk("polymarket", obs="interval_start_to_end_change", comp="up", strike=None, ref_start=REF)],
         kalshi=[_tk("kalshi", obs="interval_start_to_end_change", comp="up", strike=None, ref_start="2026-05-30T04:00:00+00:00")],
     )
     assert _rows(mismatched, "UP_DOWN_SAME_WINDOW") == []
+    assert mismatched["up_down_audit"]["up_down_exact_window_matches"] == 0
+    assert mismatched["up_down_audit"]["sample_kalshi_windows"]
+    assert mismatched["up_down_audit"]["sample_polymarket_windows"]
 
 
 def test_cdna_threshold_becomes_cdna_fill_first_if_net_positive() -> None:
@@ -246,7 +254,7 @@ def test_missing_ask_hard_blocks() -> None:
         polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.45, no=None)],
     )
     assert all(not r["paper_candidate"] for r in report["rows"])
-    assert any("missing_ask" in (r.get("hard_blockers") or []) for r in report["rows"])
+    assert any("missing_polymarket_no_ask" in (r.get("hard_blockers") or []) for r in report["rows"])
 
 
 def test_stale_quote_hard_blocks() -> None:
@@ -516,6 +524,365 @@ def test_monotonicity_cover_no_midpoint_uses_asks_only() -> None:
     assert r["yes_lower_ask"] == legs[0]["ask"] and r["no_higher_ask"] == legs[1]["ask"]
 
 
+# ---------------------------------------------------------------------------- #
+# Buy-only vs short-required separation (Mason cannot short)                    #
+# ---------------------------------------------------------------------------- #
+
+
+def _two_thresholds_kalshi():
+    return [
+        _tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62),
+        _tk("kalshi", comp="above", strike=71000.0, yes=0.30, no=0.72),
+    ]
+
+
+def test_threshold_to_bucket_is_requires_short_not_tradable() -> None:
+    report = _build(kalshi=_two_thresholds_kalshi())
+    diag = _rows(report, "THRESHOLD_TO_BUCKET_DIAGNOSTIC")
+    assert diag, "adjacent thresholds should produce a threshold->bucket diagnostic"
+    for r in diag:
+        assert r["candidate_execution_type"] == "REQUIRES_SHORT"
+        assert r["tradable_buy_only"] is False
+        assert r["requires_short_or_sell"] is True
+        assert r["paper_candidate"] is False
+
+
+def test_requires_short_excluded_from_actionable_top_blockers() -> None:
+    report = _build(kalshi=_two_thresholds_kalshi())
+    top = {b["blocker"] for b in report["top_blockers"]}
+    # The whole point: short-required diagnostics must NOT dominate (or appear in)
+    # the actionable buy-only blocker list.
+    assert "requires_short_or_not_guaranteed" not in top
+    assert "requires_short_or_not_guaranteed" not in (report["actionable_buy_only_blockers"] or {})
+    assert "requires_short_or_not_guaranteed" in (report["diagnostic_only_non_tradable_reasons"] or {})
+
+
+def test_separated_blocker_buckets_are_present_and_disjoint_on_short_reason() -> None:
+    report = _build(kalshi=_two_thresholds_kalshi())
+    for key in ("actionable_buy_only_blockers", "diagnostic_only_non_tradable_reasons", "economic_rejections"):
+        assert isinstance(report[key], dict)
+        assert isinstance(report["summary_counts"][key], dict)
+    # requires_short lives only in the diagnostic bucket, never the actionable one.
+    assert "requires_short_or_not_guaranteed" not in report["actionable_buy_only_blockers"]
+    assert "requires_short_or_not_guaranteed" not in report["economic_rejections"]
+
+
+def test_diagnostic_only_short_required_count_matches_rows() -> None:
+    report = _build(kalshi=_two_thresholds_kalshi())
+    n = sum(1 for r in report["rows"] if r.get("requires_short_or_sell"))
+    assert n >= 1
+    assert report["summary_counts"]["diagnostic_only_short_required_rows"] == n
+    assert report["diagnostic_only_short_required_rows"] == n
+
+
+def test_monotonicity_cover_is_classified_buy_only() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=0.02)],
+    )
+    paper = [r for r in _mono(report) if r["paper_candidate"]]
+    assert paper, "positive monotonicity cover should be a buy-only paper candidate"
+    r = paper[0]
+    assert r["candidate_execution_type"] == "BUY_ONLY"
+    assert r["tradable_buy_only"] is True
+    assert r["requires_short_or_sell"] is False
+
+
+def test_missing_partner_no_ask_is_actionable_buy_only_blocker() -> None:
+    # Cross-venue cover Kalshi(>70000 YES) + Polymarket(>70000 NO); the NO ask is absent.
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.45, no=None)],
+    )
+    assert "missing_polymarket_no_ask" in report["actionable_buy_only_blockers"]
+    assert "requires_short_or_not_guaranteed" not in report["actionable_buy_only_blockers"]
+    hits = [r for r in report["rows"] if "missing_polymarket_no_ask" in (r.get("hard_blockers") or [])]
+    assert hits and all(r["tradable_buy_only"] for r in hits)
+
+
+def test_missing_no_higher_ask_is_actionable_not_short_required() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=None, yes_bid=None)],
+    )
+    assert "missing_no_higher_ask" in report["actionable_buy_only_blockers"]
+    cover = _mono(report)
+    assert cover and all(r["tradable_buy_only"] for r in cover)
+    assert all(not r["requires_short_or_sell"] for r in cover)
+
+
+def test_top_buy_only_near_misses_exclude_short_required_and_sort_desc() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=0.02)],
+    )
+    near = report["top_buy_only_near_misses"]
+    assert near, "expected at least one buy-only near-miss (the positive cover)"
+    assert all(n["candidate_type"] != "THRESHOLD_TO_BUCKET_DIAGNOSTIC" for n in near)
+    nets = [n["net_edge_after_fees"] for n in near if n["net_edge_after_fees"] is not None]
+    assert nets == sorted(nets, reverse=True)
+    # The short-required diagnostic is still counted, just separately.
+    assert report["summary_counts"]["diagnostic_only_short_required_rows"] >= 1
+
+
+def test_markdown_has_separated_blocker_and_short_sections() -> None:
+    from relative_value.crypto_structural_payoff_arb_scout import (
+        render_crypto_structural_payoff_arb_scout_markdown as render_md,
+    )
+
+    report = _build(
+        kalshi=_two_thresholds_kalshi(),
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=0.02)],
+    )
+    md = render_md(report)
+    for header in (
+        "## 12a. Actionable Buy-Only Blockers",
+        "## 12b. Diagnostic-Only Non-Tradable Reasons",
+        "## 12c. Economic Rejections",
+        "## 12d. Diagnostic Only: Requires Shorting / Not Tradable Buy-Only",
+        "## 12e. Top Buy-Only Near-Misses",
+    ):
+        assert header in md, f"missing section: {header}"
+    assert "diagnostic_only_short_required_rows" in md
+    # The actionable blocker section must not be headed by the short reason.
+    a_idx = md.index("## 12a. Actionable Buy-Only Blockers")
+    b_idx = md.index("## 12b. Diagnostic-Only Non-Tradable Reasons")
+    assert "requires_short_or_not_guaranteed" not in md[a_idx:b_idx]
+
+
+# ---------------------------------------------------------------------------- #
+# Complement-derived NO/YES asks, near-miss, micro-test, venue diagnostics      #
+# ---------------------------------------------------------------------------- #
+
+
+def test_complement_no_ask_unblocks_cross_venue_paper_candidate_in_aggressive() -> None:
+    # Polymarket NO ask missing, but a YES bid exists -> NO ask = 1 - yes_bid = 0.40.
+    # The Kalshi(>70000 YES) + Polymarket(>70000 NO) cover then prices and qualifies.
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)],
+        polymarket=[_mtk("polymarket", 70000, yes=0.45, no=None, yes_bid=0.60)],
+        operator_risk_mode="aggressive",
+    )
+    paper = [r for r in _rows(report, paper=True) if r.get("complement_quote_used")]
+    assert paper, "complement-derived NO ask should unblock a buy-only paper candidate"
+    r = paper[0]
+    assert r["tradable_buy_only"] is True
+    assert "complement_quote_used" in r["assumptions_accepted"]
+    assert "limited_depth_operator_size_cap_applied" in r["assumptions_accepted"]
+    assert any("no_ask = 1 - yes_bid" in d for d in r["quote_side_diagnostics"])
+
+
+def test_complement_not_used_in_conservative_mode() -> None:
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)],
+        polymarket=[_mtk("polymarket", 70000, yes=0.45, no=None, yes_bid=0.60)],
+        operator_risk_mode="conservative",
+    )
+    assert all(not r.get("complement_quote_used") for r in report["rows"])
+    assert report["complement_quote_rows"] == 0
+    # The NO leg stays unquoted, so the cover is a near-miss, never a paper candidate.
+    assert _rows(report, paper=True) == []
+
+
+def test_complement_uses_bid_not_midpoint() -> None:
+    # NO ask must equal exactly 1 - yes_bid (0.07), never a midpoint of bid/ask.
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46),
+                    _mtk("polymarket", 74800, yes=0.99, no=None, yes_bid=0.93)],
+    )
+    cover = [r for r in _mono(report) if r.get("complement_quote_used")]
+    assert cover and cover[0]["no_higher_ask"] == round(1.0 - 0.93, 6)
+
+
+def test_near_miss_fields_on_missing_ask_buy_only_row() -> None:
+    # Kalshi YES present, Polymarket NO ask missing and no bid -> missing_partner_no_ask.
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.45, no=None)],
+    )
+    nm = [r for r in report["rows"] if r.get("near_miss")]
+    assert nm, "a buy-only row blocked only by a missing ask should be a near-miss"
+    r = nm[0]
+    assert r["paper_candidate"] is False
+    assert r["tradable_buy_only"] is True
+    assert "Polymarket NO ask" in r["missing_to_candidate"]
+    assert "needs" in r["near_miss_reason"]
+    assert r["manual_micro_test_candidate"] is False
+
+
+def test_manual_micro_test_candidate_only_for_valid_paper() -> None:
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.45, no=0.55)],
+    )
+    paper = _rows(report, "CROSS_VENUE_THRESHOLD_BASIS", paper=True)
+    assert paper and paper[0]["manual_micro_test_candidate"] is True
+    # No diagnostic / short-required / non-paper row is ever a micro-test candidate.
+    assert all(
+        not r.get("manual_micro_test_candidate")
+        for r in report["rows"]
+        if not r.get("paper_candidate")
+    )
+
+
+def test_venue_side_quote_diagnostics_are_emitted() -> None:
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.45, no=None)],
+    )
+    qsd = report["quote_side_diagnostic_counts"]
+    assert "missing_polymarket_no_ask" in qsd
+    # Precise venue+side labels live on the row's quote_side_diagnostics too.
+    assert any("missing_polymarket_no_ask" in (r.get("quote_side_diagnostics") or []) for r in report["rows"])
+
+
+def test_bucket_to_cumulative_threshold_can_become_paper_candidate() -> None:
+    # Kalshi YES buckets that tile the line, cheap enough that the synthetic
+    # "above 73000" + Polymarket NO(>73000) cover nets positive after fees.
+    kalshi = [
+        _tk("kalshi", obs="range_at_target", comp="below", strike=72000.0, floor=None, cap=72000.0, yes=0.20, no=0.80),
+        _tk("kalshi", obs="range_at_target", comp="range", strike=72500.0, floor=72000.0, cap=73000.0, yes=0.15, no=0.85),
+        _tk("kalshi", obs="range_at_target", comp="above", strike=73000.0, floor=73000.0, cap=None, yes=0.18, no=0.82),
+    ]
+    report = _build(
+        kalshi=kalshi,
+        polymarket=[_tk("polymarket", comp="above", strike=73000.0, yes=0.30, no=0.70)],
+        operator_risk_mode="aggressive",
+    )
+    b2t = _rows(report, "BUCKET_TO_CUMULATIVE_THRESHOLD")
+    assert b2t, "expected a bucket->cumulative-threshold candidate"
+    # The gate must ALLOW it to be a paper candidate when it nets positive.
+    assert any(r["paper_candidate"] for r in b2t), \
+        f"bucket->threshold nets={[(r['net_edge_after_fees'], r['hard_blockers']) for r in b2t]}"
+
+
+# ---------------------------------------------------------------------------- #
+# Candidate-generation coverage + non-mono near-miss visibility                 #
+# ---------------------------------------------------------------------------- #
+
+
+def test_candidate_generation_coverage_lists_every_class() -> None:
+    from relative_value.crypto_structural_payoff_arb_scout import CANDIDATE_CLASSES
+
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.45, no=0.55)],
+    )
+    cov = report["candidate_generation_coverage"]
+    classes = {c["candidate_class"] for c in cov}
+    for cls in CANDIDATE_CLASSES:
+        assert cls in classes, f"coverage missing candidate class {cls}"
+    for c in cov:
+        for key in (
+            "attempted", "generated", "priced", "net_positive", "paper_candidate",
+            "blocked_missing_ask", "blocked_stale", "blocked_no_positive_net", "blocked_shape_or_time",
+        ):
+            assert key in c and isinstance(c[key], int)
+
+
+def test_quote_coverage_diagnostics_count_asks_bids_and_complement_gap() -> None:
+    kalshi = _tk("kalshi", comp="above", strike=70000.0, yes=0.40, no=0.62)
+    kalshi["quote"]["yes_bid"] = 0.39
+    kalshi["quote"]["no_bid"] = 0.60
+    polymarket = _tk("polymarket", comp="above", strike=70000.0, yes=0.45, no=None)
+    polymarket["quote"]["yes_bid"] = None
+    polymarket["quote"]["no_bid"] = 0.52
+    report = _build(kalshi=[kalshi], polymarket=[polymarket])
+    qcov = report["quote_coverage_diagnostics"]
+    assert qcov["raw"]["kalshi_yes_ask_present"] == 1
+    assert qcov["raw"]["kalshi_no_ask_present"] == 1
+    assert qcov["raw"]["kalshi_yes_bid_present"] == 1
+    assert qcov["raw"]["kalshi_no_bid_present"] == 1
+    assert qcov["raw"]["polymarket_yes_ask_present"] == 1
+    assert qcov["raw"]["polymarket_no_ask_present"] == 0
+    assert qcov["raw"]["polymarket_no_bid_present"] == 1
+    assert qcov["complement_quote_possible_but_missing_bid"] >= 1
+    assert qcov["explicit_ask_used_count"] >= 1
+
+
+def test_coverage_exposes_cross_venue_attempts() -> None:
+    # Both asks present but cost>$1 -> net-negative cross-venue cover. It must be
+    # ATTEMPTED (and now generated/visible), not silently suppressed.
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.60, no=0.45)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.58, no=0.55)],
+    )
+    cov = {c["candidate_class"]: c for c in report["candidate_generation_coverage"]}
+    assert cov["CROSS_VENUE_THRESHOLD_BASIS"]["attempted"] >= 1
+    cv = [r for r in report["rows"] if r["candidate_type"] == "CROSS_VENUE_THRESHOLD_BASIS"]
+    assert cv, "net-negative cross-venue covers must still be emitted for near-miss visibility"
+    assert any(r["net_edge_after_fees"] is not None and r["net_edge_after_fees"] < 0 for r in cv)
+
+
+def test_negative_cover_surfaces_in_near_misses_not_just_mono() -> None:
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.60, no=0.45)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.58, no=0.55)],
+    )
+    near_types = {n["candidate_type"] for n in report["top_buy_only_near_misses"]}
+    assert "CROSS_VENUE_THRESHOLD_BASIS" in near_types, \
+        f"cross-venue near-miss should be visible; got {near_types}"
+    # And each near-miss carries a single normalized reason.
+    for n in report["top_buy_only_near_misses"]:
+        assert n["near_miss_primary_reason"] in {"missing_quote", "stale_quote", "negative_net", "basis_buffer", "other"}
+
+
+def test_near_miss_threshold_buckets_count_within_cents() -> None:
+    # Two cross-venue covers ~6.7c and ~18.7c underwater -> within_10c=1, within_5c=0.
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.60, no=0.45)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.58, no=0.55)],
+    )
+    nb = report["near_miss_threshold_buckets"]
+    assert nb["within_10c"] >= nb["within_5c"] >= nb["within_2c"]
+    assert nb["within_10c"] >= 1
+
+
+def test_top_near_misses_sorted_by_net_edge_desc() -> None:
+    report = _build(
+        kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.60, no=0.45)],
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.58, no=0.55)],
+    )
+    nets = [n["net_edge_after_fees"] for n in report["top_buy_only_near_misses"] if n["net_edge_after_fees"] is not None]
+    assert nets == sorted(nets, reverse=True)
+
+
+def test_updown_complement_no_ask_derived_from_bid() -> None:
+    # Polymarket "down" leg = NO of an up market; NO ask missing but yes_bid present.
+    up_k = _tk("kalshi", obs="interval_start_to_end_change", comp="up", strike=None, ref_start=REF, yes=0.40, no=0.60)
+    up_p = _tk("polymarket", obs="interval_start_to_end_change", comp="up", strike=None, ref_start=REF, yes=0.55, no=None)
+    up_p["quote"]["yes_bid"] = 0.50
+    up_p["quote"]["yes_bid_size"] = 80.0
+    report = _build(kalshi=[up_k], polymarket=[up_p], operator_risk_mode="aggressive")
+    ud = _rows(report, "UP_DOWN_SAME_WINDOW")
+    assert ud, "up/down cover should form"
+    assert any(r.get("complement_quote_used") for r in ud)
+
+
+def test_updown_generation_coverage_appears_without_paper_candidate() -> None:
+    report = _build(
+        kalshi=[_tk("kalshi", obs="interval_start_to_end_change", comp="up", strike=None, ref_start=REF, yes=0.70, no=0.32)],
+        polymarket=[_tk("polymarket", obs="interval_start_to_end_change", comp="up", strike=None, ref_start=REF, yes=0.72, no=0.45)],
+    )
+    cov = {c["candidate_class"]: c for c in report["candidate_generation_coverage"]}
+    assert cov["UP_DOWN_SAME_WINDOW"]["attempted"] >= 1
+    assert cov["UP_DOWN_SAME_WINDOW"]["generated"] >= 1
+    assert cov["UP_DOWN_SAME_WINDOW"]["priced"] >= 1
+    assert cov["UP_DOWN_SAME_WINDOW"]["paper_candidate"] == 0
+    assert report["up_down_audit"]["up_down_candidates_generated"] > 0
+
+
+def test_cross_venue_not_crowded_out_by_long_only_covers() -> None:
+    # Many same-platform long-only covers must NOT starve the cross-venue sample:
+    # per-class budgets keep cross-venue visible.
+    kalshi = [_tk("kalshi", comp="above", strike=70000.0 + 250.0 * i, yes=0.60, no=0.45) for i in range(40)]
+    report = _build(
+        kalshi=kalshi,
+        polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.58, no=0.55)],
+    )
+    cov = {c["candidate_class"]: c for c in report["candidate_generation_coverage"]}
+    assert cov["LONG_ONLY_GUARANTEED_PAYOFF"]["attempted"] > 100
+    assert cov["CROSS_VENUE_THRESHOLD_BASIS"]["attempted"] >= 1
+    assert cov["CROSS_VENUE_THRESHOLD_BASIS"]["generated"] >= 1, "cross-venue must survive the per-class sample"
+
+
 def test_no_trading_auth_or_browser_code_in_structural_module() -> None:
     src = Path("relative_value/crypto_structural_payoff_arb_scout.py").read_text(encoding="utf-8")
     code = re.sub(r'""".*?"""', "", src, flags=re.DOTALL)
@@ -527,3 +894,125 @@ def test_no_trading_auth_or_browser_code_in_structural_module() -> None:
     ]
     for pat in forbidden:
         assert re.search(pat, code, re.IGNORECASE) is None, f"forbidden pattern {pat} in structural module"
+
+
+# ---------------------------------------------------------------------------- #
+# CDNA latest-snapshot loading into the structural scout (closes coverage gap) #
+# ---------------------------------------------------------------------------- #
+FRESH_QTS = "2026-05-30T04:59:50Z"   # 10s before NOW (05:00)
+STALE_QTS = "2026-05-30T04:00:00Z"   # ~1h before NOW -> stale at 60s
+
+
+def _csnap(strike=70000.0, *, dy=0.40, dn=0.62, target=INST, qts=FRESH_QTS, asset="BTC",
+           family="terminal_threshold", ref_start=None, interval=1200):
+    return {"contract_id": f"C-{strike}-{target}", "symbol": f"CDNA-{strike}", "asset": asset,
+            "target_instant_utc": target, "reference_start_utc": ref_start, "interval_length_seconds": interval,
+            "contract_family": family, "comparator": "above", "threshold_or_strike": strike,
+            "display_yes": dy, "display_no": dn, "exchange_fee": 0.01, "technology_fee": 0.01, "quote_timestamp": qts}
+
+
+def _write_latest(tmp_path: Path, rows: list[dict]) -> Path:
+    (tmp_path / "cdna_crypto_latest.json").write_text(
+        json.dumps({"generated_at": NOW.isoformat(), "contracts": rows}), encoding="utf-8")
+    return tmp_path
+
+
+def _build_with_snapshot(tmp_path, *, cdna_rows, kalshi=None, polymarket=None, require_fresh=True, max_age=60.0):
+    _write_latest(tmp_path, cdna_rows)
+    return build_report(
+        assets=["BTC"], operator_risk_mode="aggressive", include_cdna=True,
+        operator_accept_cdna_display_price_risk=True, allow_top_of_book_depth=True, operator_size_cap=10.0,
+        cdna_operator_size_cap=1.0, max_quote_age_seconds=999999.0, min_available_notional=1.0,
+        cdna_timeseries_dir=tmp_path, max_cdna_snapshot_age_seconds=max_age,
+        require_cdna_fresh_for_cdna_candidates=require_fresh, generated_at=NOW,
+        rows_by_asset={"BTC": {"kalshi_rows": kalshi or [], "polymarket_rows": polymarket or [], "cdna_rows": []}},
+    )
+
+
+def _cov(report, klass="CDNA_FILL_FIRST"):
+    return next((c for c in report["candidate_generation_coverage"] if c["candidate_class"] == klass), None)
+
+
+def _cdna_paper(report):
+    return [r for r in report["rows"] if r.get("paper_candidate") and r.get("paper_candidate_class") == "CDNA_FILL_FIRST"]
+
+
+def test_cdna_latest_file_loads_into_structural_scout(tmp_path: Path) -> None:
+    rep = _build_with_snapshot(tmp_path, cdna_rows=[_csnap()])
+    snap = rep["cdna_snapshot_diagnostics"]
+    assert snap["cdna_rows_loaded"] == 1 and snap["cdna_fresh_rows"] == 1 and snap["cdna_injected_rows"] == 1
+    assert rep["load_diagnostics"]["cdna_rows_loaded"] == 1
+    assert rep["cdna_participation"]["cdna_rows_loaded"] == 1
+
+
+def test_fresh_cdna_row_increments_cdna_fill_first_attempted(tmp_path: Path) -> None:
+    rep = _build_with_snapshot(tmp_path, cdna_rows=[_csnap()],
+                               kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.55, no=0.40)])
+    cov = _cov(rep)
+    assert cov is not None and cov["attempted"] >= 1 and cov["generated"] >= 1
+
+
+def test_compatible_cdna_plus_polymarket_threshold_generates_cdna_fill_first(tmp_path: Path) -> None:
+    rep = _build_with_snapshot(tmp_path, cdna_rows=[_csnap(dy=0.40)],
+                               polymarket=[_tk("polymarket", comp="above", strike=70000.0, yes=0.55, no=0.40)])
+    paper = _cdna_paper(rep)
+    assert paper, "expected a CDNA_FILL_FIRST paper candidate vs Polymarket threshold"
+    assert any(l["platform"] == "cdna" for l in paper[0]["basket_legs"])
+    assert any(l["platform"] == "polymarket" for l in paper[0]["basket_legs"])
+    assert paper[0]["candidate_action"] == "FILL_CDNA_FIRST_THEN_HEDGE_EXACT_FILLED_QUANTITY"
+
+
+def test_compatible_cdna_plus_kalshi_threshold_generates_cdna_fill_first(tmp_path: Path) -> None:
+    rep = _build_with_snapshot(tmp_path, cdna_rows=[_csnap(dy=0.40)],
+                               kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.55, no=0.40)])
+    paper = _cdna_paper(rep)
+    assert paper, "expected a CDNA_FILL_FIRST paper candidate vs Kalshi threshold"
+    assert any(l["platform"] == "kalshi" for l in paper[0]["basket_legs"])
+    assert _cov(rep)["paper"] >= 1
+
+
+def test_cdna_stale_row_excluded_and_counted(tmp_path: Path) -> None:
+    rep = _build_with_snapshot(tmp_path, cdna_rows=[_csnap(qts=STALE_QTS)],
+                               kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.55, no=0.40)])
+    snap = rep["cdna_snapshot_diagnostics"]
+    assert snap["cdna_stale_rows"] == 1 and snap["cdna_fresh_rows"] == 0 and snap["cdna_injected_rows"] == 0
+    cov = _cov(rep)
+    assert cov["attempted"] >= 1 and cov["blocked_stale"] >= 1  # present + attempted, excluded as stale
+    assert not _cdna_paper(rep)
+
+
+def test_cdna_terminal_threshold_does_not_match_up_down(tmp_path: Path) -> None:
+    # only an up/down Kalshi partner present; a CDNA terminal-threshold row must not match it.
+    rep = _build_with_snapshot(tmp_path, cdna_rows=[_csnap()],
+                               kalshi=[_tk("kalshi", obs="interval_start_to_end_change", strike=70000.0,
+                                           ref_start=REF, instant=INST, yes=0.50, no=0.50)])
+    assert rep["cdna_participation"]["cdna_terminal_threshold_matches"] == 0
+    for r in rep["rows"]:
+        if any(l["platform"] == "cdna" for l in r.get("basket_legs") or []):
+            assert all(l.get("payoff_observation_type") != "interval_start_to_end_change" for l in r["basket_legs"])
+
+
+def test_cdna_missing_does_not_block_kalshi_polymarket(tmp_path: Path) -> None:
+    # no CDNA dir at all; a normal Kalshi×Polymarket cover must still be generated/priced.
+    rep = build_report(
+        assets=["BTC"], operator_risk_mode="aggressive", include_cdna=True,
+        operator_accept_cdna_display_price_risk=True, allow_top_of_book_depth=True, operator_size_cap=10.0,
+        max_quote_age_seconds=999999.0, min_available_notional=1.0, generated_at=NOW,
+        rows_by_asset={"BTC": {
+            "kalshi_rows": [_tk("kalshi", comp="above", strike=70000.0, yes=0.55, no=0.40)],
+            "polymarket_rows": [_tk("polymarket", comp="above", strike=70000.0, yes=0.42, no=0.55)],
+            "cdna_rows": []}},
+    )
+    assert rep["cdna_snapshot_diagnostics"]["cdna_rows_loaded"] == 0
+    assert any(r.get("net_edge_after_fees") is not None for r in rep["rows"])  # K/P still priced
+
+
+def test_cdna_candidate_is_never_strict_exact_arb(tmp_path: Path) -> None:
+    rep = _build_with_snapshot(tmp_path, cdna_rows=[_csnap(dy=0.40)],
+                               kalshi=[_tk("kalshi", comp="above", strike=70000.0, yes=0.55, no=0.40)])
+    assert rep["strict_exact_arb"] is False
+    for r in rep["rows"]:
+        if any(l["platform"] == "cdna" for l in r.get("basket_legs") or []):
+            assert r.get("strict_exact_arb") is False
+            if r.get("paper_candidate"):
+                assert r["paper_candidate_class"] == "CDNA_FILL_FIRST"
