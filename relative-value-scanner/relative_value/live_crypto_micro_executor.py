@@ -102,9 +102,14 @@ def run_crypto_structural_trigger(
     builder = report_builder or _default_report_builder
     refresher = quote_refresher or _default_quote_refresher
 
+    from relative_value.executable_venue_policy import (
+        normalize_venues, DEFAULT_EXECUTABLE_VENUES, build_adapter_status_report,
+    )
+    exec_venues = normalize_venues(None, default=DEFAULT_EXECUTABLE_VENUES)  # kalshi/polymarket only
     requested_live = bool(live) and not bool(dry_run)
     mode = MODE_LIVE if requested_live else MODE_DRY_RUN
     used_adapters = adapters if adapters is not None else default_adapters(mode=mode)
+    adapter_status = build_adapter_status_report(used_adapters, executable_venues=exec_venues)
 
     params = {
         "min_net_edge": float(min_net_edge), "max_quote_age_ms": float(max_quote_age_ms),
@@ -114,6 +119,8 @@ def run_crypto_structural_trigger(
         "max_orders": int(max_orders), "max_residual_exposure": float(max_residual_exposure),
         "execution_style": str(execution_style), "include_cdna": bool(include_cdna),
         "source_basis_buffer_bps": float(source_basis_buffer_bps),
+        "executable_venues": list(exec_venues),
+        "all_live_adapters_ready": bool(adapter_status.get("all_live_adapters_ready")),
     }
     live_flags = {
         "requested_dry_run": bool(dry_run), "requested_live": bool(live),
@@ -170,6 +177,7 @@ def run_crypto_structural_trigger(
         "triggers_created": len(triggers),
         "triggers_that_would_trade": sum(1 for t in triggers if t["do_trade"]),
         "live_flags": live_flags, "parameters": params,
+        "executable_venues": list(exec_venues), "adapter_status": adapter_status,
         "kill_switch_path": str(kill_switch), "kill_switch_present": kill_switch.exists(),
         "triggers": [{"trigger_id": t["trigger_id"], "asset": t["asset"], "do_trade": t["do_trade"],
                       "do_not_trade_reasons": t["do_not_trade_reasons"], "trigger_dir": t["trigger_dir"],
@@ -382,6 +390,15 @@ def _evaluate_gates(*, candidate, plan, params, live_flags, mode, kill_switch,
         reasons.append("boundary_inclusivity_unvalidated")
     if plan.get("has_cdna_leg"):
         reasons.append("cdna_requires_manual_fill_first_no_confirmed_fill")
+        reasons.append("cdna_no_safe_automated_order_adapter")
+    # Executable-venue policy: only Kalshi/Polymarket are auto-executable.
+    exec_set = {str(v).lower() for v in (params.get("executable_venues") or ("kalshi", "polymarket"))}
+    plan_platforms = [str(lp.get("platform") or "").lower() for lp in (plan.get("legs") or plan.get("ordered_legs") or [])]
+    if any(p and p not in exec_set for p in plan_platforms):
+        reasons.append("non_executable_venue_leg")
+    # Live adapters must be real (client injected + preflight ok); a stub fails closed.
+    if mode == MODE_LIVE and not params.get("all_live_adapters_ready"):
+        reasons.append("live_adapter_not_implemented")
     return sorted(set(reasons))
 
 

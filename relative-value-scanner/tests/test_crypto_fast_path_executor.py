@@ -313,11 +313,15 @@ def _write_cdna_latest(tmp_path: Path, qts: str) -> Path:
 
 
 def _build_cdna_universe(tmp_path: Path, *, qts: str, extra_rows=None):
+    # exclude_non_executable=False so CDNA is WATCHED here (scan/research mode) — this
+    # exercises the CDNA quote source + staleness in the hot loop. The live default
+    # (exclude=True) excludes CDNA from the executable universe (see Part-B tests).
     cdir = _write_cdna_latest(tmp_path, qts)
     rows = [_cdna_partner_row()] + list(extra_rows or [])
     build_active_candidate_universe(
         assets=["BTC"], report_builder=lambda **k: {"generated_at": CDNA_NOW.isoformat(), "rows": rows},
         cdna_timeseries_dir=cdir, max_cdna_snapshot_age_seconds=60, min_net_edge=0.10,
+        exclude_non_executable_from_live_universe=False,
         output_path=tmp_path / "ucdna.json", generated_at=CDNA_NOW)
     return tmp_path / "ucdna.json", cdir
 
@@ -362,3 +366,156 @@ def test_cdna_missing_does_not_block_kalshi_polymarket(tmp_path: Path) -> None:
     # and with no CDNA configured at all.
     summary2 = _run(tmp_path)
     assert summary2["decisions"] == 1 and summary2["cdna"]["cdna_supplied"] is False
+
+
+# ---------------------------------------------------------------------------- #
+# Part B: executable-only universe + plausible K/P templates                   #
+# ---------------------------------------------------------------------------- #
+def _kp_template_row(*, net=0.05, paper=False, short=False, missing=False,
+                     ct="CROSS_VENUE_THRESHOLD_BASIS", dedup="R1"):
+    legs = _slegs()
+    if missing:
+        for leg in legs:
+            leg["ask"] = None
+            leg["all_in_cost"] = None
+        net = None
+    return {"asset": "BTC", "candidate_type": ct, "target_instant_utc": "2026-05-30T17:00:00+00:00", "iteration_timestamp": "20260530T160000Z",
+            "payoff_vector": [1, 1, 1], "min_payoff": 1.0, "net_edge_after_fees": net, "adjusted_net_edge_after_fees": net,
+            "total_cost_after_fees": (None if net is None else round(1.0 - net, 4)), "tradable_buy_only": not short,
+            "requires_short_or_sell": short, "paper_candidate": paper,
+            "paper_candidate_class": "OPERATOR_ACCEPTED_RISK" if paper else "NONE",
+            "assumptions_accepted": [], "source_indexes": ["brti"], "hard_blockers": [], "dedup_key": dedup,
+            "basket_legs": legs}
+
+
+def _templates_universe(tmp_path, rows, **kw):
+    return build_active_candidate_universe(
+        assets=["BTC"], report_builder=lambda **k: {"rows": rows, "generated_at": "t"}, generated_at=BASE,
+        output_path=tmp_path / "tu.json", **kw)
+
+
+def test_cdna_candidate_excluded_from_executable_universe_with_reason(tmp_path: Path) -> None:
+    cdir = _write_cdna_latest(tmp_path, (CDNA_NOW - timedelta(seconds=10)).isoformat())
+    u = build_active_candidate_universe(
+        assets=["BTC"], report_builder=lambda **k: {"rows": [_cdna_partner_row()], "generated_at": CDNA_NOW.isoformat()},
+        cdna_timeseries_dir=cdir, max_cdna_snapshot_age_seconds=60, min_net_edge=0.10, generated_at=CDNA_NOW,
+        min_template_quality="compatible_payoff", include_near_miss_templates=True, include_missing_quote_templates=True,
+        output_path=tmp_path / "u.json")  # exclude_non_executable defaults True
+    assert u["excluded_cdna_candidate_count"] >= 1 and u["excluded_cdna_reason"] == "no_safe_order_api"
+    assert u["non_executable_scan_candidate_count"] >= 1
+    ne = u["non_executable_candidates"][0]
+    assert ne["execution_status"] == "NO_SAFE_ORDER_API"
+    assert ne["do_not_trade_reason"] == "cdna_no_safe_automated_order_adapter"
+    assert all(l["platform"] != "cdna" for c in u["candidates"] for l in c["legs"])  # no CDNA in executable universe
+
+
+def test_kp_near_miss_template_enters_executable_universe(tmp_path: Path) -> None:
+    u = _templates_universe(tmp_path, [_kp_template_row(net=0.05)], min_net_edge=0.10,
+                            min_template_quality="priced_only", include_near_miss_templates=True,
+                            near_miss_net_edge_threshold=0.10)
+    assert u["executable_universe_candidate_count"] >= 1 and u["zero_universe_reason"] is None
+    # without near-miss inclusion, the below-threshold priced row is excluded.
+    u2 = _templates_universe(tmp_path, [_kp_template_row(net=0.05)], min_net_edge=0.10,
+                             min_template_quality="priced_only", include_near_miss_templates=False)
+    assert u2["executable_universe_candidate_count"] == 0
+
+
+def test_missing_quote_kp_template_enters_universe_only_with_flag(tmp_path: Path) -> None:
+    u = _templates_universe(tmp_path, [_kp_template_row(missing=True)], min_net_edge=0.10,
+                            min_template_quality="compatible_payoff", include_missing_quote_templates=True)
+    assert u["executable_universe_candidate_count"] >= 1
+    u2 = _templates_universe(tmp_path, [_kp_template_row(missing=True)], min_net_edge=0.10,
+                             min_template_quality="compatible_payoff", include_missing_quote_templates=False)
+    assert u2["executable_universe_candidate_count"] == 0
+
+
+def test_short_required_row_never_enters_executable_universe(tmp_path: Path) -> None:
+    u = _templates_universe(tmp_path, [_kp_template_row(net=0.20, short=True)], min_net_edge=0.10,
+                            min_template_quality="compatible_payoff", include_near_miss_templates=True)
+    assert u["executable_universe_candidate_count"] == 0
+    assert u["zero_universe_reason"] == "all_templates_require_shorting"
+
+
+def test_zero_universe_has_explicit_reason(tmp_path: Path) -> None:
+    u = _templates_universe(tmp_path, [], min_net_edge=0.10, min_template_quality="compatible_payoff")
+    assert u["executable_universe_candidate_count"] == 0
+    assert u["zero_universe_reason"] == "no_kalshi_polymarket_legs_available"
+
+
+def test_universe_watcher_has_legs_when_kp_templates_exist(tmp_path: Path) -> None:
+    u = _templates_universe(tmp_path, [_kp_template_row(net=0.18, paper=True)], min_net_edge=0.10,
+                            min_template_quality="compatible_payoff", include_near_miss_templates=True)
+    assert u["watched_leg_count"] >= 2
+    assert u["watched_leg_count_by_platform"].get("kalshi", 0) >= 1
+    assert u["watched_leg_count_by_platform"].get("polymarket", 0) >= 1
+
+
+# ---------------------------------------------------------------------------- #
+# Part C: live Kalshi/Polymarket-only execution + adapter status               #
+# ---------------------------------------------------------------------------- #
+def _ready_adapters():
+    from relative_value.live_crypto_execution_adapters import default_adapters
+
+    class _Cl:
+        def place_limit_buy(self, r): return {"status": "ACCEPTED", "order_id": "o", "filled_quantity": 0.0, "avg_fill_price": None}
+        def get_order_status(self, o): return {"filled_quantity": 0.0, "avg_fill_price": None}
+        def get_fills(self, o): return []
+        def cancel_order(self, o): return {"status": "canceled"}
+    a = default_adapters(mode="live")
+    a["kalshi"] = KalshiLiveAdapter(mode="live", client=_Cl())
+    a["polymarket"] = PolymarketLiveAdapter(mode="live", client=_Cl())
+    return a
+
+
+def _live_kw(**extra):
+    return dict(dry_run=False, live=True, env=ARMED_ENV, i_understand_this_places_real_orders=True,
+                execution_style="parallel_protected_limit", **extra)
+
+
+def test_live_mode_fails_closed_on_stub_adapter(tmp_path: Path) -> None:
+    summary = _run(tmp_path, universe=_universe(tmp_path), **_live_kw())  # default stub adapters
+    d = _decision(tmp_path / "fp")
+    assert d["do_trade"] is False and "live_adapter_not_implemented" in d["do_not_trade_reasons"]
+    assert summary["adapter_status"]["all_live_adapters_ready"] is False
+
+
+def test_live_ready_adapters_kp_only_builds_protected_limit_intents(tmp_path: Path) -> None:
+    summary = _run(tmp_path, universe=_universe(tmp_path), adapters=_ready_adapters(), **_live_kw())
+    d = _decision(tmp_path / "fp")
+    assert "live_adapter_not_implemented" not in d["do_not_trade_reasons"]
+    assert summary["adapter_status"]["all_live_adapters_ready"] is True
+    assert d["intended_orders"]  # K/P-only candidate proceeds to intended protected orders
+    assert all(o["order_type"] == "PROTECTED_LIMIT" for o in d["intended_orders"])  # protected limit only
+    assert all(o["side"] == "BUY" for o in d["intended_orders"])  # no shorting, BUY only
+    assert all(o["order_type"] != "MARKET" for o in d["intended_orders"])  # no market orders
+
+
+def test_cdna_leg_blocks_live_execution(tmp_path: Path) -> None:
+    uni, cdir = _build_cdna_universe(tmp_path, qts=(CDNA_NOW - timedelta(seconds=10)).isoformat())
+    _run(tmp_path, universe=uni, refresher=_fresh, clock=lambda: CDNA_NOW, cdna_timeseries_dir=cdir,
+         max_cdna_snapshot_age_seconds=60, adapters=_ready_adapters(), **_live_kw())
+    cdna_d = [d for d in _all_decisions(tmp_path / "fp") if d["candidate_type"] == "CDNA_FILL_FIRST"]
+    assert cdna_d and cdna_d[0]["do_trade"] is False
+    assert "cdna_no_safe_automated_order_adapter" in cdna_d[0]["do_not_trade_reasons"]
+
+
+def test_live_mode_fails_without_flags(tmp_path: Path) -> None:
+    # dry-run (default) never trades even with ready adapters.
+    summary = _run(tmp_path, universe=_universe(tmp_path), adapters=_ready_adapters())
+    d = _decision(tmp_path / "fp")
+    assert d["do_trade"] is False
+    assert "dry_run_default_no_live_orders" in d["do_not_trade_reasons"]
+
+
+def test_live_mode_fails_if_min_edge_below_floor(tmp_path: Path) -> None:
+    summary = _run(tmp_path, universe=_universe(tmp_path), adapters=_ready_adapters(),
+                   min_net_edge=0.05, **_live_kw())
+    d = _decision(tmp_path / "fp")
+    assert d["do_trade"] is False and "min_net_edge_below_required_floor_0.10" in d["do_not_trade_reasons"]
+
+
+def test_live_mode_fails_if_quote_stale(tmp_path: Path) -> None:
+    summary = _run(tmp_path, universe=_universe(tmp_path), adapters=_ready_adapters(), refresher=_stale,
+                   max_quote_age_ms=750.0, **_live_kw())
+    d = _decision(tmp_path / "fp")
+    assert d["do_trade"] is False and "quote_age_exceeds_max" in d["do_not_trade_reasons"]

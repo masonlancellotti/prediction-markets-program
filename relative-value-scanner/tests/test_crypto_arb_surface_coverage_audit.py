@@ -169,3 +169,18 @@ def test_cdna_attempted_but_zero_generated_is_expected_zero(tmp_path: Path) -> N
     m = _bytype(rep)["CDNA_FILL_FIRST"]
     assert m["coverage_status"] == "EXPECTED_ZERO" and m["is_this_expected"] is True
     assert "CDNA_FILL_FIRST" not in rep["gaps"]
+
+
+def test_cdna_live_executable_is_scan_only_not_gap(tmp_path: Path) -> None:
+    # Scan coverage and live-executable coverage are distinct. CDNA is scanned but has
+    # no safe order API -> live-executable status SCAN_ONLY (never a GAP).
+    d = _iter_report(tmp_path, coverage=_cov(
+        CDNA_FILL_FIRST={"attempted": 133, "generated": 0, "priced": 0, "paper": 0}))
+    rep = build_crypto_arb_surface_coverage_audit(latest_iteration_dir=d, include_cdna=True)
+    lec = rep["live_executable_coverage"]
+    assert lec["live_executes_cdna"] is False
+    assert lec["cdna_live_executable_status"] == "CDNA_SCAN_ONLY_NO_SAFE_ORDER_API"
+    assert lec["reason"] == "no_safe_order_api"
+    assert lec["kalshi_polymarket_executable_coverage"] in ("OK", "GAP", "NEEDS_DATA")
+    m = _bytype(rep)["CDNA_FILL_FIRST"]
+    assert m["live_executable_status"] == "CDNA_SCAN_ONLY_NO_SAFE_ORDER_API"

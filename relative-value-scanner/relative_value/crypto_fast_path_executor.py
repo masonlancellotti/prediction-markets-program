@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -62,11 +63,18 @@ def build_active_candidate_universe(
     cdna_evidence_dir: Path | None = None, cdna_timeseries_dir: Path | None = None,
     max_cdna_snapshot_age_seconds: float = 60.0, require_cdna_fresh_for_cdna_candidates: bool = True,
     allow_top_of_book_depth: bool = True,
+    executable_venues: Any = None, scan_venues: Any = None,
+    exclude_non_executable_from_live_universe: bool = True,
+    include_near_miss_templates: bool = False, near_miss_net_edge_threshold: float = 0.10,
+    include_missing_quote_templates: bool = False, min_template_quality: str = "paper_only",
     operator_size_cap: float = 10.0, cdna_operator_size_cap: float = 1.0, max_basket_legs: int = 12,
     source_basis_buffer_bps: float = 0.0, lookahead_hours: float = 8.0, min_net_edge: float = 0.0,
     max_candidates: int = 50, output_path: Path | None = None, generated_at: datetime | None = None,
     report_builder: Callable[..., dict[str, Any]] | None = None, http_get: Any = None,
 ) -> dict[str, Any]:
+    from relative_value.executable_venue_policy import normalize_venues, DEFAULT_EXECUTABLE_VENUES, DEFAULT_SCAN_VENUES
+    exec_venues = normalize_venues(executable_venues, default=DEFAULT_EXECUTABLE_VENUES)
+    scan_v = normalize_venues(scan_venues, default=DEFAULT_SCAN_VENUES)
     gen = _now(generated_at)
     builder = report_builder or _default_report_builder
     report = builder(
@@ -78,19 +86,22 @@ def build_active_candidate_universe(
         generated_at=gen, refresh_kalshi_polymarket=True, http_get=http_get,
     )
     rows = report.get("rows") or []
-    buy_only = [
-        r for r in rows
-        if r.get("tradable_buy_only", True) and not r.get("requires_short_or_sell")
-        and _opt_f(r.get("net_edge_after_fees")) is not None
-        and _opt_f(r.get("net_edge_after_fees")) >= float(min_net_edge)
-    ]
-    buy_only.sort(key=lambda r: _opt_f(r.get("net_edge_after_fees")) or -1e9, reverse=True)
-    candidates = [_universe_candidate(r) for r in buy_only[: int(max_candidates)]]
 
-    # CDNA harmonic terminal-threshold candidates from the latest saved snapshot
-    # (file only). Matched to Kalshi/Polymarket partners by target_instant_utc/strike,
-    # NOT interval length. Display-price / fill-first; size-capped; never pre-fill arb.
+    # Executable Kalshi/Polymarket templates — NOT only already-paper rows, so the
+    # fast path always has legs to watch. Quality bar + near-miss/missing-quote flags
+    # widen the net; CDNA/short/barrier/expired rows are excluded (and counted).
+    exec_rows, template_diag = _select_executable_templates(
+        rows, executable_venues=exec_venues, min_template_quality=str(min_template_quality),
+        min_net_edge=float(min_net_edge), include_near_miss=bool(include_near_miss_templates),
+        near_miss_threshold=float(near_miss_net_edge_threshold),
+        include_missing_quote=bool(include_missing_quote_templates), now=gen)
+    executable_candidates = [_universe_candidate(r) for r in exec_rows[: int(max_candidates)]]
+
+    # CDNA harmonic terminal-threshold candidates from the latest saved snapshot (file
+    # only). CDNA is SCAN-ONLY: it never enters the executable live universe — it is
+    # surfaced as a non-executable scan candidate and counted, never watched for live.
     cdna_diagnostics: dict[str, Any] = {"cdna_supplied": False, "cdna_missing_reason": "cdna_timeseries_dir_not_provided"}
+    cdna_scan_candidates: list[dict[str, Any]] = []
     if cdna_timeseries_dir is not None or cdna_evidence_dir is not None:
         from relative_value.cdna_fast_snapshot import load_latest_cdna_snapshot, build_cdna_fill_first_candidates
         snap = load_latest_cdna_snapshot(timeseries_dir=cdna_timeseries_dir, evidence_dir=cdna_evidence_dir, now=gen)
@@ -99,32 +110,64 @@ def build_active_candidate_universe(
             max_age_seconds=float(max_cdna_snapshot_age_seconds), cdna_operator_size_cap=float(cdna_operator_size_cap),
             operator_risk_mode=operator_risk_mode, require_fresh=bool(require_cdna_fresh_for_cdna_candidates),
             min_net_edge=float(min_net_edge))
-        cdna_to_add = [c for c in gen_out["candidates"]
-                       if _opt_f(c.get("net_edge_after_fees")) is not None
-                       and _opt_f(c.get("net_edge_after_fees")) >= float(min_net_edge)
-                       and not c.get("hard_blockers") and not c.get("requires_short_or_sell")]
-        candidates = candidates + cdna_to_add[: int(max_candidates)]
+        cdna_scan_candidates = [
+            {**c, "execution_status": "NO_SAFE_ORDER_API", "executable": False,
+             "do_not_trade_reason": "cdna_no_safe_automated_order_adapter"}
+            for c in gen_out["candidates"]
+            if _opt_f(c.get("net_edge_after_fees")) is not None
+            and _opt_f(c.get("net_edge_after_fees")) >= float(min_net_edge)
+            and not c.get("hard_blockers") and not c.get("requires_short_or_sell")]
         cdna_diagnostics = {k: v for k, v in gen_out.items() if k != "candidates"}
         cdna_diagnostics.update({
             "cdna_supplied": bool(snap.get("cdna_supplied")), "cdna_rows_loaded": snap.get("rows_loaded"),
             "cdna_latest_snapshot_generated_at": snap.get("generated_at"), "cdna_missing_reason": snap.get("missing_reason"),
-            "cdna_candidates_added_to_universe": len(cdna_to_add[: int(max_candidates)]),
             "require_cdna_fresh_for_cdna_candidates": bool(require_cdna_fresh_for_cdna_candidates),
             "max_cdna_snapshot_age_seconds": float(max_cdna_snapshot_age_seconds),
         })
 
+    # The live universe is executable-only by default; CDNA + other non-executable
+    # scan candidates are surfaced separately and never make the bot wait on a fill.
+    non_executable_candidates = cdna_scan_candidates
+    if exclude_non_executable_from_live_universe:
+        candidates = executable_candidates
+    else:
+        candidates = executable_candidates + non_executable_candidates
+    # CDNA excluded from the executable universe = snapshot fill-first candidates +
+    # any scout row carrying a CDNA leg.
+    excluded_cdna_count = len(cdna_scan_candidates) + int(
+        (template_diag.get("excluded_by_reason") or {}).get("cdna_leg", 0))
+
     watched: dict[str, dict[str, Any]] = {}
-    for c in candidates:
+    for c in candidates:  # watch legs of the live universe (executable-only when excluding)
         for leg in c["legs"]:
             watched.setdefault(leg["leg_key"], {k: leg[k] for k in (
                 "leg_key", "platform", "market_id_or_ticker", "side", "token_id", "contract_id",
                 "condition_id", "reference_ask", "fee", "available_size_or_cap")})
+    watched_legs = list(watched.values())
+    by_platform, by_side = _watched_breakdown(watched_legs)
+    zero_reason = None
+    if not executable_candidates:
+        zero_reason = _zero_universe_reason(rows, template_diag, exec_venues)
+
     universe = {
         "schema_kind": UNIVERSE_SCHEMA_KIND, "generated_at": gen.isoformat(),
         "min_net_edge_at_discovery": float(min_net_edge), "assets": [a.strip().upper() for a in assets if a.strip()],
-        "candidate_count": len(candidates), "watched_leg_count": len(watched),
+        "candidate_count": len(candidates),
+        "executable_universe_candidate_count": len(executable_candidates),
+        "non_executable_scan_candidate_count": len(non_executable_candidates),
+        "excluded_cdna_candidate_count": excluded_cdna_count,
+        "excluded_cdna_reason": ("no_safe_order_api" if excluded_cdna_count else None),
+        "watched_leg_count": len(watched_legs),
+        "watched_leg_count_by_platform": by_platform,
+        "watched_leg_count_by_side": by_side,
+        "zero_universe_reason": zero_reason,
         "cdna_candidate_count": sum(1 for c in candidates if _has_cdna_leg(c)),
-        "candidates": candidates, "watched_legs": list(watched.values()),
+        "executable_venues": list(exec_venues), "scan_venues": list(scan_v),
+        "exclude_non_executable_from_live_universe": bool(exclude_non_executable_from_live_universe),
+        "candidates": candidates, "watched_legs": watched_legs,
+        "non_executable_candidates": non_executable_candidates,
+        "executable_template_diagnostics": template_diag,
+        "cdna_scan_only": True, "cdna_executable": False,
         "cdna_diagnostics": cdna_diagnostics,
         "discovery_params": {
             "assets": [a.strip().upper() for a in assets if a.strip()], "operator_risk_mode": operator_risk_mode,
@@ -132,11 +175,18 @@ def build_active_candidate_universe(
             "cdna_timeseries_dir": str(cdna_timeseries_dir) if cdna_timeseries_dir else None,
             "max_cdna_snapshot_age_seconds": float(max_cdna_snapshot_age_seconds),
             "require_cdna_fresh_for_cdna_candidates": bool(require_cdna_fresh_for_cdna_candidates),
+            "executable_venues": list(exec_venues), "scan_venues": list(scan_v),
+            "exclude_non_executable_from_live_universe": bool(exclude_non_executable_from_live_universe),
+            "include_near_miss_templates": bool(include_near_miss_templates),
+            "near_miss_net_edge_threshold": float(near_miss_net_edge_threshold),
+            "include_missing_quote_templates": bool(include_missing_quote_templates),
+            "min_template_quality": str(min_template_quality),
             "operator_size_cap": float(operator_size_cap), "cdna_operator_size_cap": float(cdna_operator_size_cap),
             "source_basis_buffer_bps": float(source_basis_buffer_bps), "lookahead_hours": float(lookahead_hours),
             "min_net_edge": float(min_net_edge), "max_candidates": int(max_candidates),
         },
-        "safety": {"diagnostic_only": True, "discovery_pass_runs_full_scout": True, "network_access_in_hot_path": False},
+        "safety": {"diagnostic_only": True, "discovery_pass_runs_full_scout": True, "network_access_in_hot_path": False,
+                   "cdna_excluded_from_executable_universe": True},
     }
     if output_path is not None:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -171,6 +221,125 @@ def _universe_candidate(row: dict[str, Any]) -> dict[str, Any]:
         "hard_blockers": list(row.get("hard_blockers") or []), "legs": legs,
         "basket_legs": row.get("basket_legs") or [],  # kept for post-decision plan build
     }
+
+
+_TEMPLATE_QUALITY_RANK = {"paper_only": 0, "priced_only": 1, "compatible_payoff": 2}
+
+
+def _select_executable_templates(
+    rows: list[dict[str, Any]], *, executable_venues, min_template_quality: str, min_net_edge: float,
+    include_near_miss: bool, near_miss_threshold: float, include_missing_quote: bool, now: datetime,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Pick plausible buy-only Kalshi/Polymarket templates (not only already-paper rows)
+    so the fast path always has executable legs to watch. CDNA/short/barrier/expired
+    rows are excluded and counted by reason for ``zero_universe_reason``."""
+    exec_set = {str(v).lower() for v in executable_venues}
+    max_rank = _TEMPLATE_QUALITY_RANK.get(str(min_template_quality), 0)
+    included: list[tuple[str, dict[str, Any]]] = []
+    exclusion: Counter = Counter()
+    tier_counts: Counter = Counter()
+    kp_legs_present = 0
+    for r in rows:
+        for leg in r.get("basket_legs") or []:
+            if str(leg.get("platform") or "").lower() in exec_set:
+                kp_legs_present += 1
+        include, tier, reason = _template_decision(
+            r, exec_set=exec_set, max_rank=max_rank, min_net_edge=min_net_edge,
+            include_near_miss=include_near_miss, near_miss_threshold=near_miss_threshold,
+            include_missing_quote=include_missing_quote, now=now)
+        if include:
+            included.append((tier, r))
+            tier_counts[tier] += 1
+        elif reason:
+            exclusion[reason] += 1
+    included.sort(key=lambda it: (1 if it[1].get("paper_candidate") else 0,
+                                  _opt_f(it[1].get("net_edge_after_fees")) if _opt_f(it[1].get("net_edge_after_fees")) is not None else -1e9),
+                  reverse=True)
+    diag = {"included_by_tier": dict(tier_counts), "excluded_by_reason": dict(exclusion),
+            "kp_legs_present": kp_legs_present, "rows_scanned": len(rows), "min_template_quality": str(min_template_quality)}
+    return [r for _t, r in included], diag
+
+
+def _template_decision(r, *, exec_set, max_rank, min_net_edge, include_near_miss, near_miss_threshold,
+                       include_missing_quote, now) -> tuple[bool, str | None, str | None]:
+    if not r.get("tradable_buy_only", False) or r.get("requires_short_or_sell"):
+        return False, None, "short_or_not_buy_only"
+    legs = r.get("basket_legs") or []
+    if not legs:
+        return False, None, "no_legs"
+    plats = [str(l.get("platform") or "").lower() for l in legs]
+    if any(p == "cdna" for p in plats):
+        return False, None, "cdna_leg"
+    if any(p not in exec_set for p in plats):
+        return False, None, "non_executable_venue"
+    ctype = str(r.get("candidate_type") or "").lower()
+    fam = str(r.get("contract_family") or "").lower()
+    if "barrier" in ctype or "barrier" in fam or r.get("lane") == "barrier" \
+            or any("barrier" in str(b) for b in (r.get("hard_blockers") or [])):
+        return False, None, "barrier_incompatible"
+    if _template_expired(r, now):
+        return False, None, "expired_or_stale"
+    if r.get("min_payoff") is None or not r.get("payoff_vector"):
+        return False, None, "no_payoff_structure"
+    net = _opt_f(r.get("net_edge_after_fees"))
+    if r.get("paper_candidate"):
+        tier, include, reason = "paper_only", True, None
+    elif net is not None:
+        tier = "priced_only"
+        if net >= min_net_edge:
+            include, reason = True, None
+        elif include_near_miss and net >= -abs(near_miss_threshold):
+            include, reason = True, None
+        else:
+            include, reason = False, "priced_below_threshold_and_not_near_miss"
+    else:
+        tier = "compatible_payoff"
+        include = bool(include_missing_quote)
+        reason = None if include else "missing_quote_not_included"
+    if include and _TEMPLATE_QUALITY_RANK.get(tier, 0) > max_rank:
+        return False, tier, "below_min_template_quality"
+    return include, tier, reason
+
+
+def _template_expired(r: dict[str, Any], now: datetime) -> bool:
+    ts = r.get("target_instant_utc")
+    if not isinstance(ts, str) or not ts.strip():
+        return False
+    try:
+        dt = datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt <= now
+
+
+def _zero_universe_reason(rows, diag, exec_venues) -> str:
+    if not rows or int(diag.get("kp_legs_present", 0)) == 0:
+        return "no_kalshi_polymarket_legs_available"
+    excl = dict(diag.get("excluded_by_reason") or {})
+    if not excl:
+        return "no_compatible_kp_payoff_templates"
+    mapping = {
+        "cdna_leg": "all_templates_require_non_executable_venue",
+        "non_executable_venue": "all_templates_require_non_executable_venue",
+        "short_or_not_buy_only": "all_templates_require_shorting",
+        "expired_or_stale": "all_templates_expired_or_stale",
+        "priced_below_threshold_and_not_near_miss": "filters_too_strict_for_min_template_quality",
+        "below_min_template_quality": "filters_too_strict_for_min_template_quality",
+        "missing_quote_not_included": "filters_too_strict_for_min_template_quality",
+    }
+    dominant = max(excl.items(), key=lambda kv: kv[1])[0]
+    return mapping.get(dominant, "no_compatible_kp_payoff_templates")
+
+
+def _watched_breakdown(watched_legs: list[dict[str, Any]]) -> tuple[dict[str, int], dict[str, int]]:
+    by_platform: Counter = Counter()
+    by_side: Counter = Counter()
+    for leg in watched_legs:
+        by_platform[str(leg.get("platform") or "").lower()] += 1
+        by_side[str(leg.get("side") or "").upper()] += 1
+    return dict(by_platform), dict(by_side)
 
 
 def _partner_terminal_legs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -246,6 +415,7 @@ def run_crypto_fast_path_trigger(
     max_cdna_snapshot_age_seconds: float = 60.0,
     require_cdna_fresh_for_cdna_candidates: bool = True,
     cdna_operator_size_cap: float = 1.0,
+    executable_venues: Any = None,
     discovery_fn: Callable[[], dict[str, Any]] | None = None,
     adapters: dict[str, Any] | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -285,12 +455,19 @@ def run_crypto_fast_path_trigger(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    from relative_value.executable_venue_policy import (
+        normalize_venues, DEFAULT_EXECUTABLE_VENUES, build_adapter_status_report,
+    )
     universe = _read_json(Path(candidate_universe)) or {}
     candidates = universe.get("candidates") or []
     watched = universe.get("watched_legs") or []
+    exec_venues = normalize_venues(
+        executable_venues if executable_venues is not None else universe.get("executable_venues"),
+        default=DEFAULT_EXECUTABLE_VENUES)
     requested_live = bool(live) and not bool(dry_run)
     mode = MODE_LIVE if requested_live else MODE_DRY_RUN
     used_adapters = adapters if adapters is not None else default_adapters(mode=mode)
+    adapter_status = build_adapter_status_report(used_adapters, executable_venues=exec_venues)
 
     params = {
         "min_net_edge": float(min_net_edge), "max_decision_age_ms": float(max_decision_age_ms),
@@ -303,6 +480,8 @@ def run_crypto_fast_path_trigger(
         "source_basis_buffer_bps": float(source_basis_buffer_bps),
         "source_basis_buffer_edge": round(float(source_basis_buffer_bps) / 10000.0, 8),
         "refresh_universe_every_seconds": float(refresh_universe_every_seconds),
+        "executable_venues": list(exec_venues),
+        "all_live_adapters_ready": bool(adapter_status.get("all_live_adapters_ready")),
     }
     live_flags = {
         "requested_dry_run": bool(dry_run), "requested_live": bool(live),
@@ -317,6 +496,7 @@ def run_crypto_fast_path_trigger(
     tick_metrics: list[dict[str, Any]] = []
     recognized_first: dict[str, datetime] = {}
     discovery_runs = 0
+    best_watched_edge: dict[str, float | None] = {"value": None}
     cdna_excluded_reasons: dict[str, int] = {}
     cdna_excluded_ids: set[str] = set()
     last_discovery_at = now_fn()  # the loaded universe file is the t0 discovery
@@ -364,6 +544,11 @@ def run_crypto_fast_path_trigger(
 
         for cand in candidates:
             rec = _recompute_edge_from_cache(cand, quote_cache, params)
+            # Track the best executable (K/P-only) watched edge for the run summary.
+            edge = rec.get("net_edge_after_fees")
+            if edge is not None and not _has_cdna_leg(cand) and (
+                    best_watched_edge["value"] is None or edge > best_watched_edge["value"]):
+                best_watched_edge["value"] = edge
             # CDNA-involved candidate blocked by a stale/missing snapshot: record the
             # reason and exclude it. Kalshi/Polymarket-only candidates are untouched.
             if _has_cdna_leg(cand):
@@ -390,10 +575,20 @@ def run_crypto_fast_path_trigger(
         if tick < int(iterations) - 1:
             sleeper(float(quote_loop_interval_ms) / 1000.0)
 
+    executable_universe = [c for c in candidates if not _has_cdna_leg(c)
+                           and all(str(l.get("platform") or "").lower() in {v.lower() for v in exec_venues}
+                                   for l in c.get("legs") or [])]
+    zero_universe_reason = universe.get("zero_universe_reason")
+    if not executable_universe and zero_universe_reason is None:
+        zero_universe_reason = "no_executable_kp_candidates_in_universe"
     summary = {
         "schema_kind": FASTPATH_SCHEMA_KIND, "generated_at": now_fn().isoformat(),
         "candidate_universe": str(candidate_universe), "universe_candidate_count": len(candidates),
+        "executable_universe_candidate_count": len(executable_universe),
+        "non_executable_scan_candidate_count": len(universe.get("non_executable_candidates") or []),
         "watched_leg_count": len(watched), "mode": mode, "quote_source": str(quote_source),
+        "executable_venues": list(exec_venues), "adapter_status": adapter_status,
+        "zero_universe_reason": zero_universe_reason, "best_watched_edge": best_watched_edge["value"],
         "live_flags": live_flags, "parameters": params,
         "ticks": int(max(1, iterations)), "decisions": len(decisions),
         "discovery_runs_during_loop": discovery_runs,
@@ -575,8 +770,19 @@ def _fast_gates(cand, rec, params, live_flags, mode, kill_switch, decision_age_m
     boundary_risk, _ = _boundary_inclusivity_risk(cand.get("basket_legs") or [])
     if boundary_risk:
         reasons.append("boundary_inclusivity_unvalidated")
-    if any(str(l.get("platform") or "").lower() == "cdna" for l in cand.get("legs") or []):
+    # Executable-venue policy: only Kalshi/Polymarket can be auto-executed. A CDNA leg
+    # has no safe automated order API; any other off-list venue is scan-only. CDNA/non-
+    # executable legs block ONLY their own candidate — never Kalshi/Polymarket ones.
+    exec_set = {str(v).lower() for v in (params.get("executable_venues") or ("kalshi", "polymarket"))}
+    leg_platforms = [str(l.get("platform") or "").lower() for l in cand.get("legs") or []]
+    if any(p == "cdna" for p in leg_platforms):
         reasons.append("cdna_requires_manual_fill_first_no_confirmed_fill")
+        reasons.append("cdna_no_safe_automated_order_adapter")
+    if any(p not in exec_set for p in leg_platforms):
+        reasons.append("non_executable_venue_leg")
+    # Live adapters must be real (a client injected + preflight ok). A stub fails closed.
+    if mode == MODE_LIVE and not params.get("all_live_adapters_ready"):
+        reasons.append("live_adapter_not_implemented")
     # Hard live caps.
     if params["max_total_notional"] > MAX_TOTAL_NOTIONAL_HARD_CAP:
         reasons.append("max_total_notional_exceeds_cap_30")

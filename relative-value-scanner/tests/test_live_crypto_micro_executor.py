@@ -112,6 +112,15 @@ def _armed_adapters(kalshi_client, poly_client):
             "cdna": CdnaManualFillFirstAdapter(mode="live")}
 
 
+def test_live_fails_closed_on_stub_adapter(tmp_path: Path) -> None:
+    # default (stub) adapters -> live must fail closed (no credentialed client).
+    summary, out = _run(tmp_path, candidates=[_candidate()], dry_run=False, live=True, i_understand=True, env=ARMED_ENV)
+    tr = _trigger(out)
+    assert tr["do_trade"] is False and "live_adapter_not_implemented" in tr["do_not_trade_reasons"]
+    assert summary["adapter_status"]["all_live_adapters_ready"] is False
+    assert summary["adapter_status"]["cdna_adapter_status"] == "NO_SAFE_ORDER_API"
+
+
 # ---------------------------------------------------------------------------- #
 # Trigger / gate behavior                                                      #
 # ---------------------------------------------------------------------------- #

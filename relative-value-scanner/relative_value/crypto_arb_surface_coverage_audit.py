@@ -51,6 +51,7 @@ _CANDIDATE_TYPES: list[dict[str, Any]] = [
 
 _PLATFORM_PAIRS = ("Kalshi×Polymarket", "Kalshi×CDNA", "Polymarket×CDNA", "Kalshi×Polymarket×CDNA")
 _CONTRACT_FAMILIES = ("terminal_threshold", "terminal_range", "directional_return", "barrier_touch")
+_CT_BY_NAME = {m["candidate_type"]: m for m in _CANDIDATE_TYPES}
 
 
 # ---------------------------------------------------------------------------- #
@@ -99,6 +100,24 @@ def build_crypto_arb_surface_coverage_audit(
             top_blocker=top_blocker,
         ))
 
+    # Live-executable coverage is a SEPARATE view from scan coverage. CDNA is scanned
+    # but has no safe automated order API, so its live-executable status is SCAN_ONLY
+    # (never a GAP). Kalshi/Polymarket carry the executable coverage.
+    for m in matrix:
+        if m["candidate_type"] == "CDNA_FILL_FIRST":
+            m["live_executable_status"] = "CDNA_SCAN_ONLY_NO_SAFE_ORDER_API"
+            m["live_executable_reason"] = "no_safe_order_api"
+        elif not _CT_BY_NAME.get(m["candidate_type"], {}).get("diagnostic", False):
+            m["live_executable_status"] = m["coverage_status"]
+    kp_classes = [m for m in matrix if m["candidate_type"] not in ("CDNA_FILL_FIRST",)
+                  and not _CT_BY_NAME.get(m["candidate_type"], {}).get("diagnostic", False)]
+    if any(m["coverage_status"] == "OK" for m in kp_classes):
+        kp_exec_coverage = "OK"
+    elif any(m["coverage_status"] == "GAP" for m in kp_classes):
+        kp_exec_coverage = "GAP"
+    else:
+        kp_exec_coverage = "NEEDS_DATA"
+
     gaps = [m for m in matrix if m["coverage_status"] == "GAP"]
     expected_zeros = [m for m in matrix if m["coverage_status"] == "EXPECTED_ZERO"]
     needs_data = [m for m in matrix if m["coverage_status"] == "NEEDS_DATA"]
@@ -123,6 +142,14 @@ def build_crypto_arb_surface_coverage_audit(
         "platform_pairs_considered": list(_PLATFORM_PAIRS),
         "cdna_participation": {"cdna_rows_loaded": cdna_rows, "cdna_candidates_considered": cdna_candidates,
                                "cdna_present": cdna_present, "cdna_supplied": source.get("cdna_supplied")},
+        "live_executable_coverage": {
+            "scanner_checks_cdna": bool(cdna_present),
+            "live_executes_cdna": False,
+            "cdna_live_executable_status": "CDNA_SCAN_ONLY_NO_SAFE_ORDER_API",
+            "reason": "no_safe_order_api",
+            "executable_venues": ["kalshi", "polymarket"],
+            "kalshi_polymarket_executable_coverage": kp_exec_coverage,
+        },
         "top_quote_blocker": top_blocker,
         "safety": {"diagnostic_only": True, "public_read_only": True, "reads_local_reports_only": True,
                    "network_access": False, "orders_or_execution_logic_added": False,

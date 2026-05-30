@@ -2460,6 +2460,15 @@ def main(argv: list[str] | None = None) -> int:
                                  help="Dir holding cdna_crypto_latest.json (file only; no network).")
     universe_parser.add_argument("--max-cdna-snapshot-age-seconds", type=float, default=60.0)
     universe_parser.add_argument("--require-cdna-fresh-for-cdna-candidates", type=_str2bool, default=True)
+    universe_parser.add_argument("--executable-venues", default="kalshi,polymarket",
+                                 help="Venues allowed for automated live orders (CDNA never executable).")
+    universe_parser.add_argument("--scan-venues", default="kalshi,polymarket,cdna")
+    universe_parser.add_argument("--exclude-non-executable-from-live-universe", type=_str2bool, default=True)
+    universe_parser.add_argument("--include-near-miss-templates", action="store_true")
+    universe_parser.add_argument("--near-miss-net-edge-threshold", type=float, default=0.10)
+    universe_parser.add_argument("--include-missing-quote-templates", action="store_true")
+    universe_parser.add_argument("--min-template-quality", choices=("compatible_payoff", "priced_only", "paper_only"),
+                                 default="compatible_payoff")
     universe_parser.add_argument("--allow-top-of-book-depth", action="store_true")
     universe_parser.add_argument("--operator-size-cap", type=float, default=10.0)
     universe_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
@@ -2485,6 +2494,8 @@ def main(argv: list[str] | None = None) -> int:
     fast.add_argument("--max-cdna-snapshot-age-seconds", type=float, default=60.0)
     fast.add_argument("--require-cdna-fresh-for-cdna-candidates", type=_str2bool, default=True)
     fast.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    fast.add_argument("--executable-venues", default="kalshi,polymarket",
+                      help="Venues allowed for automated live orders (CDNA never executable).")
     fast.add_argument("--quote-loop-interval-ms", type=float, default=500.0)
     fast.add_argument("--iterations", type=int, default=1)
     fast.add_argument("--min-net-edge", type=float, default=0.10)
@@ -5292,6 +5303,12 @@ def main(argv: list[str] | None = None) -> int:
             cdna_evidence_dir=args.cdna_evidence_dir, cdna_timeseries_dir=args.cdna_timeseries_dir,
             max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
             require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
+            executable_venues=args.executable_venues, scan_venues=args.scan_venues,
+            exclude_non_executable_from_live_universe=args.exclude_non_executable_from_live_universe,
+            include_near_miss_templates=args.include_near_miss_templates,
+            near_miss_net_edge_threshold=args.near_miss_net_edge_threshold,
+            include_missing_quote_templates=args.include_missing_quote_templates,
+            min_template_quality=args.min_template_quality,
             allow_top_of_book_depth=args.allow_top_of_book_depth,
             operator_size_cap=args.operator_size_cap, cdna_operator_size_cap=args.cdna_operator_size_cap,
             max_basket_legs=args.max_basket_legs, min_net_edge=args.min_net_edge, max_candidates=args.max_candidates,
@@ -5299,10 +5316,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             "build_crypto_candidate_universe=OK diagnostic_only=true discovery_pass=true "
-            f"assets={','.join(asset_list)} candidate_count={universe.get('candidate_count')} "
-            f"cdna_candidate_count={universe.get('cdna_candidate_count')} "
+            f"assets={','.join(asset_list)} executable_universe_candidate_count={universe.get('executable_universe_candidate_count')} "
+            f"non_executable_scan_candidate_count={universe.get('non_executable_scan_candidate_count')} "
+            f"excluded_cdna_candidate_count={universe.get('excluded_cdna_candidate_count')} "
+            f"excluded_cdna_reason={universe.get('excluded_cdna_reason')} "
             f"watched_leg_count={universe.get('watched_leg_count')} "
-            f"cdna_diagnostics={universe.get('cdna_diagnostics')} output={args.output}"
+            f"watched_leg_count_by_platform={universe.get('watched_leg_count_by_platform')} "
+            f"watched_leg_count_by_side={universe.get('watched_leg_count_by_side')} "
+            f"zero_universe_reason={universe.get('zero_universe_reason')} "
+            f"cdna_scan_only=true cdna_executable=false output={args.output}"
         )
         return 0
     if args.command == "trigger-crypto-fast-path":
@@ -5321,6 +5343,13 @@ def main(argv: list[str] | None = None) -> int:
                     max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
                     require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
                     operator_size_cap=_dp.get("operator_size_cap", 10.0), cdna_operator_size_cap=args.cdna_operator_size_cap,
+                    executable_venues=(args.executable_venues or _dp.get("executable_venues")),
+                    scan_venues=_dp.get("scan_venues"),
+                    exclude_non_executable_from_live_universe=bool(_dp.get("exclude_non_executable_from_live_universe", True)),
+                    include_near_miss_templates=bool(_dp.get("include_near_miss_templates")),
+                    near_miss_net_edge_threshold=float(_dp.get("near_miss_net_edge_threshold", 0.10)),
+                    include_missing_quote_templates=bool(_dp.get("include_missing_quote_templates")),
+                    min_template_quality=str(_dp.get("min_template_quality", "compatible_payoff")),
                     min_net_edge=_dp.get("min_net_edge", 0.0),
                     max_candidates=_dp.get("max_candidates", 50), source_basis_buffer_bps=_dp.get("source_basis_buffer_bps", 0.0),
                     output_path=args.candidate_universe,
@@ -5333,7 +5362,8 @@ def main(argv: list[str] | None = None) -> int:
             quote_source=args.quote_source, cdna_timeseries_dir=args.cdna_timeseries_dir,
             cdna_evidence_dir=args.cdna_evidence_dir, max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
             require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
-            cdna_operator_size_cap=args.cdna_operator_size_cap, max_slippage_cents=args.max_slippage_cents,
+            cdna_operator_size_cap=args.cdna_operator_size_cap, executable_venues=args.executable_venues,
+            max_slippage_cents=args.max_slippage_cents,
             order_timeout_ms=args.order_timeout_ms, max_total_notional=args.max_total_notional,
             max_platform_notional=args.max_platform_notional, max_leg_notional=args.max_leg_notional,
             operator_size_cap=args.operator_size_cap, max_orders=args.max_orders,
@@ -5343,11 +5373,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             "trigger_crypto_fast_path=OK dry_run_default=true protected_limit_buy_only=true market_orders=false "
-            "shorting=false hot_path_no_full_scan=true hot_path_no_markdown=true "
+            "shorting=false hot_path_no_full_scan=true hot_path_no_markdown=true cdna_in_live_hot_path=false "
             f"mode={summary.get('mode')} quote_source={summary.get('quote_source')} "
-            f"universe_candidate_count={summary.get('universe_candidate_count')} "
+            f"executable_universe_candidate_count={summary.get('executable_universe_candidate_count')} "
+            f"non_executable_scan_candidate_count={summary.get('non_executable_scan_candidate_count')} "
             f"watched_leg_count={summary.get('watched_leg_count')} "
-            f"quote_refresh_metrics={summary.get('quote_refresh_metrics')} "
+            f"zero_universe_reason={summary.get('zero_universe_reason')} "
+            f"best_watched_edge={summary.get('best_watched_edge')} "
+            f"adapter_status={summary.get('adapter_status')} "
             f"ticks={summary.get('ticks')} decisions={summary.get('decisions')} "
             f"decisions_that_would_trade={summary.get('decisions_that_would_trade')} "
             f"cdna={summary.get('cdna')} "
