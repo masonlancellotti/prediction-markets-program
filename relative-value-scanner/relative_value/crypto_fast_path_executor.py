@@ -45,7 +45,9 @@ from relative_value.live_crypto_execution_adapters import (
 from relative_value.live_crypto_micro_executor import (
     _execute_live_orders, _ordered_plan_legs, LIVE_ENV_VAR, DEFAULT_KILL_SWITCH,
     MAX_TOTAL_NOTIONAL_HARD_CAP, MAX_PLATFORM_NOTIONAL_HARD_CAP, MAX_LEG_NOTIONAL_HARD_CAP, MIN_NET_EDGE_FLOOR,
+    _attach_notification_results_to_final_report, _notification_payload, _notify_execution_event,
 )
+from relative_value.live_trade_notifications import LiveTradeNotifier
 
 
 UNIVERSE_SCHEMA_KIND = "active_crypto_candidate_universe_v1"
@@ -342,6 +344,70 @@ def _watched_breakdown(watched_legs: list[dict[str, Any]]) -> tuple[dict[str, in
     return dict(by_platform), dict(by_side)
 
 
+def _narrow_score(c: dict[str, Any], prefer_priced: bool, prefer_near_miss: bool) -> tuple:
+    edge = _opt_f(c.get("expected_net_edge_after_fees"))
+    priced = edge is not None
+    near = edge is not None and edge > -0.10
+    return ((1 if (prefer_priced and priced) else 0),
+            (1 if (prefer_near_miss and near) else 0),
+            edge if edge is not None else -1e9)
+
+
+def _leg_to_watched(leg: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not leg:
+        return None
+    return {k: leg.get(k) for k in ("leg_key", "platform", "market_id_or_ticker", "side", "token_id",
+                                    "contract_id", "condition_id", "reference_ask", "fee", "available_size_or_cap")}
+
+
+def _narrow_watch_universe(candidates, watched, *, max_watched_candidates, max_watched_legs,
+                           prefer_priced, prefer_near_miss) -> tuple[list, list]:
+    """Keep the highest-value candidates (priced/near-miss first) and cap watched legs
+    so the hot loop never refreshes hundreds of stale/low-value legs."""
+    if not candidates:
+        return candidates, watched
+    ordered = sorted(candidates, key=lambda c: _narrow_score(c, prefer_priced, prefer_near_miss), reverse=True)
+    if max_watched_candidates and int(max_watched_candidates) > 0:
+        ordered = ordered[: int(max_watched_candidates)]
+    watched_by_key = {l.get("leg_key"): l for l in (watched or [])}
+    cand_leg_by_key: dict[str, Any] = {}
+    for c in candidates:
+        for leg in c.get("legs") or []:
+            cand_leg_by_key.setdefault(leg.get("leg_key"), leg)
+    kept, seen = [], set()
+    for c in ordered:
+        for leg in c.get("legs") or []:
+            lk = leg.get("leg_key")
+            if lk and lk not in seen:
+                seen.add(lk)
+                kept.append(lk)
+    if max_watched_legs and int(max_watched_legs) > 0:
+        kept = kept[: int(max_watched_legs)]
+    kept_set = set(kept)
+    new_watched = [w for lk in kept for w in (watched_by_key.get(lk) or _leg_to_watched(cand_leg_by_key.get(lk)),) if w]
+    # Drop candidates whose legs were entirely cut by the leg cap (can't be priced).
+    ordered = [c for c in ordered if all((leg.get("leg_key") in kept_set) for leg in (c.get("legs") or []))] or ordered
+    return ordered, new_watched
+
+
+def _priority_leg_keys(candidates: list[dict[str, Any]]) -> list[str]:
+    """Refresh order: near-positive candidates' legs first, then priced, then
+    LONG_ONLY_GUARANTEED_PAYOFF legs, then the rest."""
+    def _key(c):
+        edge = _opt_f(c.get("expected_net_edge_after_fees"))
+        return (1 if (edge is not None and edge > -0.05) else 0, 1 if edge is not None else 0,
+                1 if "LONG_ONLY" in str(c.get("candidate_type") or "").upper() else 0,
+                edge if edge is not None else -1e9)
+    keys, seen = [], set()
+    for c in sorted(candidates, key=_key, reverse=True):
+        for leg in c.get("legs") or []:
+            lk = leg.get("leg_key")
+            if lk and lk not in seen:
+                seen.add(lk)
+                keys.append(lk)
+    return keys
+
+
 def _partner_terminal_legs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Kalshi/Polymarket terminal-threshold legs from scout rows, as CDNA match partners.
 
@@ -405,6 +471,13 @@ def run_crypto_fast_path_trigger(
     execution_style: str = "manual",
     output_dir: Path = Path("reports/crypto_fast_path_trigger"),
     quote_source: str = "reference",
+    quote_refresh_workers: int = 8,
+    quote_request_timeout_ms: float = 750.0,
+    max_quote_refresh_latency_ms: float = 1500.0,
+    max_watched_candidates: int | None = None,
+    max_watched_legs: int | None = None,
+    prefer_priced_templates: bool = False,
+    prefer_near_miss_templates: bool = False,
     dry_run: bool = True,
     live: bool = False,
     i_understand_this_places_real_orders: bool = False,
@@ -423,6 +496,11 @@ def run_crypto_fast_path_trigger(
     console: Callable[[str], None] | None = None,
     env: dict[str, str] | None = None,
     kill_switch_path: Path | None = None,
+    notify_provider: str = "dry_run",
+    notify_send: bool = False,
+    notify_on: str | list[str] | None = None,
+    notify_dedup_seconds: float = 30.0,
+    notification_http_post: Any = None,
 ) -> dict[str, Any]:
     now_fn = clock or (lambda: datetime.now(timezone.utc))
     sleeper = sleep or (lambda _s: None)
@@ -433,7 +511,10 @@ def run_crypto_fast_path_trigger(
         base_refresher = quote_refresher
     elif str(quote_source).lower() == "public_live":
         from relative_value.crypto_fast_quote_refresher import make_public_live_refresher
-        base_refresher = make_public_live_refresher(http_get=http_get)
+        base_refresher = make_public_live_refresher(
+            http_get=http_get, workers=int(quote_refresh_workers),
+            timeout_seconds=float(quote_request_timeout_ms) / 1000.0,
+            max_latency_ms=float(max_quote_refresh_latency_ms))
     else:
         base_refresher = _universe_quote_refresher
 
@@ -461,6 +542,16 @@ def run_crypto_fast_path_trigger(
     universe = _read_json(Path(candidate_universe)) or {}
     candidates = universe.get("candidates") or []
     watched = universe.get("watched_legs") or []
+    # Narrow the watch set so the hot loop doesn't refresh hundreds of stale/low-value
+    # legs: keep the highest-value candidates (priced / near-miss first), cap legs.
+    narrowed_diag = {"watched_candidates_before": len(candidates), "watched_legs_before": len(watched)}
+    candidates, watched = _narrow_watch_universe(
+        candidates, watched, max_watched_candidates=max_watched_candidates, max_watched_legs=max_watched_legs,
+        prefer_priced=prefer_priced_templates, prefer_near_miss=prefer_near_miss_templates)
+    narrowed_diag.update({"watched_candidates_after": len(candidates), "watched_legs_after": len(watched)})
+    # Refresh priority: candidate-critical legs first (near-positive edge, LONG_ONLY
+    # guaranteed, then priced) so the freshest quotes go to the best candidates.
+    priority_keys = _priority_leg_keys(candidates)
     exec_venues = normalize_venues(
         executable_venues if executable_venues is not None else universe.get("executable_venues"),
         default=DEFAULT_EXECUTABLE_VENUES)
@@ -468,6 +559,9 @@ def run_crypto_fast_path_trigger(
     mode = MODE_LIVE if requested_live else MODE_DRY_RUN
     used_adapters = adapters if adapters is not None else default_adapters(mode=mode)
     adapter_status = build_adapter_status_report(used_adapters, executable_venues=exec_venues)
+    notifier = LiveTradeNotifier(
+        provider_name=notify_provider, send=notify_send, notify_on=notify_on,
+        dedup_seconds=notify_dedup_seconds, env=env, http_post=notification_http_post, clock=now_fn)
 
     params = {
         "min_net_edge": float(min_net_edge), "max_decision_age_ms": float(max_decision_age_ms),
@@ -521,10 +615,27 @@ def run_crypto_fast_path_trigger(
             recognized_first.clear()
 
         refresh_started = now_fn()
-        for leg in watched:
-            q = refresher(leg=leg, now=refresh_started)
-            quote_cache[leg["leg_key"]] = q
-            _append_jsonl(cache_path, {"tick": tick, "leg_key": leg["leg_key"], **q})
+        batch_diag: dict[str, Any] = {}
+        # Bounded-concurrency batch refresh when the source supports it (public_live);
+        # CDNA legs are still served from the file snapshot, never fetched here.
+        batch_legs = [l for l in watched if str(l.get("platform") or "").lower() != "cdna"] \
+            if cdna_source is not None else watched
+        batch = getattr(base_refresher, "refresh_all", None)
+        if callable(batch) and batch_legs:
+            quotes, batch_diag = batch(batch_legs, now=refresh_started, priority_keys=priority_keys)
+            for lk, q in quotes.items():
+                quote_cache[lk] = q
+                _append_jsonl(cache_path, {"tick": tick, "leg_key": lk, **q})
+            for leg in watched:  # CDNA legs (file snapshot) — not in the parallel batch
+                if str(leg.get("platform") or "").lower() == "cdna" and cdna_source is not None:
+                    q = cdna_source.quote(leg=leg, now=refresh_started)
+                    quote_cache[leg["leg_key"]] = q
+                    _append_jsonl(cache_path, {"tick": tick, "leg_key": leg["leg_key"], **q})
+        else:
+            for leg in watched:
+                q = refresher(leg=leg, now=refresh_started)
+                quote_cache[leg["leg_key"]] = q
+                _append_jsonl(cache_path, {"tick": tick, "leg_key": leg["leg_key"], **q})
         refresh_completed = now_fn()
 
         legs_requested = len(watched)
@@ -533,9 +644,16 @@ def run_crypto_fast_path_trigger(
             "tick": tick, "quote_source": str(quote_source),
             "quote_refresh_started_at": refresh_started.isoformat(),
             "quote_refresh_completed_at": refresh_completed.isoformat(),
-            "quote_refresh_latency_ms": _delta_ms(refresh_started, refresh_completed),
+            "quote_refresh_latency_ms": batch_diag.get("quote_refresh_latency_ms", _delta_ms(refresh_started, refresh_completed)),
             "legs_requested": legs_requested, "legs_refreshed": legs_refreshed,
             "legs_missing_quote": legs_requested - legs_refreshed,
+            "quote_refresh_workers": batch_diag.get("quote_refresh_workers"),
+            "unique_kalshi_fetches": batch_diag.get("unique_kalshi_fetches"),
+            "unique_polymarket_fetches": batch_diag.get("unique_polymarket_fetches"),
+            "unique_gamma_fetches": batch_diag.get("unique_gamma_fetches"),
+            "per_platform_latency_ms": batch_diag.get("per_platform_latency_ms"),
+            "rate_limit_or_timeout_errors": batch_diag.get("rate_limit_or_timeout_errors"),
+            "quote_refresh_latency_exceeds_max": batch_diag.get("quote_refresh_latency_exceeds_max"),
         }
         tick_metrics.append(tick_metric)
         _append_jsonl(refresh_log_path, tick_metric)
@@ -566,6 +684,7 @@ def run_crypto_fast_path_trigger(
                 cand=cand, rec=rec, params=params, live_flags=live_flags, mode=mode, used_adapters=used_adapters,
                 recognized_at=recognized_at, refresh_started=refresh_started, refresh_completed=refresh_completed,
                 output_dir=output_dir, now_fn=now_fn, sleeper=sleeper, kill_switch=kill_switch, tick=tick,
+                notifier=notifier,
             )
             decisions.append(decision)
             emit(f"fastpath tick={tick} {cand.get('asset')} {cand.get('candidate_type')} "
@@ -588,6 +707,7 @@ def run_crypto_fast_path_trigger(
         "non_executable_scan_candidate_count": len(universe.get("non_executable_candidates") or []),
         "watched_leg_count": len(watched), "mode": mode, "quote_source": str(quote_source),
         "executable_venues": list(exec_venues), "adapter_status": adapter_status,
+        "watch_narrowing": narrowed_diag,
         "zero_universe_reason": zero_universe_reason, "best_watched_edge": best_watched_edge["value"],
         "live_flags": live_flags, "parameters": params,
         "ticks": int(max(1, iterations)), "decisions": len(decisions),
@@ -651,7 +771,8 @@ def _cdna_summary(cdna_source, candidates, universe, excluded_ids, excluded_reas
 
 
 def _decide_and_intent(*, cand, rec, params, live_flags, mode, used_adapters, recognized_at,
-                       refresh_started, refresh_completed, output_dir, now_fn, sleeper, kill_switch, tick) -> dict[str, Any]:
+                       refresh_started, refresh_completed, output_dir, now_fn, sleeper, kill_switch, tick,
+                       notifier: LiveTradeNotifier | None = None) -> dict[str, Any]:
     # --- HOT PATH: build protected limit intents immediately. No plan/markdown here. ---
     decision_started_at = now_fn()
     intents = []
@@ -696,6 +817,7 @@ def _decide_and_intent(*, cand, rec, params, live_flags, mode, used_adapters, re
     trigger_id = f"{order_intent_created_at.strftime('%Y%m%dT%H%M%SZ')}_{cand.get('asset')}_t{tick}_{abs(hash(cand['candidate_id'])) % 10000:04d}"
     trigger_dir = output_dir / trigger_id
     (trigger_dir / "micro_test_journal").mkdir(parents=True, exist_ok=True)
+    notification_results: list[dict[str, Any]] = []
 
     intended_orders = [req.to_redacted_dict() for req in intents]
     for rec_o in intended_orders:
@@ -709,6 +831,26 @@ def _decide_and_intent(*, cand, rec, params, live_flags, mode, used_adapters, re
         "hot_path_no_full_scan": True, "hot_path_no_markdown": True,
     }
     _write_json(trigger_dir / "decision.json", decision_record)  # hot-path artifact (no markdown)
+    if mode == MODE_DRY_RUN:
+        result = notifier.notify("submitted", {
+            "test_id": trigger_id,
+            "asset": cand.get("asset"),
+            "candidate_type": cand.get("candidate_type"),
+            "expected_edge": rec.get("net_edge_after_fees"),
+            "dry_run": True,
+            "reason": ", ".join(do_not_trade) or "dry_run_no_live_orders",
+            "short_status": "dry_run_intended_orders_created",
+        }) if notifier is not None else None
+        if result is not None:
+            notification_results.append(result)
+            _append_jsonl(trigger_dir / "event_log.jsonl", {
+                "event_type": result.get("event_log_event_type") or "notification_skipped",
+                "timestamp_utc": now_fn().isoformat(),
+                "command": "trigger-crypto-fast-path",
+                "inputs": {"notification": result},
+                "derived_values": {},
+                "warnings": [],
+            })
 
     # --- POST-DECISION (not in measured hot path): live execution if armed, then full report + journal + markdown. ---
     execution_result = {"placed": False, "mode": mode, "fills": [], "cancels": [], "residual_exposure": [],
@@ -716,14 +858,19 @@ def _decide_and_intent(*, cand, rec, params, live_flags, mode, used_adapters, re
     if do_trade:
         plan = _post_decision_plan(cand, params, now_fn)
         execution_result = _execute_with_journal(
-            cand, plan, params, used_adapters, trigger_id, trigger_dir, now_fn, sleeper, kill_switch)
-    _write_post_decision_report(cand, params, decision_record, execution_result, trigger_dir, now_fn, mode)
+            cand, plan, params, used_adapters, trigger_id, trigger_dir, now_fn, sleeper, kill_switch,
+            notifier, notification_results)
+    execution_result["notification_results"] = notification_results
+    _write_post_decision_report(cand, params, decision_record, execution_result, trigger_dir, now_fn, mode,
+                                notification_results)
     decision_record["trigger_dir"] = str(trigger_dir)
     decision_record["execution_result"] = execution_result
+    decision_record["notification_results"] = notification_results
     return decision_record
 
 
-def _execute_with_journal(cand, plan, params, used_adapters, trigger_id, trigger_dir, now_fn, sleeper, kill_switch):
+def _execute_with_journal(cand, plan, params, used_adapters, trigger_id, trigger_dir, now_fn, sleeper, kill_switch,
+                          notifier=None, notification_results=None):
     jr = start_micro_test_from_objects(candidate={**cand, "basket_legs": cand.get("basket_legs")}, plan=plan,
                                        max_total_notional=params["max_total_notional"],
                                        test_label=trigger_id, output_root=trigger_dir / "micro_test_journal", now=now_fn())
@@ -731,8 +878,25 @@ def _execute_with_journal(cand, plan, params, used_adapters, trigger_id, trigger
         plan=plan, ordered_legs=_ordered_plan_legs(plan), used_adapters=used_adapters, params=params,
         trigger_id=trigger_id, trigger_dir=trigger_dir, journal_test_id=jr["test_id"],
         journal_root=trigger_dir / "micro_test_journal", now_fn=now_fn, sleeper=sleeper, kill_switch=kill_switch,
+        notifier=notifier, notifications=notification_results, notification_base={
+            "test_id": jr["test_id"], "asset": cand.get("asset"), "candidate_type": cand.get("candidate_type"),
+            "expected_edge": plan.get("expected_net_edge_after_fees") or cand.get("expected_net_edge_after_fees"),
+        },
     )
-    finalize_crypto_micro_test(test_id=jr["test_id"], output_root=trigger_dir / "micro_test_journal", now=now_fn())
+    final = finalize_crypto_micro_test(test_id=jr["test_id"], output_root=trigger_dir / "micro_test_journal", now=now_fn())
+    _notify_execution_event(
+        notifier=notifier, event_type="finalized", notifications=notification_results,
+        journal_test_id=jr["test_id"], journal_root=trigger_dir / "micro_test_journal", now_fn=now_fn,
+        payload=_notification_payload(
+            candidate=cand, test_id=jr["test_id"],
+            expected_edge=final.get("actual_net_edge_after_fees_if_all_filled")
+            or final.get("intended_net_edge_after_fees"),
+            residual_exposure=final.get("residual_exposure"),
+            short_status=str(final.get("verdict") or "finalized"),
+        ),
+    )
+    _attach_notification_results_to_final_report(trigger_dir / "micro_test_journal", jr["test_id"],
+                                                 notification_results or [])
     return res
 
 
@@ -861,13 +1025,15 @@ def _post_decision_plan(cand: dict[str, Any], params: dict[str, Any], now_fn) ->
     )
 
 
-def _write_post_decision_report(cand, params, decision_record, execution_result, trigger_dir, now_fn, mode) -> None:
+def _write_post_decision_report(cand, params, decision_record, execution_result, trigger_dir, now_fn, mode,
+                                notification_results=None) -> None:
     report = {
         "schema_kind": "crypto_fast_path_trigger_report_v1", "trigger_id": decision_record["trigger_id"],
         "asset": cand.get("asset"), "candidate_type": cand.get("candidate_type"), "mode": mode,
         "do_trade": decision_record["do_trade"], "do_not_trade_reasons": decision_record["do_not_trade_reasons"],
         "latency": decision_record["latency"], "recomputed_edge": decision_record["recomputed_edge"],
         "intended_orders": decision_record["intended_orders"], "execution_result": execution_result,
+        "notification_results": list(notification_results or []),
         "written_after_decision_not_in_hot_path": True, "safety": _safety(),
     }
     _write_json(trigger_dir / "trigger_report.json", report)
@@ -932,14 +1098,22 @@ def _safety() -> dict[str, Any]:
 
 def _summarize_refresh(tick_metrics: list[dict[str, Any]]) -> dict[str, Any]:
     lats = [m["quote_refresh_latency_ms"] for m in tick_metrics if m.get("quote_refresh_latency_ms") is not None]
+    last = tick_metrics[-1] if tick_metrics else {}
     return {
         "ticks": len(tick_metrics),
-        "legs_requested_last": tick_metrics[-1]["legs_requested"] if tick_metrics else 0,
-        "legs_refreshed_last": tick_metrics[-1]["legs_refreshed"] if tick_metrics else 0,
-        "legs_missing_quote_last": tick_metrics[-1]["legs_missing_quote"] if tick_metrics else 0,
-        "quote_refresh_latency_ms_last": tick_metrics[-1]["quote_refresh_latency_ms"] if tick_metrics else None,
+        "legs_requested_last": last.get("legs_requested", 0),
+        "legs_refreshed_last": last.get("legs_refreshed", 0),
+        "legs_missing_quote_last": last.get("legs_missing_quote", 0),
+        "quote_refresh_latency_ms_last": last.get("quote_refresh_latency_ms"),
         "quote_refresh_latency_ms_avg": round(sum(lats) / len(lats), 3) if lats else None,
         "quote_refresh_latency_ms_max": max(lats) if lats else None,
+        "quote_refresh_workers": last.get("quote_refresh_workers"),
+        "unique_kalshi_fetches_last": last.get("unique_kalshi_fetches"),
+        "unique_polymarket_fetches_last": last.get("unique_polymarket_fetches"),
+        "unique_gamma_fetches_last": last.get("unique_gamma_fetches"),
+        "per_platform_latency_ms_last": last.get("per_platform_latency_ms"),
+        "rate_limit_or_timeout_errors_last": last.get("rate_limit_or_timeout_errors"),
+        "quote_refresh_latency_exceeds_max_last": last.get("quote_refresh_latency_exceeds_max"),
     }
 
 

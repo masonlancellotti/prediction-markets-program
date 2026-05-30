@@ -59,6 +59,17 @@ HARD_BLOCKERS = {
     "unknown_payoff_vector",
     "missing_yes_lower_ask",
     "missing_no_higher_ask",
+    "missing_lower_yes_ask",
+    "missing_higher_no_ask",
+    "missing_partner_yes_ask",
+    "missing_partner_no_ask",
+    "missing_partner_complement_ask",
+    "missing_kalshi_yes_ask",
+    "missing_kalshi_no_ask",
+    "missing_polymarket_yes_ask",
+    "missing_polymarket_no_ask",
+    "missing_cdna_display_yes",
+    "missing_cdna_display_no",
     "threshold_order_invalid",
 }
 

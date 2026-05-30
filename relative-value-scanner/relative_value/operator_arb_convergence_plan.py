@@ -30,7 +30,6 @@ B_MISSING_FEE = "missing_fee_model"
 B_MISSING_SIZE = "missing_available_notional"
 B_EXIT_BIDS_MISSING = "exit_bid_data_missing"
 B_EXIT_FEE_REVIEW = "exit_fee_review_required"
-B_TARGET_EXIT_NOT_PLAUSIBLE = "target_exit_pair_value_above_normal_payoff"
 B_SMALL_LONG_DATED_EDGE = "edge_too_small_for_long_hold"
 
 SUPPORTED_SCHEMAS = {
@@ -172,7 +171,8 @@ def render_operator_arb_convergence_plan_markdown(report: dict[str, Any]) -> str
     lines = [
         "# Operator Arb Convergence / Exit Plan",
         "",
-        "This report separates hold-to-settlement edge from convergence/early-exit attractiveness.",
+        "This report separates paired-basket carry-to-settlement edge from convergence/early-exit attractiveness.",
+        "Carry-to-settlement means carrying both hedged legs until the normal-state payoff resolves to 1.0; it is not a directional single-leg hold.",
         "It is diagnostic only and does not recommend or place trades.",
         "",
         "## Summary",
@@ -194,14 +194,14 @@ def render_operator_arb_convergence_plan_markdown(report: dict[str, Any]) -> str
         "",
         "## Plan Rows",
         "",
-        "| Plan | Net hold edge | Immediate unwind after fees | Current exit value | Target exit distance | Annualized return | Available notional | Team/Outcome | Direction | Blockers |",
+        "| Plan | Settlement carry edge | Immediate unwind after fees | Current exit value | Target exit distance | Annualized return | Available notional | Team/Outcome | Direction | Blockers |",
         "|---|---:|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for row in rows[:40]:
         lines.append(
             "| "
             f"{_md(row.get('recommended_plan'))} | "
-            f"{_fmt(row.get('net_hold_edge'))} | "
+            f"{_fmt(row.get('settlement_carry_net_edge'))} | "
             f"{_fmt(row.get('immediate_unwind_pnl_after_estimated_fees'))} | "
             f"{_fmt(row.get('current_exit_value_if_available'))} | "
             f"{_fmt(row.get('target_exit_distance'))} | "
@@ -218,12 +218,12 @@ def render_operator_arb_convergence_plan_markdown(report: dict[str, Any]) -> str
             "",
             "## Exit And Target Distance",
             "",
-            "Immediate unwind values use bid-side data only. Target exit distance is the additional pair value needed to reach the configured target exit value.",
+            "Immediate unwind values use bid-side data only. Target exit distance is the additional pair value needed to reach the configured target exit value. Target exit pair value is capped at the normal 1.0 settlement payoff unless a future command explicitly allows a higher target.",
             "",
             "## Tiny Long-Dated Edges",
             "",
-            "A small positive edge held for months can be weak after fees and capital tie-up. "
-            "Rows with low annualized hold return are only interesting as convergence monitors, "
+            "A small positive paired-basket carry edge over months can be weak after fees and capital tie-up. "
+            "Rows with low annualized settlement-carry return are only interesting as convergence monitors, "
             "and early exit still requires real bid-side data on both legs.",
             "",
             "## Top Blockers",
@@ -303,7 +303,13 @@ def _plan_row(
         if net_hold_edge is not None and available_notional is not None
         else None
     )
-    target_exit_pair_value = round(entry_cost + target_exit_edge, 6) if entry_cost is not None else None
+    uncapped_target_exit_pair_value = round(entry_cost + target_exit_edge, 6) if entry_cost is not None else None
+    target_exit_capped = bool(uncapped_target_exit_pair_value is not None and uncapped_target_exit_pair_value > 1.0)
+    target_exit_pair_value = (
+        min(uncapped_target_exit_pair_value, 1.0)
+        if uncapped_target_exit_pair_value is not None
+        else None
+    )
     estimated_exit_fees = fee_estimate
     target_exit_profit_per_unit = (
         round(target_exit_pair_value - entry_cost - estimated_exit_fees, 6)
@@ -340,8 +346,6 @@ def _plan_row(
         blockers.append(B_EXIT_BIDS_MISSING)
     if immediate_unwind_before is not None and immediate_unwind_before > 0 and immediate_unwind_after is None:
         blockers.append(B_EXIT_FEE_REVIEW)
-    if target_exit_pair_value is not None and target_exit_pair_value > 1.0:
-        blockers.append(B_TARGET_EXIT_NOT_PLAUSIBLE)
     recommended_plan, notes = _recommended_plan(
         net_hold_edge=net_hold_edge,
         annualized=annualized,
@@ -361,6 +365,8 @@ def _plan_row(
     blockers = list(dict.fromkeys(blockers))
     if recommended_plan == PLAN_ENTER_MONITOR and B_SMALL_LONG_DATED_EDGE not in blockers:
         blockers.append(B_SMALL_LONG_DATED_EDGE)
+    if target_exit_capped:
+        notes.append("target exit capped at normal settlement payoff")
     return {
         "row_id": f"convergence:{source_row_id}",
         "source_row_id": source_row_id,
@@ -371,18 +377,25 @@ def _plan_row(
         "direction": source.get("direction"),
         "entry_legs": entry_legs,
         "entry_cost": entry_cost,
+        "paired_basket_entry_cost": entry_cost,
         "normal_settlement_payoff": 1.0,
+        "paired_basket_settlement_payoff": 1.0,
         "gross_hold_edge": gross_hold_edge,
         "fee_estimate": fee_estimate,
         "estimated_exit_fees": estimated_exit_fees,
         "net_hold_edge": net_hold_edge,
+        "settlement_carry_net_edge": net_hold_edge,
         "available_notional": available_notional,
         "estimated_total_net_profit_at_size": estimated_total_net_profit,
         "settlement_date": settlement.isoformat() if settlement else None,
         "days_to_settlement": days_to_settlement,
         "return_on_capital": return_on_capital,
+        "settlement_carry_return_on_capital": return_on_capital,
+        "paired_basket_return_on_capital": return_on_capital,
         "annualized_return_estimate": annualized,
         "target_exit_pair_value": target_exit_pair_value,
+        "uncapped_target_exit_pair_value": uncapped_target_exit_pair_value,
+        "target_exit_capped_by_settlement_payoff": target_exit_capped,
         "target_exit_edge": target_exit_edge,
         "target_exit_profit_per_unit": target_exit_profit_per_unit,
         "target_exit_return_on_capital": target_exit_return,
@@ -395,6 +408,7 @@ def _plan_row(
         "convergence_required": target_exit_distance,
         "exit_bid_legs": source.get("exit_bid_legs") or [],
         "recommended_plan": recommended_plan,
+        "convergence_exit_plan": recommended_plan,
         "blockers": blockers,
         "notes": [*notes, *_string_list(source.get("residual_risk_notes"))],
         "operator_arb_review_only": True,
@@ -479,7 +493,7 @@ def _recommended_plan(
     long_tieup = bool(days_to_settlement and max_capital_tieup_days and days_to_settlement > max_capital_tieup_days)
     low_annualized = annualized is None or annualized < min_annualized_return
     if long_tieup and low_annualized:
-        notes.append("edge too small for long hold; only attractive if expected convergence/exit occurs sooner")
+        notes.append("edge too small for long paired-basket carry; only attractive if expected convergence/exit occurs sooner")
     if target_exit_pair_value is not None and target_exit_pair_value <= 1.0:
         return PLAN_ENTER_MONITOR, notes
     return PLAN_WATCH, notes

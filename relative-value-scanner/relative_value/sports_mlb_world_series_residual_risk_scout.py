@@ -8,6 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from relative_value.fees import KalshiTieredFeeModel, PolymarketConservativeFeeModel
+from relative_value.operator_paper_candidate_policy import (
+    CLASS_OPERATOR,
+    ACTION_WATCH as VISIBLE_WATCH,
+    apply_operator_candidate_fields,
+    candidate_counts,
+    ensure_candidate_fields,
+    normalize_operator_risk_mode,
+)
 from relative_value.sports_mlb_world_series_evidence_collector import TEAM_CODE_TO_NAME, team_code
 
 
@@ -75,6 +83,7 @@ def write_sports_mlb_world_series_residual_risk_files(
     generated_at: datetime | None = None,
     fee_models_available: bool = True,
     operator_accepted_as_arb: bool = False,
+    operator_risk_mode: str = "conservative",
 ) -> dict[str, Any]:
     report = build_sports_mlb_world_series_residual_risk_report(
         kalshi_evidence=kalshi_evidence,
@@ -86,6 +95,7 @@ def write_sports_mlb_world_series_residual_risk_files(
         min_available_notional=min_available_notional,
         generated_at=generated_at,
         fee_models_available=fee_models_available,
+        operator_risk_mode=operator_risk_mode,
     )
     json_output.parent.mkdir(parents=True, exist_ok=True)
     markdown_output.parent.mkdir(parents=True, exist_ok=True)
@@ -105,10 +115,15 @@ def build_sports_mlb_world_series_residual_risk_report(
     min_available_notional: float = DEFAULT_MIN_AVAILABLE_NOTIONAL,
     generated_at: datetime | None = None,
     fee_models_available: bool = True,
+    operator_risk_mode: str = "conservative",
 ) -> dict[str, Any]:
     generated = generated_at or datetime.now(timezone.utc)
     if generated.tzinfo is None:
         generated = generated.replace(tzinfo=timezone.utc)
+    risk_mode = normalize_operator_risk_mode(operator_risk_mode)
+    mode_accepts_tail_risk = risk_mode in {"standard", "aggressive"}
+    effective_accept_tail_risk = bool(accept_world_series_remote_tail_risk or mode_accepts_tail_risk)
+    effective_operator_accepted = bool(operator_accepted_as_arb or mode_accepts_tail_risk)
     season_label = str(season).strip()
     kalshi_payload = _read_json(kalshi_evidence)
     polymarket_payload = _read_json(polymarket_evidence)
@@ -128,8 +143,8 @@ def build_sports_mlb_world_series_residual_risk_report(
             _blocked_scope_row(
                 season=season_label,
                 blockers=scope_blockers,
-                accept_world_series_remote_tail_risk=accept_world_series_remote_tail_risk,
-                operator_accepted_as_arb=operator_accepted_as_arb,
+                accept_world_series_remote_tail_risk=effective_accept_tail_risk,
+                operator_accepted_as_arb=effective_operator_accepted,
             )
         )
     for code in matched_codes:
@@ -144,8 +159,9 @@ def build_sports_mlb_world_series_residual_risk_report(
                 kalshi_side="YES",
                 polymarket_side="NO",
                 scope_blockers=scope_blockers,
-                accept_world_series_remote_tail_risk=accept_world_series_remote_tail_risk,
-                operator_accepted_as_arb=operator_accepted_as_arb,
+                accept_world_series_remote_tail_risk=effective_accept_tail_risk,
+                operator_accepted_as_arb=effective_operator_accepted,
+                operator_risk_mode=risk_mode,
                 generated_at=generated,
                 max_quote_age_seconds=max_quote_age_seconds,
                 min_available_notional=min_available_notional,
@@ -161,8 +177,9 @@ def build_sports_mlb_world_series_residual_risk_report(
                 kalshi_side="NO",
                 polymarket_side="YES",
                 scope_blockers=scope_blockers,
-                accept_world_series_remote_tail_risk=accept_world_series_remote_tail_risk,
-                operator_accepted_as_arb=operator_accepted_as_arb,
+                accept_world_series_remote_tail_risk=effective_accept_tail_risk,
+                operator_accepted_as_arb=effective_operator_accepted,
+                operator_risk_mode=risk_mode,
                 generated_at=generated,
                 max_quote_age_seconds=max_quote_age_seconds,
                 min_available_notional=min_available_notional,
@@ -175,25 +192,26 @@ def build_sports_mlb_world_series_residual_risk_report(
             poly_by_code=poly_by_code,
             matched_codes=set(matched_codes),
             scope_blockers=scope_blockers,
-            accept_world_series_remote_tail_risk=accept_world_series_remote_tail_risk,
-            operator_accepted_as_arb=operator_accepted_as_arb,
+            accept_world_series_remote_tail_risk=effective_accept_tail_risk,
+            operator_accepted_as_arb=effective_operator_accepted,
         )
     )
     rows.sort(key=_row_sort_key, reverse=True)
     summary = _summary(rows)
-    return {
+    return ensure_candidate_fields({
         "schema_version": SCHEMA_VERSION,
         "schema_kind": SCHEMA_KIND,
         "source": REPORT_SOURCE,
         "generated_at": generated.isoformat(),
         "diagnostic_only": True,
         "shadow_paper_only": True,
-        "operator_arb_mode": bool(accept_world_series_remote_tail_risk and operator_accepted_as_arb),
+        "operator_arb_mode": bool(effective_accept_tail_risk and effective_operator_accepted),
         "strict_exact_arb": False,
         "mathematical_strict_exact_arb": False,
-        "human_accepted_remote_tail_risk": bool(accept_world_series_remote_tail_risk),
-        "operator_accepted_as_arb": bool(operator_accepted_as_arb),
-        "residual_risk_type": RESIDUAL_RISK_TYPE if accept_world_series_remote_tail_risk else None,
+        "human_accepted_remote_tail_risk": bool(effective_accept_tail_risk),
+        "operator_accepted_as_arb": bool(effective_operator_accepted),
+        "operator_risk_mode": risk_mode,
+        "residual_risk_type": RESIDUAL_RISK_TYPE if effective_accept_tail_risk else None,
         "season": season_label,
         "kalshi_evidence": str(kalshi_evidence),
         "polymarket_evidence": str(polymarket_evidence),
@@ -209,34 +227,35 @@ def build_sports_mlb_world_series_residual_risk_report(
         "summary_counts": summary,
         "top_blockers": summary["top_blockers"],
         "exact_ready_rows": 0,
-        "paper_candidate_rows": 0,
-        "standard_paper_candidate_rows": 0,
+        "paper_candidate_rows": summary.get("total_paper_candidate_rows", 0),
+        "standard_paper_candidate_rows": summary.get("total_paper_candidate_rows", 0),
         "operator_arb_review_rows": summary["operator_arb_review_rows"],
         "operator_paper_review_rows": summary["operator_arb_review_rows"],
-        "paper_candidate_emitted": False,
-        "global_paper_candidate_emitted": False,
+        "paper_candidate_emitted": summary.get("total_paper_candidate_rows", 0) > 0,
+        "global_paper_candidate_emitted": summary.get("total_paper_candidate_rows", 0) > 0,
         "safety": {
             "diagnostic_only": True,
             "shadow_paper_only": True,
-            "operator_arb_mode": bool(accept_world_series_remote_tail_risk and operator_accepted_as_arb),
+            "operator_arb_mode": bool(effective_accept_tail_risk and effective_operator_accepted),
             "strict_exact_arb": False,
             "mathematical_strict_exact_arb": False,
             "exact_ready": False,
-            "paper_candidate": False,
-            "standard_paper_candidate_rows": 0,
-            "paper_candidate_emitted": False,
-            "global_paper_candidate_emitted": False,
+            "paper_candidate": summary.get("total_paper_candidate_rows", 0) > 0,
+            "standard_paper_candidate_rows": summary.get("total_paper_candidate_rows", 0),
+            "paper_candidate_emitted": summary.get("total_paper_candidate_rows", 0) > 0,
+            "global_paper_candidate_emitted": summary.get("total_paper_candidate_rows", 0) > 0,
             "candidate_pair_creation": False,
             "evaluator_invoked": False,
             "orders_or_execution_logic_added": False,
             "auth_or_account_logic_added": False,
             "saved_files_only": True,
         },
-    }
+    })
 
 
 def render_sports_mlb_world_series_residual_risk_markdown(report: dict[str, Any]) -> str:
     counts = report.get("summary_counts") or {}
+    rows = report.get("rows") or []
     lines = [
         "# MLB World Series Operator-Approved Arb Scout",
         "",
@@ -252,56 +271,30 @@ def render_sports_mlb_world_series_residual_risk_markdown(report: dict[str, Any]
         f"- polymarket_rows_loaded: `{report.get('polymarket_rows_loaded', 0)}`",
         f"- matched_team_rows: `{report.get('matched_team_rows', 0)}`",
         f"- rows: `{counts.get('rows', 0)}`",
-        f"- operator_arb_review_rows: `{counts.get('operator_arb_review_rows', 0)}`",
-        f"- residual_review_rows: `{counts.get('residual_review_rows', 0)}`",
+        f"- strict_paper_candidate_rows: `{counts.get('strict_paper_candidate_rows', 0)}`",
+        f"- operator_paper_candidate_rows: `{counts.get('operator_paper_candidate_rows', 0)}`",
+        f"- cdna_fill_first_paper_candidate_rows: `{counts.get('cdna_fill_first_paper_candidate_rows', 0)}`",
+        f"- total_paper_candidate_rows: `{counts.get('total_paper_candidate_rows', 0)}`",
         f"- manual_review_rows: `{counts.get('manual_review_rows', 0)}`",
         f"- watch_rows: `{counts.get('watch_rows', 0)}`",
         f"- ignore_blocked_rows: `{counts.get('ignore_blocked_rows', 0)}`",
         f"- exact_ready_rows: `0`",
-        f"- standard_paper_candidate_rows: `0`",
+        f"- total_paper_candidate_rows: `{counts.get('total_paper_candidate_rows', 0)}`",
         "",
-        "## Top Rows",
+        "## Paper Candidates",
         "",
-        "| Team | Direction | Gross edge | Fee | Net edge | Available notional | Current exit value | Immediate unwind after fees | Action | Blockers |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---|---|",
+        "| Class | Candidate action | Gross edge | Net edge | Size/notional | Assumptions accepted | Blockers/risk notes |",
+        "|---|---|---:|---:|---:|---|---|",
     ]
-    for row in (report.get("rows") or [])[:25]:
-        lines.append(
-            "| "
-            f"{_md(row.get('team_name'))} | "
-            f"{_md(row.get('direction'))} | "
-            f"{_md(row.get('gross_edge'))} | "
-            f"{_md(row.get('conservative_fee_estimate'))} | "
-            f"{_md(row.get('net_edge'))} | "
-            f"{_md(row.get('available_notional'))} | "
-            f"{_md(row.get('current_exit_pair_value'))} | "
-            f"{_md(row.get('immediate_unwind_pnl_after_estimated_fees'))} | "
-            f"{_md(row.get('action'))} | "
-            f"{_md(', '.join(row.get('blockers') or []))} |"
-        )
-    if not report.get("rows"):
-        lines.append("| none |  |  |  |  |  |  |  |  |  |")
-    operator_rows = [row for row in report.get("rows") or [] if row.get("action") == ACTION_OPERATOR_REVIEW]
-    lines.extend(["", "## Operator Arb Review Rows", ""])
-    if operator_rows:
-        for row in operator_rows:
-            lines.append(f"- `{_md(row.get('row_id'))}` {_md(row.get('team_name'))} `{_md(row.get('direction'))}` net=`{_md(row.get('net_edge'))}`")
-    else:
-        lines.append("_None._")
-    residual_rows = [row for row in report.get("rows") or [] if row.get("action") == ACTION_RESIDUAL_REVIEW]
-    lines.extend(["", "## Residual-Risk Shadow Review Rows", ""])
-    if residual_rows:
-        for row in residual_rows:
-            lines.append(f"- `{_md(row.get('row_id'))}` {_md(row.get('team_name'))} `{_md(row.get('direction'))}` net=`{_md(row.get('net_edge'))}`")
-    else:
-        lines.append("_None._")
-    lines.extend(["", "## Watch And Manual Review Rows", ""])
-    review_rows = [row for row in report.get("rows") or [] if row.get("action") in {ACTION_WATCH, ACTION_MANUAL_REVIEW}]
-    if review_rows:
-        for row in review_rows[:25]:
-            lines.append(f"- `{_md(row.get('row_id'))}` action=`{_md(row.get('action'))}` blockers=`{_md(', '.join(row.get('blockers') or []))}`")
-    else:
-        lines.append("_None._")
+    paper_rows = [row for row in rows if row.get("paper_candidate")]
+    if not paper_rows:
+        lines.append("| none |  |  |  |  |  |  |")
+    for row in paper_rows[:25]:
+        lines.append(_candidate_row_md(row))
+    lines.extend(["", "## Watch Rows", ""])
+    lines.extend(_row_list([row for row in rows if row.get("action") == ACTION_WATCH][:25]))
+    lines.extend(["", "## Ignored/Blocked Rows", ""])
+    lines.extend(_row_list([row for row in rows if row.get("action") == ACTION_IGNORE_BLOCKED][:25]))
     lines.extend(["", "## Top Blockers", "", "| Blocker | Count |", "|---|---:|"])
     blockers = report.get("top_blockers") or []
     if blockers:
@@ -321,8 +314,8 @@ def render_sports_mlb_world_series_residual_risk_markdown(report: dict[str, Any]
             "- mathematical_strict_exact_arb: `false`",
             "- candidate_pair_creation: `false`",
             "- exact_ready: `false`",
-            "- standard_paper_candidate_rows: `0`",
-            "- global_paper_candidate_emitted: `false`",
+            f"- total_paper_candidate_rows: `{counts.get('total_paper_candidate_rows', 0)}`",
+            f"- global_paper_candidate_emitted: `{str(bool(report.get('global_paper_candidate_emitted'))).lower()}`",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -343,6 +336,7 @@ def _basket_row(
     max_quote_age_seconds: float,
     min_available_notional: float,
     fee_models_available: bool,
+    operator_risk_mode: str,
 ) -> dict[str, Any]:
     kalshi_leg = _leg(kalshi, venue="kalshi", side=kalshi_side)
     poly_leg = _leg(polymarket, venue="polymarket", side=polymarket_side)
@@ -445,7 +439,7 @@ def _basket_row(
         operator_accepted_as_arb=bool(operator_accepted_as_arb),
     )
     quote_timestamp_status = "stale_or_missing" if B_STALE_QUOTE in blockers else "fresh"
-    return {
+    row = {
         "row_id": f"{code}:{direction}",
         "canonical_team_key": code,
         "team_name": _canonical_team_name(code),
@@ -506,6 +500,22 @@ def _basket_row(
         "diagnostic_only": True,
         "shadow_paper_only": True,
     }
+    make_candidate = (
+        operator_risk_mode in {"standard", "aggressive"}
+        and action == ACTION_OPERATOR_REVIEW
+        and net_edge is not None
+        and net_edge > 0
+    )
+    if not make_candidate and row["action"] != ACTION_IGNORE_BLOCKED:
+        row["action"] = VISIBLE_WATCH
+    return apply_operator_candidate_fields(
+        row,
+        paper_class=CLASS_OPERATOR,
+        assumptions_accepted=["championship_remote_tail_risk"],
+        candidate_action="PAPER_CANDIDATE",
+        make_candidate=make_candidate,
+        mathematical_strict_exact_arb=False,
+    )
 
 
 def _blocked_scope_row(
@@ -518,7 +528,7 @@ def _blocked_scope_row(
     row_blockers = list(dict.fromkeys([*blockers, B_SCOPE_INVALID]))
     if not accept_world_series_remote_tail_risk:
         row_blockers.append(B_REMOTE_NOT_ACCEPTED)
-    return {
+    return ensure_candidate_fields({
         "row_id": "SCOPE:UNSUPPORTED",
         "canonical_team_key": None,
         "team_name": None,
@@ -570,7 +580,7 @@ def _blocked_scope_row(
         "operator_paper_review": False,
         "diagnostic_only": True,
         "shadow_paper_only": True,
-    }
+    })
 
 
 def _unmatched_rows(
@@ -600,7 +610,7 @@ def _unmatched_row(
 ) -> dict[str, Any]:
     if not accept_world_series_remote_tail_risk:
         blockers.append(B_REMOTE_NOT_ACCEPTED)
-    return {
+    return ensure_candidate_fields({
         "row_id": f"{code}:UNMATCHED",
         "canonical_team_key": code,
         "team_name": _canonical_team_name(code),
@@ -652,7 +662,7 @@ def _unmatched_row(
         "operator_paper_review": False,
         "diagnostic_only": True,
         "shadow_paper_only": True,
-    }
+    })
 
 
 def _scope_validation(payload: dict[str, Any], *, expected_platform: str, season: str) -> dict[str, Any]:
@@ -1066,7 +1076,7 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     blockers = Counter()
     for row in rows:
         blockers.update(row.get("blockers") or [])
-    return {
+    summary = {
         "rows": len(rows),
         "operator_arb_review_rows": actions.get(ACTION_OPERATOR_REVIEW, 0),
         "operator_paper_review_rows": actions.get(ACTION_OPERATOR_REVIEW, 0),
@@ -1082,10 +1092,33 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "standard_paper_candidate_rows": 0,
         "top_blockers": [{"blocker": key, "count": value} for key, value in blockers.most_common(15)],
     }
+    summary.update(candidate_counts(rows))
+    summary["paper_candidate_rows"] = summary["total_paper_candidate_rows"]
+    summary["standard_paper_candidate_rows"] = summary["total_paper_candidate_rows"]
+    return summary
 
 
 def _scope_is_valid(report: dict[str, Any]) -> bool:
     return bool(report.get("scope_validation", {}).get("valid"))
+
+
+def _candidate_row_md(row: dict[str, Any]) -> str:
+    return (
+        "| "
+        f"{_md(row.get('paper_candidate_class'))} | {_md(row.get('candidate_action'))} | "
+        f"{_md(row.get('gross_edge'))} | {_md(row.get('net_edge'))} | {_md(row.get('available_notional'))} | "
+        f"{_md(', '.join(row.get('assumptions_accepted') or []))} | "
+        f"{_md(', '.join((row.get('blockers') or []) + (row.get('risk_notes') or [])))} |"
+    )
+
+
+def _row_list(rows: list[dict[str, Any]]) -> list[str]:
+    if not rows:
+        return ["_None._"]
+    return [
+        f"- `{_md(row.get('row_id'))}` action=`{_md(row.get('action'))}` net=`{_md(row.get('net_edge'))}` blockers=`{_md(', '.join(row.get('blockers') or []))}`"
+        for row in rows
+    ]
 
 
 def _declared_team_count(payload: dict[str, Any]) -> int | None:

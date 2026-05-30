@@ -12,6 +12,7 @@ from relative_value.sports_mlb_daily_residual_risk_scout import (
     ACTION_WATCH,
     B_INSUFFICIENT_DEPTH,
     B_LIVE_GAME_EXCLUDED,
+    B_LIVE_GAME_EXCLUDED_OPERATOR,
     B_MISSING_DEPTH,
     B_MISSING_FEE_MODEL,
     B_MISSING_POLYMARKET_SIZE,
@@ -53,12 +54,14 @@ def test_acceptance_allows_normal_state_shadow_review_when_quotes_depth_and_fees
         polymarket_evidence=polymarket,
         date="2026-05-28",
         accept_mlb_daily_contingency_risk=True,
+        operator_risk_mode="standard",
         generated_at=NOW,
     )
 
-    review_rows = [row for row in report["rows"] if row["action"] == ACTION_RESIDUAL_REVIEW]
-    assert review_rows
-    row = review_rows[0]
+    paper_rows = [row for row in report["rows"] if row["action"] == "PAPER_CANDIDATE"]
+    assert paper_rows
+    row = paper_rows[0]
+    assert row["paper_candidate_class"] == "OPERATOR_ACCEPTED_RISK"
     assert row["direction"] == "A"
     assert row["gross_edge"] > 0
     assert row["net_edge"] > 0
@@ -71,9 +74,8 @@ def test_acceptance_allows_normal_state_shadow_review_when_quotes_depth_and_fees
     assert row["residual_risk_type"] == RESIDUAL_RISK_TYPE
     assert row["strict_exact_arb"] is False
     assert row["exact_ready"] is False
-    assert row["paper_candidate"] is False
-    assert report["summary_counts"]["residual_review_rows"] == 1
-    assert report["summary_counts"]["operator_arb_review_rows"] == 0
+    assert row["paper_candidate"] is True
+    assert report["summary_counts"]["operator_paper_candidate_rows"] >= 1
 
 
 def test_operator_flag_allows_operator_review_when_all_gates_pass(tmp_path: Path) -> None:
@@ -85,19 +87,19 @@ def test_operator_flag_allows_operator_review_when_all_gates_pass(tmp_path: Path
         date="2026-05-28",
         accept_mlb_daily_contingency_risk=True,
         operator_accepted_as_arb=True,
+        operator_risk_mode="standard",
         generated_at=NOW,
     )
 
-    operator_rows = [row for row in report["rows"] if row["action"] == ACTION_OPERATOR_REVIEW]
-    assert operator_rows
-    row = operator_rows[0]
+    paper_rows = [row for row in report["rows"] if row["action"] == "PAPER_CANDIDATE"]
+    assert paper_rows
+    row = paper_rows[0]
+    assert row["paper_candidate_class"] == "OPERATOR_ACCEPTED_RISK"
     assert row["operator_accepted_as_arb"] is True
     assert row["operator_paper_review"] is True
     assert row["mathematical_strict_exact_arb"] is False
     assert row["exact_ready"] is False
-    assert row["standard_paper_candidate"] is False
-    assert report["operator_arb_review_rows"] == 1
-    assert report["summary_counts"]["operator_arb_review_rows"] == 1
+    assert report["summary_counts"]["operator_paper_candidate_rows"] >= 1
 
 
 def test_outputs_never_emit_forbidden_paper_candidate_literal(tmp_path: Path) -> None:
@@ -126,7 +128,7 @@ def test_outputs_never_emit_forbidden_paper_candidate_literal(tmp_path: Path) ->
     assert all(row["paper_candidate"] is False for row in report["rows"])
 
 
-def test_live_game_excluded_by_default(tmp_path: Path) -> None:
+def test_live_game_can_become_operator_review_by_default(tmp_path: Path) -> None:
     kalshi, polymarket = _write_evidence(
         tmp_path,
         [_kalshi_game(status="LIVE - Top 3rd")],
@@ -138,15 +140,40 @@ def test_live_game_excluded_by_default(tmp_path: Path) -> None:
         polymarket_evidence=polymarket,
         date="2026-05-28",
         accept_mlb_daily_contingency_risk=True,
+        operator_accepted_as_arb=True,
+        operator_risk_mode="standard",
         generated_at=NOW,
     )
 
-    assert all(B_LIVE_GAME_EXCLUDED in row["blockers"] for row in report["rows"])
-    assert all(row["action"] == ACTION_WATCH for row in report["rows"])
+    assert any(row["action"] == "PAPER_CANDIDATE" and row["paper_candidate_class"] == "OPERATOR_ACCEPTED_RISK" for row in report["rows"])
+    assert all(B_LIVE_GAME_EXCLUDED not in row["blockers"] for row in report["rows"])
+    assert all(B_LIVE_GAME_EXCLUDED_OPERATOR not in row["blockers"] for row in report["rows"])
+    assert all("live_game_included_operator_risk" in row["live_review_flags"] for row in report["rows"])
     assert report["summary_counts"]["live_game_rows"] == 2
 
 
-def test_live_game_only_proceeds_when_include_live_games_is_present(tmp_path: Path) -> None:
+def test_exclude_live_games_blocks_live_game_with_operator_flag(tmp_path: Path) -> None:
+    kalshi, polymarket = _write_evidence(
+        tmp_path,
+        [_kalshi_game(status="LIVE - Top 3rd")],
+        [_polymarket_game(status="LIVE (in progress)")],
+    )
+
+    report = build_sports_mlb_daily_residual_risk_report(
+        kalshi_evidence=kalshi,
+        polymarket_evidence=polymarket,
+        date="2026-05-28",
+        accept_mlb_daily_contingency_risk=True,
+        operator_accepted_as_arb=True,
+        exclude_live_games=True,
+        generated_at=NOW,
+    )
+
+    assert all(row["action"] == ACTION_WATCH for row in report["rows"])
+    assert all(B_LIVE_GAME_EXCLUDED_OPERATOR in row["blockers"] for row in report["rows"])
+
+
+def test_legacy_include_live_games_flag_is_non_blocking(tmp_path: Path) -> None:
     kalshi, polymarket = _write_evidence(
         tmp_path,
         [_kalshi_game(status="LIVE - Top 3rd")],
@@ -159,10 +186,11 @@ def test_live_game_only_proceeds_when_include_live_games_is_present(tmp_path: Pa
         date="2026-05-28",
         accept_mlb_daily_contingency_risk=True,
         include_live_games=True,
+        operator_risk_mode="standard",
         generated_at=NOW,
     )
 
-    assert any(row["action"] == ACTION_RESIDUAL_REVIEW for row in report["rows"])
+    assert any(row["action"] == "PAPER_CANDIDATE" for row in report["rows"])
     assert all(B_LIVE_GAME_EXCLUDED not in row["blockers"] for row in report["rows"])
 
 
@@ -174,6 +202,7 @@ def test_missing_fee_model_prevents_reviewable_net_edge(tmp_path: Path) -> None:
         polymarket_evidence=polymarket,
         date="2026-05-28",
         accept_mlb_daily_contingency_risk=True,
+        operator_risk_mode="standard",
         generated_at=NOW,
         fee_models_available=False,
     )
@@ -182,8 +211,9 @@ def test_missing_fee_model_prevents_reviewable_net_edge(tmp_path: Path) -> None:
     assert positive_gross["net_edge_status"] == "FEE_REVIEW_REQUIRED"
     assert positive_gross["net_edge"] is None
     assert B_MISSING_FEE_MODEL in positive_gross["blockers"]
-    assert positive_gross["action"] == ACTION_MANUAL_REVIEW
-    assert report["summary_counts"]["residual_review_rows"] == 0
+    assert positive_gross["action"] == "WATCH"
+    assert positive_gross["paper_candidate"] is False
+    assert report["summary_counts"]["operator_paper_candidate_rows"] == 0
 
 
 def test_quote_age_above_default_blocks_review(tmp_path: Path) -> None:
@@ -273,6 +303,51 @@ def test_insufficient_available_notional_blocks_operator_review(tmp_path: Path) 
     assert affected["available_notional"] == 2.5
     assert B_INSUFFICIENT_DEPTH in affected["blockers"]
     assert affected["action"] == ACTION_WATCH
+
+
+def test_missing_polymarket_rules_do_not_block_operator_after_acceptance(tmp_path: Path) -> None:
+    kalshi, polymarket = _write_evidence(
+        tmp_path,
+        [_kalshi_game()],
+        [_polymarket_game(residual_rule_caveats=True)],
+    )
+
+    report = build_sports_mlb_daily_residual_risk_report(
+        kalshi_evidence=kalshi,
+        polymarket_evidence=polymarket,
+        date="2026-05-28",
+        accept_mlb_daily_contingency_risk=True,
+        operator_accepted_as_arb=True,
+        operator_risk_mode="standard",
+        generated_at=NOW,
+    )
+
+    row = next(row for row in report["rows"] if row["direction"] == "A")
+    assert row["action"] == "PAPER_CANDIDATE"
+    assert row["paper_candidate_class"] == "OPERATOR_ACCEPTED_RISK"
+    assert "missing_suspended_or_shortened_game_rules" not in row["blockers"]
+    assert "missing_extra_innings_rules" not in row["blockers"]
+    assert row["accepted_risk_notes"]
+
+
+def test_missing_polymarket_rules_block_without_operator_acceptance(tmp_path: Path) -> None:
+    kalshi, polymarket = _write_evidence(
+        tmp_path,
+        [_kalshi_game()],
+        [_polymarket_game(residual_rule_caveats=True)],
+    )
+
+    report = build_sports_mlb_daily_residual_risk_report(
+        kalshi_evidence=kalshi,
+        polymarket_evidence=polymarket,
+        date="2026-05-28",
+        generated_at=NOW,
+    )
+
+    row = next(row for row in report["rows"] if row["direction"] == "A")
+    assert "missing_suspended_or_shortened_game_rules" in row["blockers"]
+    assert "missing_extra_innings_rules" in row["blockers"]
+    assert row["action"] != ACTION_OPERATOR_REVIEW
 
 
 def test_team_matching_handles_laa_det_and_hou_tex_aliases(tmp_path: Path) -> None:
@@ -415,7 +490,7 @@ def test_outcome_teams_not_equal_home_away_are_blocked(tmp_path: Path) -> None:
 
 
 def test_residual_cancellation_and_postponement_mismatch_notes_are_retained(tmp_path: Path) -> None:
-    kalshi, polymarket = _write_evidence(tmp_path, [_kalshi_game()], [_polymarket_game()])
+    kalshi, polymarket = _write_evidence(tmp_path, [_kalshi_game()], [_polymarket_game(residual_rule_caveats=True)])
 
     report = build_sports_mlb_daily_residual_risk_report(
         kalshi_evidence=kalshi,
@@ -617,8 +692,21 @@ def _polymarket_game(
     outcomes: list[str] | None = None,
     size_unit: str | None = "shares",
     include_depth: bool = True,
+    residual_rule_caveats: bool = False,
 ) -> dict:
     outcome_names = outcomes or [team_a, team_b]
+    if residual_rule_caveats:
+        postponement_rules = "If postponed, market remains open until completed."
+        cancellation_rules = "If canceled entirely with no make-up game, resolves 50-50."
+        shortened_rules = "Not explicitly stated in rules text."
+        extra_rules = "Not explicitly stated; winner in any number of innings counts."
+        blockers_remaining = ["missing_suspended_or_shortened_game_rules", "missing_extra_innings_rules"]
+    else:
+        postponement_rules = "If not started within 48h, resolves at last fair market price."
+        cancellation_rules = "If canceled and not started within 48h, resolves at last fair market price."
+        shortened_rules = "If suspended and not resumed within 48h, last fair market price."
+        extra_rules = "All extra innings included."
+        blockers_remaining = []
     return {
         "platform": "Polymarket",
         "cross_platform_game_key": key,
@@ -635,10 +723,11 @@ def _polymarket_game(
                 team_b: f"token-{team_b}",
             },
         },
-        "postponement_rules": "If postponed, market remains open until completed.",
-        "cancellation_rules": "If canceled entirely with no make-up game, resolves 50-50.",
-        "suspended_or_shortened_game_rules": "Not explicitly stated in rules text.",
-        "extra_innings_rules": "Not explicitly stated; winner in any number of innings counts.",
+        "postponement_rules": postponement_rules,
+        "cancellation_rules": cancellation_rules,
+        "suspended_or_shortened_game_rules": shortened_rules,
+        "extra_innings_rules": extra_rules,
+        "blockers_remaining": blockers_remaining,
         "quotes": {
             "market_status_at_fetch": status,
             "quote_timestamp_iso": quote_timestamp,

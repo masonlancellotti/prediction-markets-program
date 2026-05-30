@@ -124,6 +124,33 @@ def test_target_exit_distance_computed_when_exit_value_available(tmp_path: Path)
     assert row["target_exit_distance_status"] == "available"
 
 
+def test_target_exit_pair_value_is_capped_at_settlement_payoff(tmp_path: Path) -> None:
+    report_path = _write_source_report(tmp_path, rows=[_source_row(current_exit_pair_value=0.98)])
+
+    report = _build(report_path, target_exit_edge=0.05)
+    row = report["rows"][0]
+
+    assert row["uncapped_target_exit_pair_value"] == 1.034
+    assert row["target_exit_pair_value"] == 1.0
+    assert row["target_exit_capped_by_settlement_payoff"] is True
+    assert row["target_exit_distance"] == 0.02
+    assert "target exit capped at normal settlement payoff" in row["notes"]
+    assert "target_exit_pair_value_above_normal_payoff" not in row["blockers"]
+
+
+def test_paired_basket_carry_fields_are_present(tmp_path: Path) -> None:
+    report_path = _write_source_report(tmp_path, rows=[_source_row()])
+
+    report = _build(report_path)
+    row = report["rows"][0]
+
+    assert row["paired_basket_entry_cost"] == row["entry_cost"]
+    assert row["paired_basket_settlement_payoff"] == 1.0
+    assert row["settlement_carry_net_edge"] == row["net_hold_edge"]
+    assert row["settlement_carry_return_on_capital"] == row["return_on_capital"]
+    assert row["convergence_exit_plan"] == row["recommended_plan"]
+
+
 def test_positive_immediate_unwind_after_fees_can_exit_now_review(tmp_path: Path) -> None:
     report_path = _write_source_report(
         tmp_path,
@@ -158,6 +185,28 @@ def test_target_exit_already_met_can_be_reviewed(tmp_path: Path) -> None:
 
     assert report["rows"][0]["recommended_plan"] == PLAN_EXIT_TARGET_MET
     assert report["summary_counts"]["exit_target_already_met_rows"] == 1
+
+
+def test_markdown_explains_paired_basket_carry_not_directional_hold(tmp_path: Path) -> None:
+    report_path = _write_source_report(tmp_path, rows=[_source_row()])
+    json_output = tmp_path / "plan.json"
+    markdown_output = tmp_path / "plan.md"
+
+    write_operator_arb_convergence_plan_files(
+        input_report=report_path,
+        json_output=json_output,
+        markdown_output=markdown_output,
+        target_exit_edge=0.015,
+        min_hold_net_edge=0.02,
+        min_annualized_return=0.10,
+        settlement_date="2026-10-31",
+        max_capital_tieup_days=45,
+        generated_at=NOW,
+    )
+
+    markdown = markdown_output.read_text(encoding="utf-8")
+    assert "Carry-to-settlement means carrying both hedged legs" in markdown
+    assert "not a directional single-leg hold" in markdown
 
 
 def test_exit_gross_positive_but_exit_fee_unavailable_requires_manual_review(tmp_path: Path) -> None:

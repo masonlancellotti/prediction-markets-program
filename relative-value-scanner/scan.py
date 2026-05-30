@@ -2364,6 +2364,8 @@ def main(argv: list[str] | None = None) -> int:
     mt_fill.add_argument("--order-status", choices=("filled", "partial", "not_filled", "canceled", "rejected"), default="filled")
     mt_fill.add_argument("--notes", type=str, default=None)
     mt_fill.add_argument("--output-root", type=Path, default=_MICRO_ROOT)
+    mt_fill.add_argument("--notify-provider", choices=PROVIDER_NAMES, default="dry_run")
+    mt_fill.add_argument("--notify-send", action="store_true")
 
     mt_final = subparsers.add_parser(
         "finalize-crypto-micro-test",
@@ -2373,6 +2375,8 @@ def main(argv: list[str] | None = None) -> int:
     mt_final.add_argument("--settlement-status", type=str, default=None)
     mt_final.add_argument("--manual-notes", type=str, default=None)
     mt_final.add_argument("--output-root", type=Path, default=_MICRO_ROOT)
+    mt_final.add_argument("--notify-provider", choices=PROVIDER_NAMES, default="dry_run")
+    mt_final.add_argument("--notify-send", action="store_true")
 
     mt_report = subparsers.add_parser(
         "crypto-micro-test-report",
@@ -2430,6 +2434,10 @@ def main(argv: list[str] | None = None) -> int:
     trig.add_argument("--live", action="store_true")
     trig.add_argument("--i-understand-this-places-real-orders", action="store_true")
     trig.add_argument("--fail-fast", action="store_true")
+    trig.add_argument("--notify-provider", choices=PROVIDER_NAMES, default="dry_run")
+    trig.add_argument("--notify-send", action="store_true")
+    trig.add_argument("--notify-on", default="submitted,filled,partial,canceled,rejected,emergency,finalized")
+    trig.add_argument("--notify-dedup-seconds", type=float, default=30.0)
 
     cov_audit = subparsers.add_parser(
         "crypto-arb-surface-coverage-audit",
@@ -2496,6 +2504,14 @@ def main(argv: list[str] | None = None) -> int:
     fast.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
     fast.add_argument("--executable-venues", default="kalshi,polymarket",
                       help="Venues allowed for automated live orders (CDNA never executable).")
+    fast.add_argument("--quote-refresh-workers", type=int, default=8,
+                      help="Bounded concurrency for public quote refresh.")
+    fast.add_argument("--quote-request-timeout-ms", type=float, default=750.0)
+    fast.add_argument("--max-quote-refresh-latency-ms", type=float, default=1500.0)
+    fast.add_argument("--max-watched-candidates", type=int, default=20)
+    fast.add_argument("--max-watched-legs", type=int, default=40)
+    fast.add_argument("--prefer-priced-templates", action="store_true")
+    fast.add_argument("--prefer-near-miss-templates", action="store_true")
     fast.add_argument("--quote-loop-interval-ms", type=float, default=500.0)
     fast.add_argument("--iterations", type=int, default=1)
     fast.add_argument("--min-net-edge", type=float, default=0.10)
@@ -2516,6 +2532,10 @@ def main(argv: list[str] | None = None) -> int:
     fast.add_argument("--dry-run", action="store_true")
     fast.add_argument("--live", action="store_true")
     fast.add_argument("--i-understand-this-places-real-orders", action="store_true")
+    fast.add_argument("--notify-provider", choices=PROVIDER_NAMES, default="dry_run")
+    fast.add_argument("--notify-send", action="store_true")
+    fast.add_argument("--notify-on", default="submitted,filled,partial,canceled,rejected,emergency,finalized")
+    fast.add_argument("--notify-dedup-seconds", type=float, default=30.0)
 
     # --- Daily phone summary notifier (reporting only) ------------------------ #
     summary_parser = subparsers.add_parser(
@@ -5363,6 +5383,10 @@ def main(argv: list[str] | None = None) -> int:
             cdna_evidence_dir=args.cdna_evidence_dir, max_cdna_snapshot_age_seconds=args.max_cdna_snapshot_age_seconds,
             require_cdna_fresh_for_cdna_candidates=args.require_cdna_fresh_for_cdna_candidates,
             cdna_operator_size_cap=args.cdna_operator_size_cap, executable_venues=args.executable_venues,
+            quote_refresh_workers=args.quote_refresh_workers, quote_request_timeout_ms=args.quote_request_timeout_ms,
+            max_quote_refresh_latency_ms=args.max_quote_refresh_latency_ms,
+            max_watched_candidates=args.max_watched_candidates, max_watched_legs=args.max_watched_legs,
+            prefer_priced_templates=args.prefer_priced_templates, prefer_near_miss_templates=args.prefer_near_miss_templates,
             max_slippage_cents=args.max_slippage_cents,
             order_timeout_ms=args.order_timeout_ms, max_total_notional=args.max_total_notional,
             max_platform_notional=args.max_platform_notional, max_leg_notional=args.max_leg_notional,
@@ -5370,6 +5394,8 @@ def main(argv: list[str] | None = None) -> int:
             max_residual_exposure=args.max_residual_exposure, execution_style=args.execution_style,
             output_dir=args.output_dir, dry_run=args.dry_run, live=args.live,
             i_understand_this_places_real_orders=args.i_understand_this_places_real_orders,
+            notify_provider=args.notify_provider, notify_send=args.notify_send, notify_on=args.notify_on,
+            notify_dedup_seconds=args.notify_dedup_seconds,
         )
         print(
             "trigger_crypto_fast_path=OK dry_run_default=true protected_limit_buy_only=true market_orders=false "
@@ -5378,6 +5404,8 @@ def main(argv: list[str] | None = None) -> int:
             f"executable_universe_candidate_count={summary.get('executable_universe_candidate_count')} "
             f"non_executable_scan_candidate_count={summary.get('non_executable_scan_candidate_count')} "
             f"watched_leg_count={summary.get('watched_leg_count')} "
+            f"watch_narrowing={summary.get('watch_narrowing')} "
+            f"quote_refresh_metrics={summary.get('quote_refresh_metrics')} "
             f"zero_universe_reason={summary.get('zero_universe_reason')} "
             f"best_watched_edge={summary.get('best_watched_edge')} "
             f"adapter_status={summary.get('adapter_status')} "
@@ -5438,6 +5466,8 @@ def main(argv: list[str] | None = None) -> int:
             cdna_operator_size_cap=args.cdna_operator_size_cap, source_basis_buffer_bps=args.source_basis_buffer_bps,
             output_dir=args.output_dir, execution_style=args.execution_style, dry_run=args.dry_run, live=args.live,
             i_understand_this_places_real_orders=args.i_understand_this_places_real_orders, fail_fast=args.fail_fast,
+            notify_provider=args.notify_provider, notify_send=args.notify_send, notify_on=args.notify_on,
+            notify_dedup_seconds=args.notify_dedup_seconds,
         )
         print(
             "trigger_crypto_structural_arb=OK dry_run_default=true protected_limit_buy_only=true "
@@ -5469,7 +5499,7 @@ def main(argv: list[str] | None = None) -> int:
             filled_quantity=args.filled_quantity, fees=args.fees, order_start_time_utc=args.order_start_time_utc,
             order_submit_time_utc=args.order_submit_time_utc, first_fill_time_utc=args.first_fill_time_utc,
             final_fill_time_utc=args.final_fill_time_utc, order_status=args.order_status, notes=args.notes,
-            output_root=args.output_root,
+            output_root=args.output_root, notify_provider=args.notify_provider, notify_send=args.notify_send,
         )
         print(
             "record_crypto_micro_fill=OK forensic_journal_only=true live_order_placement=false "
@@ -5480,6 +5510,7 @@ def main(argv: list[str] | None = None) -> int:
         final = finalize_crypto_micro_test(
             test_id=args.test_id, settlement_status=args.settlement_status,
             manual_notes=args.manual_notes, output_root=args.output_root,
+            notify_provider=args.notify_provider, notify_send=args.notify_send,
         )
         print(
             "finalize_crypto_micro_test=OK forensic_journal_only=true live_order_placement=false "

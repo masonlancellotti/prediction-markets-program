@@ -519,3 +519,40 @@ def test_live_mode_fails_if_quote_stale(tmp_path: Path) -> None:
                    max_quote_age_ms=750.0, **_live_kw())
     d = _decision(tmp_path / "fp")
     assert d["do_trade"] is False and "quote_age_exceeds_max" in d["do_not_trade_reasons"]
+
+
+# ---------------------------------------------------------------------------- #
+# Watch-universe narrowing + refresh prioritization                            #
+# ---------------------------------------------------------------------------- #
+def _many_candidates(n=5):
+    cands, watched = [], []
+    for i in range(n):
+        legs = [{"leg_key": f"k{i}", "platform": "kalshi", "market_id_or_ticker": f"K{i}", "side": "NO",
+                 "reference_ask": 0.3, "fee": 0.01, "available_size_or_cap": 50.0},
+                {"leg_key": f"p{i}", "platform": "polymarket", "market_id_or_ticker": f"P{i}", "side": "NO",
+                 "token_id": f"T{i}", "reference_ask": 0.5, "fee": 0.01, "available_size_or_cap": 50.0}]
+        cands.append({"candidate_id": f"c{i}", "candidate_type": "CROSS_VENUE_THRESHOLD_BASIS",
+                      "expected_net_edge_after_fees": round(0.12 - i * 0.02, 4), "legs": legs})
+        watched += [dict(leg) for leg in legs]
+    return cands, watched
+
+
+def test_max_watched_legs_and_candidates_limit_universe() -> None:
+    from relative_value.crypto_fast_path_executor import _narrow_watch_universe, _priority_leg_keys
+    cands, watched = _many_candidates(5)
+    nc, nw = _narrow_watch_universe(cands, watched, max_watched_candidates=2, max_watched_legs=3,
+                                    prefer_priced=True, prefer_near_miss=True)
+    assert len(nc) <= 2 and len(nw) <= 3  # universe narrowed
+    assert nc[0]["candidate_id"] == "c0"  # highest expected edge kept first
+    pk = _priority_leg_keys(cands)
+    assert pk[:2] == ["k0", "p0"]  # best candidate's legs refreshed first
+
+
+def test_fast_path_summary_reports_narrowing(tmp_path: Path) -> None:
+    cands, watched = _many_candidates(5)
+    uni = tmp_path / "many.json"
+    uni.write_text(json.dumps({"schema_kind": "active_crypto_candidate_universe_v1",
+                               "candidates": cands, "watched_legs": watched}), encoding="utf-8")
+    summary = _run(tmp_path, universe=uni, max_watched_candidates=2, max_watched_legs=3)
+    assert summary["watch_narrowing"]["watched_candidates_before"] == 5
+    assert summary["watched_leg_count"] <= 3

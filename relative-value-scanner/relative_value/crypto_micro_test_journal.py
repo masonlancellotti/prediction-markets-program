@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from relative_value.live_trade_notifications import send_trade_journal_notification
+
 
 SCHEMA_KIND = "crypto_micro_test_journal_v1"
 SCHEMA_VERSION = 1
@@ -293,6 +295,9 @@ def record_crypto_micro_fill(
     notes: str | None = None,
     output_root: Path = DEFAULT_OUTPUT_ROOT,
     now: datetime | None = None,
+    notify_provider: str = "dry_run",
+    notify_send: bool = False,
+    notification_http_post: Any = None,
 ) -> dict[str, Any]:
     ts = _now(now)
     test_dir = _test_dir(output_root, test_id)
@@ -351,7 +356,18 @@ def record_crypto_micro_fill(
                inputs={"platform": platform, "market_id_or_ticker": market_id_or_ticker, "side": side,
                        "order_status": order_status, "filled_price": fp, "filled_quantity": fq, "fees": fee_actual},
                derived=derived, warnings=warnings, now=ts)
-    return {"status": "OK", "test_id": test_id, "leg_key": record["leg_key"], "derived": derived, "warnings": warnings}
+    notification = None
+    if str(order_status).lower() in {"filled", "partial", "canceled", "rejected", "not_filled"}:
+        notification = send_trade_journal_notification(
+            event_type=str(order_status).lower(),
+            payload={"platform": platform, "side": side, "quantity": fq, "price": fp, "pnl": None},
+            provider_name=notify_provider, send=notify_send, http_post=notification_http_post, clock=lambda: ts,
+        )
+        _log_event(test_dir, notification.get("event_log_event_type") or "notification_skipped",
+                   "record-crypto-micro-fill", inputs={"notification": notification},
+                   derived={}, warnings=[], now=ts)
+    return {"status": "OK", "test_id": test_id, "leg_key": record["leg_key"], "derived": derived,
+            "warnings": warnings, "notification": notification}
 
 
 # ---------------------------------------------------------------------------- #
@@ -392,6 +408,7 @@ def append_crypto_micro_quote_snapshot(
 def finalize_crypto_micro_test(
     *, test_id: str, settlement_status: str | None = None, manual_notes: str | None = None,
     output_root: Path = DEFAULT_OUTPUT_ROOT, now: datetime | None = None,
+    notify_provider: str = "dry_run", notify_send: bool = False, notification_http_post: Any = None,
 ) -> dict[str, Any]:
     ts = _now(now)
     test_dir = _test_dir(output_root, test_id)
@@ -520,6 +537,17 @@ def finalize_crypto_micro_test(
                inputs={"settlement_status": settlement_status, "manual_notes": manual_notes},
                derived={"verdict": verdict, "guarantee_holds": guarantee_holds,
                         "actual_net_edge_after_fees_if_all_filled": actual_net_edge}, warnings=warnings, now=ts)
+    notification = send_trade_journal_notification(
+        event_type="finalized",
+        payload={"platform": "all", "side": "n/a", "quantity": "n/a", "price": "n/a",
+                 "pnl": actual_net_edge},
+        provider_name=notify_provider, send=notify_send, http_post=notification_http_post, clock=lambda: ts,
+    )
+    final["notification"] = notification
+    _write_json(test_dir / "final_report.json", final)
+    _log_event(test_dir, notification.get("event_log_event_type") or "notification_skipped",
+               "finalize-crypto-micro-test", inputs={"notification": notification},
+               derived={}, warnings=[], now=ts)
     return final
 
 

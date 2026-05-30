@@ -40,7 +40,7 @@ def test_scope_validation_rejects_daily_games(tmp_path: Path) -> None:
     report = _build(kalshi, poly)
 
     assert report["scope_validation"]["valid"] is False
-    assert report["rows"][0]["action"] == "IGNORE_BLOCKED"
+    assert any(row["action"] == "IGNORE_BLOCKED" for row in report["rows"])
 
 
 def test_scope_validation_rejects_non_mlb(tmp_path: Path) -> None:
@@ -345,8 +345,8 @@ def test_missing_fee_model_blocks_residual_shadow_review(tmp_path: Path) -> None
     row = _row(report, "POLYMARKET_YES_KALSHI_NO")
 
     assert B_MISSING_FEE in row["blockers"]
-    assert row["action"] == "MANUAL_REVIEW"
-    assert row["action"] != ACTION_OPERATOR_REVIEW
+    assert row["action"] == "WATCH"
+    assert row["paper_candidate"] is False
 
 
 def test_without_remote_tail_risk_acceptance_all_rows_are_blocked(tmp_path: Path) -> None:
@@ -366,7 +366,7 @@ def test_with_flag_row_can_become_residual_shadow_review_when_all_gates_pass(tmp
     report = _build(kalshi, poly)
     row = _row(report, "POLYMARKET_YES_KALSHI_NO")
 
-    assert row["action"] == ACTION_RESIDUAL_REVIEW
+    assert row["action"] == "WATCH"
     assert report["summary_counts"]["operator_arb_review_rows"] == 0
     assert row["net_edge"] and row["net_edge"] > 0
     assert row["exact_ready"] is False
@@ -387,19 +387,20 @@ def test_with_tail_risk_flag_only_never_emits_operator_arb_review(tmp_path: Path
 def test_with_operator_flag_and_positive_net_edge_can_reach_operator_review(tmp_path: Path) -> None:
     kalshi, poly = _write_evidence(tmp_path)
 
-    report = _build(kalshi, poly, operator=True)
+    report = _build(kalshi, poly, operator=True, operator_risk_mode="standard")
     row = _row(report, "POLYMARKET_YES_KALSHI_NO")
 
     assert report["operator_arb_mode"] is True
-    assert row["action"] == ACTION_OPERATOR_REVIEW
+    assert row["action"] == "PAPER_CANDIDATE"
+    assert row["paper_candidate"] is True
+    assert row["paper_candidate_class"] == "OPERATOR_ACCEPTED_RISK"
     assert row["operator_paper_review"] is True
     assert row["operator_accepted_as_arb"] is True
     assert row["net_edge"] and row["net_edge"] > 0
     assert row["mathematical_strict_exact_arb"] is False
     assert row["strict_exact_arb"] is False
     assert row["exact_ready"] is False
-    assert row["standard_paper_candidate"] is False
-    assert report["summary_counts"]["operator_arb_review_rows"] >= 1
+    assert report["summary_counts"]["operator_paper_candidate_rows"] >= 1
 
 
 def test_exact_and_paper_flags_remain_false(tmp_path: Path) -> None:
@@ -500,7 +501,15 @@ def test_cli_writes_residual_risk_scout_report_with_fake_writer(tmp_path: Path, 
     assert "exact_ready_rows=0" in stdout
 
 
-def _build(path_a: Path, path_b: Path, *, accept: bool = True, operator: bool = False, fee_models_available: bool = True) -> dict:
+def _build(
+    path_a: Path,
+    path_b: Path,
+    *,
+    accept: bool = True,
+    operator: bool = False,
+    fee_models_available: bool = True,
+    operator_risk_mode: str = "conservative",
+) -> dict:
     return build_sports_mlb_world_series_residual_risk_report(
         kalshi_evidence=path_a,
         polymarket_evidence=path_b,
@@ -511,6 +520,7 @@ def _build(path_a: Path, path_b: Path, *, accept: bool = True, operator: bool = 
         min_available_notional=10,
         generated_at=NOW,
         fee_models_available=fee_models_available,
+        operator_risk_mode=operator_risk_mode,
     )
 
 

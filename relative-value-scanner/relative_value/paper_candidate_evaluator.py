@@ -10,6 +10,7 @@ from typing import Any
 from relative_value._numeric import float_or_none
 from relative_value.contract_relationship import classify_contract_relationship, report_blocking_reasons
 from relative_value.fees import FeeModel, KalshiTieredFeeModel, PolymarketConservativeFeeModel
+from relative_value.operator_paper_candidate_policy import CLASS_NONE, CLASS_STRICT
 from relative_value.same_payoff_evidence import SAME_PAYOFF_BOARD_CLASSIFIER_VERSION, SAME_PAYOFF_BOARD_SOURCE
 
 
@@ -415,11 +416,20 @@ def _ledger_row(
     kal = kalshi or {}
     poly_enrichment = _enrichment(poly)
     kalshi_enrichment = _enrichment(kal)
+    paper_candidate = action == ACTION_PAPER_CANDIDATE
     return {
         "schema_version": 1,
         "candidate_id": _candidate_id(pair, poly, kal),
         "detected_at": detected_at.isoformat(),
         "action": action,
+        "paper_candidate": paper_candidate,
+        "paper_candidate_class": CLASS_STRICT if paper_candidate else CLASS_NONE,
+        "strict_exact_arb": paper_candidate,
+        "mathematical_strict_exact_arb": paper_candidate,
+        "operator_assumptions_accepted": False,
+        "assumptions_accepted": [],
+        "risk_notes": [],
+        "candidate_action": "STRICT_EXACT_SAME_PAYOFF_PAPER_TEST" if paper_candidate else "",
         "opportunity_class": opportunity_class,
         "polymarket": _venue_row("polymarket", poly, poly_enrichment, direction),
         "kalshi": _venue_row("kalshi", kal, kalshi_enrichment, direction),
