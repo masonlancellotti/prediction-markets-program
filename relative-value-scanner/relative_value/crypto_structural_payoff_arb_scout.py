@@ -72,6 +72,7 @@ CT_SAME_PAYOFF_CHEAPER = "SAME_PAYOFF_CHEAPER_BASKET"
 CT_BUCKET_TO_THRESHOLD = "BUCKET_TO_CUMULATIVE_THRESHOLD"
 CT_CROSS_VENUE = "CROSS_VENUE_THRESHOLD_BASIS"
 CT_MONOTONICITY = "MONOTONICITY_VIOLATION"
+CT_MONOTONICITY_COVER = "THRESHOLD_MONOTONICITY_COVER"
 CT_THRESHOLD_TO_BUCKET = "THRESHOLD_TO_BUCKET_DIAGNOSTIC"
 CT_UP_DOWN = "UP_DOWN_SAME_WINDOW"
 
@@ -231,6 +232,7 @@ def build_crypto_structural_payoff_arb_scout_report(
     rows: list[dict[str, Any]] = []
     state_grids: list[dict[str, Any]] = []
     grammar_counts: Counter = Counter()
+    mono_diag: Counter = Counter()
     for asset in asset_list:
         rec = loaded.get(asset) or {}
         k = list(rec.get("kalshi_rows") or [])
@@ -241,9 +243,10 @@ def build_crypto_structural_payoff_arb_scout_report(
                 fam = _classify_row(row)
                 row["contract_family"] = fam
                 grammar_counts[fam] += 1
-        asset_rows, asset_grids = _scan_asset(asset=asset, kalshi=k, polymarket=p, cdna=c, opts=opts)
+        asset_rows, asset_grids, asset_mono = _scan_asset(asset=asset, kalshi=k, polymarket=p, cdna=c, opts=opts)
         rows.extend(asset_rows)
         state_grids.extend(asset_grids)
+        mono_diag.update(asset_mono)
 
     # Dedup, normalize new fields on diagnostic rows, then sort by adjusted edge.
     rows = _dedup_rows(rows)
@@ -287,6 +290,14 @@ def build_crypto_structural_payoff_arb_scout_report(
         "contract_grammar_counts": summary.get("contract_grammar_counts", {}),
         "candidate_type_counts": summary["candidate_type_counts"],
         "comparability_tier_counts": summary["comparability_tier_counts"],
+        "monotonicity_cover_diagnostics": {
+            "monotonicity_pairs_checked": int(mono_diag.get("pairs_checked", 0)),
+            "monotonicity_cover_candidates_generated": int(mono_diag.get("generated", 0)),
+            "monotonicity_cover_paper_candidates": int(mono_diag.get("paper_candidates", 0)),
+            "missing_yes_lower_ask": int(mono_diag.get("missing_yes_lower_ask", 0)),
+            "missing_no_higher_ask": int(mono_diag.get("missing_no_higher_ask", 0)),
+            "complement_quote_used": int(mono_diag.get("complement_quote_used", 0)),
+        },
         "basis_buffer_sensitivity": _basis_buffer_sensitivity(rows, basis_buffer_edge),
         "top_blockers": summary["top_blockers"],
         "top_fee_drag_rows": summary["top_fee_drag_rows"],
@@ -405,13 +416,14 @@ def _load_rows(
 # ---------------------------------------------------------------------------- #
 
 
-def _scan_asset(*, asset, kalshi, polymarket, cdna, opts: "_Opts") -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _scan_asset(*, asset, kalshi, polymarket, cdna, opts: "_Opts") -> tuple[list[dict[str, Any]], list[dict[str, Any]], Counter]:
     all_rows = list(kalshi) + list(polymarket) + list(cdna)
     for r in all_rows:
         if not r.get("contract_family"):
             r["contract_family"] = _classify_row(r)
     rows_out: list[dict[str, Any]] = []
     grids_out: list[dict[str, Any]] = []
+    mono_diag: Counter = Counter()
 
     # Terminal-price lane: terminal_threshold + terminal_range share P_T, grouped
     # by instant. Directional/barrier never enter this state grid.
@@ -437,13 +449,13 @@ def _scan_asset(*, asset, kalshi, polymarket, cdna, opts: "_Opts") -> tuple[list
                 "synthetic_instruments": len(synthetics),
             }
         )
-        rows_out.extend(_generate_candidates(asset=asset, instant=instant, grid=grid, pool=pool, group=group, opts=opts))
+        rows_out.extend(_generate_candidates(asset=asset, instant=instant, grid=grid, pool=pool, group=group, opts=opts, mono_diag=mono_diag))
 
     # Directional-return lane (2-state, separate; never mixed with terminal price).
     rows_out.extend(_updown_candidates(asset=asset, rows=all_rows, opts=opts))
     # Barrier/touch lane (path-dependent; never matched to terminal or up/down).
     rows_out.extend(_barrier_rows(asset=asset, rows=all_rows, opts=opts))
-    return rows_out, grids_out
+    return rows_out, grids_out, mono_diag
 
 
 def _barrier_rows(*, asset, rows, opts: "_Opts") -> list[dict[str, Any]]:
@@ -669,7 +681,7 @@ def _bucket_leg(b: dict[str, Any], opts: "_Opts") -> Leg:
 # ---------------------------------------------------------------------------- #
 
 
-def _generate_candidates(*, asset, instant, grid, pool: list[Instrument], group, opts: "_Opts") -> list[dict[str, Any]]:
+def _generate_candidates(*, asset, instant, grid, pool: list[Instrument], group, opts: "_Opts", mono_diag: Counter) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     grid_view = _grid_view(grid)
 
@@ -731,7 +743,165 @@ def _generate_candidates(*, asset, instant, grid, pool: list[Instrument], group,
     rows.extend(_monotonicity_rows(asset, instant, grid_view, group, opts))
     # G5: threshold->bucket diagnostic (adjacent thresholds imply a range; needs shorting).
     rows.extend(_threshold_to_bucket_rows(asset, instant, grid_view, group, opts))
+    # G6: threshold monotonicity covers — YES(>L) + NO(>U) for L<U, the buy-only
+    # actionable expression of a monotonicity relationship/violation.
+    rows.extend(_monotonicity_cover_rows(asset, instant, grid, grid_view, group, opts, mono_diag))
     return rows
+
+
+def _monotonicity_cover_rows(asset, instant, grid, grid_view, group, opts: "_Opts", mono_diag: Counter) -> list[dict[str, Any]]:
+    thr = [
+        r for r in group
+        if str(r.get("contract_family")) == CONTRACT_FAMILY_TERMINAL_THRESHOLD
+        and str(r.get("comparator")) == "above"
+        and r.get("threshold_or_strike") is not None
+    ]
+    thr.sort(key=lambda r: float(r["threshold_or_strike"]))
+    rows: list[dict[str, Any]] = []
+    emitted_blocked = 0
+    for i in range(len(thr)):
+        for j in range(i + 1, len(thr)):
+            lo, hi = thr[i], thr[j]
+            low_strike = float(lo["threshold_or_strike"])
+            high_strike = float(hi["threshold_or_strike"])
+            if not (low_strike < high_strike - 1e-9):
+                continue  # same strike -> a cross-venue complement, not a ladder cover
+            mono_diag["pairs_checked"] += 1
+            row = _build_mono_cover(asset, instant, grid, grid_view, lo, hi, low_strike, high_strike, opts, mono_diag)
+            positive = row["net_edge_after_fees"] is not None and row["net_edge_after_fees"] > 0
+            # Positive-net covers always emit; blocked/negative covers are sampled
+            # (capped) so they are visible without flooding a deep ladder.
+            if positive:
+                rows.append(row)
+                mono_diag["generated"] += 1
+                if row["paper_candidate"]:
+                    mono_diag["paper_candidates"] += 1
+            elif emitted_blocked < 30:
+                rows.append(row)
+                mono_diag["generated"] += 1
+                emitted_blocked += 1
+    return rows
+
+
+def _no_ask_with_complement(row: dict[str, Any]) -> tuple[float | None, float | None, bool]:
+    """Return ``(no_ask, no_size, complement_used)``. Prefer the direct NO ask;
+    fall back to a complement-derived ask from an executable YES bid
+    (NO ask = 1 - YES bid) — a limited-depth quote, flagged for the operator."""
+    q = row.get("quote") or {}
+    direct = _valid_ask(q.get("no_ask"))
+    if direct is not None:
+        return direct, _to_float(q.get("no_ask_size")), False
+    yes_bid = _to_float(q.get("yes_bid"))
+    if yes_bid is not None and 0.0 <= yes_bid <= 1.0:
+        return round(1.0 - yes_bid, 6), _to_float(q.get("yes_bid_size")), True
+    return None, None, False
+
+
+def _build_mono_cover(asset, instant, grid, grid_view, lo, hi, low_strike, high_strike, opts: "_Opts", mono_diag: Counter) -> dict[str, Any]:
+    q_lo = lo.get("quote") or {}
+    yes_lower_ask = _valid_ask(q_lo.get("yes_ask"))
+    yes_lower_size = _to_float(q_lo.get("yes_ask_size"))
+    no_higher_ask, no_higher_size, complement_used = _no_ask_with_complement(hi)
+    if complement_used:
+        mono_diag["complement_quote_used"] += 1
+
+    leg_yes = _make_leg(lo, str(lo["platform"]), "YES", yes_lower_ask, yes_lower_size, opts)
+    leg_no = _make_leg(hi, str(hi["platform"]), "NO", no_higher_ask, no_higher_size, opts)
+    legs = [leg_yes, leg_no]
+
+    blockers: list[str] = []
+    if yes_lower_ask is None:
+        blockers.append("missing_yes_lower_ask")
+        mono_diag["missing_yes_lower_ask"] += 1
+    if no_higher_ask is None:
+        blockers.append("missing_no_higher_ask")
+        mono_diag["missing_no_higher_ask"] += 1
+    if not (low_strike < high_strike):
+        blockers.append("threshold_order_invalid")
+    if _stale(lo, opts.generated, opts.max_quote_age_seconds) or _stale(hi, opts.generated, opts.max_quote_age_seconds):
+        blockers.append("stale_or_missing_quote")
+    if leg_yes.available_size_or_cap is None or leg_no.available_size_or_cap is None:
+        blockers.append("missing_quote_depth")
+
+    cross_source = bool(lo.get("price_source") and hi.get("price_source") and lo.get("price_source") != hi.get("price_source"))
+    cross_platform = lo.get("platform") != hi.get("platform")
+    cross = cross_source or cross_platform
+    if cross:
+        blockers.append("source_index_mismatch")
+
+    total_cost = None
+    net = None
+    if leg_yes.all_in_cost is not None and leg_no.all_in_cost is not None:
+        total_cost = round(leg_yes.all_in_cost + leg_no.all_in_cost, 8)
+        net = round(1.0 - total_cost, 8)
+        if net <= 0:
+            blockers.append("no_positive_net_edge_after_fees")
+    basis_buffer = opts.basis_buffer_edge if cross else 0.0
+    adjusted = round(net - basis_buffer, 8) if net is not None else None
+    if net is not None and net > 0 and adjusted is not None and adjusted <= 0:
+        blockers.append("no_positive_adjusted_net_edge_after_basis_buffer")
+
+    accepted_basis = opts.risk_mode in {"standard", "aggressive"}
+    hard = collect_hard_blockers(blockers, accepted_basis=accepted_basis, accepted_top_of_book_size_cap=opts.depth_permissive)
+    paper = bool(
+        opts.risk_mode == "aggressive"
+        and net is not None and net > 0 and adjusted is not None and adjusted > 0 and not hard
+    )
+
+    payoff_vec = tuple(a + b for a, b in zip(_vector_above(grid, low_strike), _vector_at_or_below(grid, high_strike)))
+    min_payoff = float(min(payoff_vec)) if payoff_vec else 1.0
+    max_payoff = float(max(payoff_vec)) if payoff_vec else 1.0
+    depth_used = opts.depth_permissive and "missing_quote_depth" in blockers
+
+    assumptions: list[str] = []
+    risk_notes: list[str] = []
+    paper_class = CLASS_NONE
+    candidate_action = ""
+    action = ACTION_IGNORE if hard else ACTION_WATCH
+    if paper:
+        paper_class = CLASS_OPERATOR if cross else CLASS_STRICT
+        candidate_action = "PAPER_TEST_OR_MANUAL_MICRO_TEST"
+        action = ACTION_PAPER
+        if cross:
+            assumptions.append("source_index_basis_risk_accepted")
+        if depth_used:
+            assumptions.append("limited_depth_operator_size_cap_applied")
+        if complement_used:
+            assumptions += ["complement_quote_used", "limited_depth_operator_size_cap_applied"]
+            risk_notes.append("NO(higher) ask was complement-derived from an executable YES bid; limited depth.")
+    assumptions = sorted(set(assumptions))
+    tier = "EXACT_SAME_PAYOFF" if (paper and paper_class == CLASS_STRICT) else ("OPERATOR_RELATIVE_VALUE" if cross else "DIAGNOSTIC_ONLY")
+
+    return {
+        "action": action,
+        "paper_candidate": paper,
+        "paper_candidate_class": paper_class,
+        "candidate_type": CT_MONOTONICITY_COVER,
+        "contract_family": CONTRACT_FAMILY_TERMINAL_THRESHOLD,
+        "comparability_tier": tier,
+        "asset": asset,
+        "target_instant_utc": instant,
+        "lower_strike": low_strike,
+        "higher_strike": high_strike,
+        "yes_lower_ask": yes_lower_ask,
+        "no_higher_ask": no_higher_ask,
+        "complement_quote_used": complement_used,
+        "state_grid": grid_view,
+        "basket_legs": [leg_yes.to_dict(list(_vector_above(grid, low_strike))), leg_no.to_dict(list(_vector_at_or_below(grid, high_strike)))],
+        "payoff_vector": list(payoff_vec),
+        "min_payoff": min_payoff,
+        "max_payoff": max_payoff,
+        "total_cost_after_fees": total_cost,
+        "net_edge_after_fees": net,
+        "source_basis_buffer": basis_buffer,
+        "adjusted_net_edge_after_fees": adjusted,
+        "available_size_or_cap": _basket_available(legs, opts, paper),
+        "assumptions_accepted": assumptions,
+        "hard_blockers": hard,
+        "risk_notes": risk_notes,
+        "candidate_action": candidate_action,
+        "strict_exact_arb": bool(paper and paper_class == CLASS_STRICT),
+    }
 
 
 def _classify_pair(a: Instrument, b: Instrument) -> str:
@@ -1288,6 +1458,40 @@ def render_crypto_structural_payoff_arb_scout_markdown(report: dict[str, Any]) -
         "## 5. Terminal threshold/range candidates",
         [r for r in rows if r.get("candidate_type") in (CT_CROSS_VENUE, CT_SAME_PAYOFF_CHEAPER) and str(r.get("contract_family")).startswith("terminal")],
     )
+
+    # Threshold monotonicity covers: YES(>L) + NO(>U).
+    mcd = report.get("monotonicity_cover_diagnostics") or {}
+    mono = _by_type(CT_MONOTONICITY_COVER)
+    mono.sort(key=lambda r: (1 if r.get("paper_candidate") else 0, _safe_float(r.get("net_edge_after_fees"))), reverse=True)
+    lines.extend(
+        [
+            "",
+            "## 5b. Threshold Monotonicity Cover Candidates",
+            "",
+            f"- monotonicity_pairs_checked: `{mcd.get('monotonicity_pairs_checked', 0)}`  "
+            f"candidates_generated: `{mcd.get('monotonicity_cover_candidates_generated', 0)}`  "
+            f"paper_candidates: `{mcd.get('monotonicity_cover_paper_candidates', 0)}`",
+            f"- missing_yes_lower_ask: `{mcd.get('missing_yes_lower_ask', 0)}`  "
+            f"missing_no_higher_ask: `{mcd.get('missing_no_higher_ask', 0)}`  "
+            f"complement_quote_used: `{mcd.get('complement_quote_used', 0)}`",
+            "",
+            "| Action | Asset | Instant | Lower K | Higher K | YES lower ask | NO higher ask | Total cost | Min | Max | Net edge | Size/cap | Class | Assumptions | Blockers |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
+        ]
+    )
+    if not mono:
+        lines.append("| none |  |  |  |  |  |  |  |  |  |  |  |  |  |  |")
+    for r in mono[:50]:
+        lines.append(
+            "| "
+            f"{_md(r.get('action'))} | {_md(r.get('asset'))} | {_md(r.get('target_instant_utc'))} | "
+            f"{_md(r.get('lower_strike'))} | {_md(r.get('higher_strike'))} | {_md(r.get('yes_lower_ask'))} | "
+            f"{_md(r.get('no_higher_ask'))} | {_md(r.get('total_cost_after_fees'))} | {_md(r.get('min_payoff'))} | "
+            f"{_md(r.get('max_payoff'))} | {_md(r.get('net_edge_after_fees'))} | {_md(r.get('available_size_or_cap'))} | "
+            f"{_md(r.get('paper_candidate_class'))} | {_md(', '.join(r.get('assumptions_accepted') or []))} | "
+            f"{_md(', '.join(r.get('hard_blockers') or []))} |"
+        )
+
     _section("## 6. Directional up/down same-window candidates", _by_type(CT_UP_DOWN))
 
     lines.extend(["", "## 7. CDNA fill-first candidates", "", "| Type | Asset | Instant | Legs | Adj net | Candidate action |", "|---|---|---|---:|---:|---|"])

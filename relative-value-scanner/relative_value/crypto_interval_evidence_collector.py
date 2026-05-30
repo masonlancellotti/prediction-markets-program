@@ -343,6 +343,12 @@ def _kalshi_quote(outcome: dict[str, Any]) -> dict[str, Any]:
         "yes_ask_size": outcome.get("yes_ask_size"),
         "no_ask": outcome.get("no_ask"),
         "no_ask_size": outcome.get("no_ask_size"),
+        # Bids are carried so downstream can derive a complement ask from an
+        # executable bid (no_ask = 1 - yes_bid) when the direct ask is missing.
+        "yes_bid": outcome.get("yes_bid"),
+        "yes_bid_size": outcome.get("yes_bid_size"),
+        "no_bid": outcome.get("no_bid"),
+        "no_bid_size": outcome.get("no_bid_size"),
         "depth_status": outcome.get("depth_status"),
         "quote_timestamp": outcome.get("quote_timestamp"),
         "quote_diagnostics": [],
@@ -517,6 +523,11 @@ def _polymarket_quote(outcome: dict[str, Any]) -> dict[str, Any]:
         "yes_ask_size": outcome.get("yes_ask_size"),
         "no_ask": outcome.get("no_ask"),
         "no_ask_size": outcome.get("no_ask_size"),
+        # Bids carried for complement-ask derivation when a direct ask is missing.
+        "yes_bid": outcome.get("yes_bid"),
+        "yes_bid_size": outcome.get("yes_bid_size"),
+        "no_bid": outcome.get("no_bid"),
+        "no_bid_size": outcome.get("no_bid_size"),
         "depth_status": outcome.get("depth_status"),
         "quote_timestamp": outcome.get("quote_timestamp"),
         "quote_diagnostics": list(outcome.get("quote_diagnostics") or []),

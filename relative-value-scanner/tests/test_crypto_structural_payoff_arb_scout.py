@@ -403,6 +403,119 @@ def test_contract_grammar_counts_and_tiers_present() -> None:
     assert cv[0]["contract_family"] == "terminal_threshold"
 
 
+# ---------------------------------------------------------------------------- #
+# Threshold monotonicity covers: YES(>L) + NO(>U)                              #
+# ---------------------------------------------------------------------------- #
+
+
+def _mtk(platform: str, strike: float, *, yes: float | None, no: float | None, yes_bid: float | None = None, src: str | None = None) -> dict:
+    row = _tk(platform, comp="above", strike=strike, yes=yes, no=no, src=src)
+    row["quote"]["yes_bid"] = yes_bid
+    row["quote"]["yes_bid_size"] = 100.0 if yes_bid is not None else None
+    return row
+
+
+def _mono(report: dict) -> list:
+    return [r for r in report["rows"] if r.get("candidate_type") == "THRESHOLD_MONOTONICITY_COVER"]
+
+
+def test_monotonicity_cover_payoff_vector_min1_max2() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=0.02)],
+    )
+    cover = _mono(report)[0]
+    assert cover["min_payoff"] == 1.0 and cover["max_payoff"] == 2.0
+    assert cover["payoff_vector"] == [1, 2, 1]
+    assert cover["lower_strike"] == 74600.0 and cover["higher_strike"] == 74800.0
+
+
+def test_monotonicity_cover_positive_becomes_paper_candidate() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=0.02)],
+    )
+    paper = [r for r in _mono(report) if r["paper_candidate"]]
+    assert paper, f"expected a monotonicity-cover paper candidate; rows={[(r['net_edge_after_fees'], r['hard_blockers']) for r in _mono(report)]}"
+    r = paper[0]
+    assert r["net_edge_after_fees"] > 0
+    assert r["yes_lower_ask"] == 0.55 and r["no_higher_ask"] == 0.02
+    assert report["monotonicity_cover_diagnostics"]["monotonicity_cover_paper_candidates"] >= 1
+
+
+def test_monotonicity_cover_negative_stays_blocked() -> None:
+    # YES(>70000)@0.55 + NO(>71000)@0.51 -> cost > 1 -> no positive net.
+    report = _build(
+        polymarket=[_mtk("polymarket", 70000, yes=0.55, no=0.46), _mtk("polymarket", 71000, yes=0.50, no=0.51)],
+    )
+    assert all(not r["paper_candidate"] for r in _mono(report))
+    assert any("no_positive_net_edge_after_fees" in r["hard_blockers"] for r in _mono(report))
+
+
+def test_monotonicity_missing_yes_lower_ask_hard_blocks() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=None, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=0.02)],
+    )
+    cover = _mono(report)
+    assert cover and all(not r["paper_candidate"] for r in cover)
+    assert any("missing_yes_lower_ask" in r["hard_blockers"] for r in cover)
+    assert report["monotonicity_cover_diagnostics"]["missing_yes_lower_ask"] >= 1
+
+
+def test_monotonicity_missing_no_higher_ask_hard_blocks() -> None:
+    # Higher market has no NO ask AND no yes_bid -> no complement available.
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=None, yes_bid=None)],
+    )
+    cover = _mono(report)
+    assert cover and all(not r["paper_candidate"] for r in cover)
+    assert any("missing_no_higher_ask" in r["hard_blockers"] for r in cover)
+
+
+def test_monotonicity_cross_platform_is_operator_accepted_risk() -> None:
+    report = _build(
+        kalshi=[_mtk("kalshi", 74600, yes=0.55, no=0.46, src="brti")],
+        polymarket=[_mtk("polymarket", 74800, yes=0.99, no=0.02, src="binance")],
+    )
+    paper = [r for r in _mono(report) if r["paper_candidate"]]
+    assert paper and paper[0]["paper_candidate_class"] == "OPERATOR_ACCEPTED_RISK"
+    assert "source_index_basis_risk_accepted" in paper[0]["assumptions_accepted"]
+
+
+def test_monotonicity_same_platform_is_strict_exact() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46, src="binance"), _mtk("polymarket", 74800, yes=0.99, no=0.02, src="binance")],
+    )
+    paper = [r for r in _mono(report) if r["paper_candidate"]]
+    assert paper and paper[0]["paper_candidate_class"] == "STRICT_EXACT"
+    assert paper[0]["strict_exact_arb"] is True
+
+
+def test_monotonicity_complement_quote_is_labeled_when_used() -> None:
+    # Higher market has no direct NO ask but an executable YES bid (0.97) -> NO ask = 0.03.
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=None, yes_bid=0.97)],
+    )
+    paper = [r for r in _mono(report) if r["paper_candidate"]]
+    assert paper, "complement-derived NO ask should still allow a candidate"
+    r = paper[0]
+    assert r["complement_quote_used"] is True
+    assert r["no_higher_ask"] == 0.03
+    assert "complement_quote_used" in r["assumptions_accepted"]
+    assert "limited_depth_operator_size_cap_applied" in r["assumptions_accepted"]
+    assert report["monotonicity_cover_diagnostics"]["complement_quote_used"] >= 1
+
+
+def test_monotonicity_cover_no_midpoint_uses_asks_only() -> None:
+    report = _build(
+        polymarket=[_mtk("polymarket", 74600, yes=0.55, no=0.46), _mtk("polymarket", 74800, yes=0.99, no=0.02)],
+    )
+    r = [x for x in _mono(report) if x["paper_candidate"]][0]
+    legs = r["basket_legs"]
+    # net = 1 - sum(all_in) ; each all_in = ask + fee (asks only, no midpoint).
+    total = sum(l["all_in_cost"] for l in legs)
+    assert abs(r["net_edge_after_fees"] - (1.0 - total)) < 1e-9
+    assert r["yes_lower_ask"] == legs[0]["ask"] and r["no_higher_ask"] == legs[1]["ask"]
+
+
 def test_no_trading_auth_or_browser_code_in_structural_module() -> None:
     src = Path("relative_value/crypto_structural_payoff_arb_scout.py").read_text(encoding="utf-8")
     code = re.sub(r'""".*?"""', "", src, flags=re.DOTALL)

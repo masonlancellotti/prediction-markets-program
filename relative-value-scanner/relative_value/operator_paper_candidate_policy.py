@@ -57,6 +57,9 @@ HARD_BLOCKERS = {
     "reference_start_mismatch",
     "interval_length_mismatch",
     "unknown_payoff_vector",
+    "missing_yes_lower_ask",
+    "missing_no_higher_ask",
+    "threshold_order_invalid",
 }
 
 # Settlement-time discipline never relaxes for crypto point-in-time markets.
