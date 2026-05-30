@@ -57,6 +57,7 @@ from relative_value.exact_market_expansion_plan import write_exact_market_expans
 from relative_value.platform_expansion_matrix import write_platform_expansion_matrix_files
 from relative_value.structural_basket_detector import build_structural_basket_review_report_files
 from relative_value.structural_manifest_scout import scout_structural_manifest_candidates_file
+from relative_value.structural_basket_parlay_scout import write_structural_basket_parlay_scout_files
 from relative_value.kalshi_event_metadata import (
     audit_kalshi_event_metadata_files,
     join_kalshi_event_metadata_files,
@@ -89,6 +90,11 @@ from relative_value.canonical_registry_expiry_audit import write_canonical_regis
 from relative_value.cdna_crypto_basis_risk_scout import (
     write_cdna_crypto_basis_risk_scout_files,
 )
+from relative_value.cdna_fill_first_scout import (
+    DEFAULT_MAX_QUOTE_AGE_SECONDS as CDNA_FILL_FIRST_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    write_cdna_fill_first_scout_files,
+)
+from relative_value.cdna_fill_log import record_cdna_fill_file
 from relative_value.polymarket_taxonomy_shape_scout import (
     write_polymarket_taxonomy_shape_scout_files,
 )
@@ -114,6 +120,20 @@ from relative_value.crypto_payoff_calendar_audit import (
 from relative_value.crypto_manual_discovery_workbench import (
     write_crypto_manual_discovery_workbench_files,
 )
+from relative_value.crypto_threshold_basis_review_scout import write_crypto_threshold_basis_review_scout_files
+from relative_value.daily_crypto_three_venue_check import (
+    DEFAULT_EVIDENCE_ROOTS as DAILY_CRYPTO_DEFAULT_EVIDENCE_ROOTS,
+    write_daily_crypto_three_venue_check_files,
+)
+from relative_value.crypto_interval_three_venue_check import (
+    write_crypto_interval_three_venue_check_files,
+)
+from relative_value.crypto_structural_payoff_arb_scout import (
+    write_crypto_structural_payoff_arb_scout_files,
+)
+from relative_value.batch_evidence_import_readiness import write_batch_evidence_import_readiness_files
+from relative_value.championship_operator_scout_generic import write_championship_operator_scout_generic_files
+from relative_value.three_venue_operator_scout import write_three_venue_operator_scout_files
 from relative_value.manual_evidence_requirements import (
     write_manual_evidence_requirements_files,
 )
@@ -984,6 +1004,36 @@ def main(argv: list[str] | None = None) -> int:
     )
     scout_manifest_parser.add_argument("--max-quote-age-seconds", type=float, default=1800.0)
     scout_manifest_parser.add_argument("--min-depth", type=float, default=1.0)
+
+    structural_parlay_parser = subparsers.add_parser(
+        "structural-basket-parlay-scout",
+        help=(
+            "Saved-file-only structural basket/parlay diagnostic scout across Kalshi, Polymarket, and CDNA. "
+            "Prices review rows only; never creates standard candidate pairs or paper actions."
+        ),
+    )
+    structural_parlay_parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "manual_evidence",
+        help="Directory of saved normalized/raw evidence JSON files.",
+    )
+    structural_parlay_parser.add_argument(
+        "--graph-hints-json",
+        type=Path,
+        default=None,
+        help="Optional saved graph/parlay relationship hints JSON. Advisory only.",
+    )
+    structural_parlay_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_parlay_scout.json",
+    )
+    structural_parlay_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "structural_basket_parlay_scout.md",
+    )
 
     audit_event_metadata_parser = subparsers.add_parser(
         "audit-kalshi-event-metadata",
@@ -1928,6 +1978,314 @@ def main(argv: list[str] | None = None) -> int:
         help="Maximum number of manual discovery targets to emit per payoff-calendar group.",
     )
 
+    crypto_threshold_basis_parser = subparsers.add_parser(
+        "crypto-threshold-basis-review-scout",
+        help=(
+            "Saved-file-only Kalshi/Polymarket crypto point-in-time threshold basis-risk scout. "
+            "Never creates exact relationships, candidate pairs, or standard paper actions."
+        ),
+    )
+    crypto_threshold_basis_parser.add_argument("--kalshi-evidence", type=Path, required=True)
+    crypto_threshold_basis_parser.add_argument("--polymarket-evidence", type=Path, required=True)
+    crypto_threshold_basis_parser.add_argument(
+        "--cdna-evidence",
+        type=Path,
+        default=None,
+        help="Optional saved CDNA display-price evidence. Included as fill-first/reference rows only.",
+    )
+    crypto_threshold_basis_parser.add_argument("--asset", required=True, help="Crypto asset symbol, e.g. BTC or ETH.")
+    crypto_threshold_basis_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
+        help="Paper-candidate acceptance mode. Aggressive accepts crypto basis-risk assumptions when hard quote/depth/fee gates pass.",
+    )
+    crypto_threshold_basis_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_threshold_basis_review_scout.json",
+    )
+    crypto_threshold_basis_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_threshold_basis_review_scout.md",
+    )
+
+    daily_crypto_three_venue_parser = subparsers.add_parser(
+        "run-daily-crypto-three-venue-check",
+        help=(
+            "Saved-evidence-only daily Kalshi/Polymarket/CDNA crypto point-in-time "
+            "threshold check across multiple assets. Auto-discovers per-asset "
+            "evidence under reports/manual_evidence/automation_batch_002 (preferred) "
+            "and automation_batch_001_polished. Settlement-time discipline is "
+            "preserved: target_time/timezone/threshold/date mismatches remain hard "
+            "blockers in every operator-risk-mode."
+        ),
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--assets",
+        default="BTC,ETH,SOL,XRP,DOGE",
+        help="Comma-separated list of asset symbols, e.g. BTC,ETH,SOL,XRP,DOGE.",
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--date",
+        default=None,
+        help="Optional YYYY-MM-DD filter; rows for other target dates are dropped.",
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
+    )
+    daily_crypto_three_venue_parser.add_argument("--include-cdna", action="store_true")
+    daily_crypto_three_venue_parser.add_argument(
+        "--operator-accept-cdna-display-price-risk",
+        action="store_true",
+    )
+    daily_crypto_three_venue_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    daily_crypto_three_venue_parser.add_argument("--max-quote-age-seconds", type=float, default=300.0)
+    daily_crypto_three_venue_parser.add_argument("--min-available-notional", type=float, default=1.0)
+    daily_crypto_three_venue_parser.add_argument(
+        "--allow-top-of-book-depth",
+        action="store_true",
+        help=(
+            "When --operator-size-cap is also supplied, accept top-of-book / "
+            "limited depth as an explicit operator assumption. Adds "
+            "limited_depth_operator_size_cap_applied to assumptions_accepted. "
+            "Still requires fresh quote, exact target time, and positive net edge."
+        ),
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--operator-size-cap",
+        type=float,
+        default=0.0,
+        help="Dollar cap applied when --allow-top-of-book-depth is set. Default 0 (off).",
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--refresh-kalshi-polymarket",
+        action="store_true",
+        help=(
+            "Fetch fresh Kalshi + Polymarket crypto evidence via public read-only APIs "
+            "before scouting. No auth, no order, no browser automation."
+        ),
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--cdna-evidence-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional folder of saved CDNA evidence files. Files are copied into "
+            "per-asset refresh folders. CDNA missing never blocks Kalshi/Polymarket."
+        ),
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--write-refreshed-evidence",
+        type=Path,
+        default=None,
+        help=(
+            "Override the output root for refreshed evidence. Defaults to "
+            "reports/manual_evidence/daily_crypto_live/<date>/<timestamp>."
+        ),
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--evidence-roots",
+        type=Path,
+        nargs="+",
+        default=None,
+        help=(
+            "Override evidence root folders. Defaults to "
+            "reports/manual_evidence/automation_batch_002/crypto then "
+            "reports/manual_evidence/automation_batch_001_polished/crypto."
+        ),
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "daily_crypto_three_venue_check.json",
+    )
+    daily_crypto_three_venue_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "daily_crypto_three_venue_check.md",
+    )
+
+    crypto_interval_parser = subparsers.add_parser(
+        "run-crypto-interval-three-venue-check",
+        help=(
+            "Public-read-only intraday crypto interval / point-in-time threshold scan "
+            "across Kalshi, Polymarket, and optional saved CDNA evidence. Matches by "
+            "EXACT UTC settlement instant (Kalshi close_time / Polymarket endDate) so "
+            "hourly contracts that share a clock-hour boundary can form typed-key "
+            "candidates. Asks only; no midpoint; settlement-instant discipline preserved."
+        ),
+    )
+    crypto_interval_parser.add_argument("--assets", default="BTC,ETH,SOL,XRP,DOGE")
+    crypto_interval_parser.add_argument("--lookahead-hours", type=float, default=8.0)
+    crypto_interval_parser.add_argument("--target-time-tolerance-seconds", type=float, default=0.0)
+    crypto_interval_parser.add_argument(
+        "--operator-risk-mode", choices=("conservative", "standard", "aggressive"), default="conservative"
+    )
+    crypto_interval_parser.add_argument("--allow-top-of-book-depth", action="store_true")
+    crypto_interval_parser.add_argument("--operator-size-cap", type=float, default=0.0)
+    crypto_interval_parser.add_argument("--include-cdna", action="store_true")
+    crypto_interval_parser.add_argument("--operator-accept-cdna-display-price-risk", action="store_true")
+    crypto_interval_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    crypto_interval_parser.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    crypto_interval_parser.add_argument("--max-quote-age-seconds", type=float, default=300.0)
+    crypto_interval_parser.add_argument("--min-available-notional", type=float, default=1.0)
+    crypto_interval_parser.add_argument(
+        "--refresh-kalshi-polymarket",
+        action="store_true",
+        help="Fetch fresh Kalshi + Polymarket interval evidence via public read-only APIs.",
+    )
+    crypto_interval_parser.add_argument("--write-refreshed-evidence", type=Path, default=None)
+    crypto_interval_parser.add_argument("--evidence-roots", type=Path, nargs="+", default=None)
+    crypto_interval_parser.add_argument(
+        "--json-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_interval_three_venue_check.json"
+    )
+    crypto_interval_parser.add_argument(
+        "--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_interval_three_venue_check.md"
+    )
+
+    structural_arb_parser = subparsers.add_parser(
+        "crypto-structural-payoff-arb-scout",
+        help=(
+            "Structural payoff-state arb engine for crypto interval markets. Converts every "
+            "compatible contract for the same asset + target instant into a payoff vector over "
+            "discrete terminal price states, then searches for long-only guaranteed-payoff "
+            "baskets, bucket->cumulative synthesis (YES buckets only), cross-venue threshold "
+            "basis, same-payoff-cheaper baskets, and diagnostic inequality violations. "
+            "Saved-evidence / public-read-only; asks only; no midpoint."
+        ),
+    )
+    structural_arb_parser.add_argument("--assets", default="BTC,ETH,SOL,XRP,DOGE")
+    structural_arb_parser.add_argument("--evidence-roots", type=Path, nargs="+", default=None)
+    structural_arb_parser.add_argument(
+        "--operator-risk-mode", choices=("conservative", "standard", "aggressive"), default="conservative"
+    )
+    structural_arb_parser.add_argument("--include-cdna", action="store_true")
+    structural_arb_parser.add_argument("--operator-accept-cdna-display-price-risk", action="store_true")
+    structural_arb_parser.add_argument("--allow-top-of-book-depth", action="store_true")
+    structural_arb_parser.add_argument("--operator-size-cap", type=float, default=0.0)
+    structural_arb_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    structural_arb_parser.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    structural_arb_parser.add_argument("--max-quote-age-seconds", type=float, default=300.0)
+    structural_arb_parser.add_argument("--min-available-notional", type=float, default=1.0)
+    structural_arb_parser.add_argument("--max-basket-legs", type=int, default=12)
+    structural_arb_parser.add_argument(
+        "--source-basis-buffer-bps", type=float, default=0.0,
+        help="Haircut (basis points of $1 edge) applied to cross-source candidates; PAPER requires adjusted net > 0.",
+    )
+    structural_arb_parser.add_argument(
+        "--source-basis-buffer-absolute", type=str, default=None,
+        help="Informational per-asset feed-price buffer, e.g. BTC=25,ETH=2,SOL=0.25,XRP=0.005,DOGE=0.0002.",
+    )
+    structural_arb_parser.add_argument(
+        "--refresh-kalshi-polymarket", action="store_true",
+        help="Fetch fresh interval evidence via public read-only APIs instead of reading saved roots.",
+    )
+    structural_arb_parser.add_argument("--lookahead-hours", type=float, default=8.0)
+    structural_arb_parser.add_argument(
+        "--json-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_structural_payoff_arb_scout.json"
+    )
+    structural_arb_parser.add_argument(
+        "--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_structural_payoff_arb_scout.md"
+    )
+
+    batch_readiness_parser = subparsers.add_parser(
+        "batch-evidence-import-readiness",
+        help=(
+            "Saved-file-only readiness matrix over manual evidence batches. "
+            "Ranks crypto, sports, CDNA fill-first, and graph-review worklists."
+        ),
+    )
+    batch_readiness_parser.add_argument(
+        "--input-roots",
+        type=Path,
+        nargs="+",
+        required=True,
+        help="One or more manual evidence batch roots.",
+    )
+    batch_readiness_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "batch_evidence_import_readiness.json",
+    )
+    batch_readiness_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "batch_evidence_import_readiness.md",
+    )
+
+    championship_generic_parser = subparsers.add_parser(
+        "championship-operator-scout-generic",
+        help=(
+            "Saved-file-only generic championship/categorical winner operator scout. "
+            "Kalshi/Polymarket rows stay operator-review only; CDNA stays fill-first only."
+        ),
+    )
+    championship_generic_parser.add_argument("--family-folder", type=Path, required=True)
+    championship_generic_parser.add_argument("--accept-operator-risk", action="store_true")
+    championship_generic_parser.add_argument("--include-cdna-fill-first", action="store_true")
+    championship_generic_parser.add_argument("--operator-accept-cdna-display-price-risk", action="store_true")
+    championship_generic_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
+    )
+    championship_generic_parser.add_argument("--max-quote-age-seconds", type=float, default=3600.0)
+    championship_generic_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "championship_operator_scout_generic.json",
+    )
+    championship_generic_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "championship_operator_scout_generic.md",
+    )
+
+    three_venue_parser = subparsers.add_parser(
+        "three-venue-operator-scout",
+        help=(
+            "Saved-file-only unified Kalshi/Polymarket/CDNA operator scout. "
+            "CDNA fill-first rows are generated in the same candidate pass as executable venue rows."
+        ),
+    )
+    three_venue_parser.add_argument(
+        "--family-folder",
+        type=Path,
+        action="append",
+        required=True,
+        help="Market family folder containing saved Kalshi/Polymarket/CDNA evidence. Repeat for multiple families.",
+    )
+    three_venue_parser.add_argument("--include-cdna", action="store_true")
+    three_venue_parser.add_argument("--operator-accept-cdna-display-price-risk", action="store_true")
+    three_venue_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    three_venue_parser.add_argument("--max-quote-age-seconds", type=float, default=900.0)
+    three_venue_parser.add_argument("--min-available-notional", type=float, default=10.0)
+    three_venue_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
+        help="Paper-candidate acceptance mode. Aggressive includes CDNA fill-first display-price candidates when hard gates pass.",
+    )
+    three_venue_parser.add_argument(
+        "--allow-stale-for-diagnostic",
+        action="store_true",
+        help="Keep stale_quote as a blocker but still compute diagnostic gross/net rows. Stale rows cannot become operator-review actions.",
+    )
+    three_venue_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "three_venue_operator_scout.json",
+    )
+    three_venue_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "three_venue_operator_scout.md",
+    )
+
     manual_evidence_parser = subparsers.add_parser(
         "manual-evidence-requirements",
         help=(
@@ -1987,6 +2345,80 @@ def main(argv: list[str] | None = None) -> int:
         default=PROJECT_ROOT / "reports",
         help="Directory containing normalized_markets_v0.json with saved Kalshi/Polymarket crypto rows for peer comparison.",
     )
+
+    cdna_fill_first_parser = subparsers.add_parser(
+        "cdna-fill-first-scout",
+        help=(
+            "Saved-file-only CDNA fill-first operator scout. CDNA display prices are indicative "
+            "until a manual fill is recorded; this command never creates standard candidate pairs or paper actions."
+        ),
+    )
+    cdna_fill_first_parser.add_argument("--cdna-evidence", type=Path, required=True)
+    cdna_fill_first_parser.add_argument("--partner-evidence", type=Path, required=True)
+    cdna_fill_first_parser.add_argument(
+        "--partner-platform",
+        choices=("kalshi", "polymarket"),
+        required=True,
+        help="Partner venue used for the hedge leg.",
+    )
+    cdna_fill_first_parser.add_argument("--market-family", required=True)
+    cdna_fill_first_parser.add_argument("--league", required=True)
+    cdna_fill_first_parser.add_argument("--season", required=True)
+    cdna_fill_first_parser.add_argument(
+        "--operator-accept-display-price-risk",
+        action="store_true",
+        help="Allow CDNA_FILL_FIRST_REVIEW rows after display-price risk is explicitly accepted.",
+    )
+    cdna_fill_first_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    cdna_fill_first_parser.add_argument("--max-partner-hedge-slippage", type=float, default=0.01)
+    cdna_fill_first_parser.add_argument(
+        "--max-quote-age-seconds",
+        type=float,
+        default=CDNA_FILL_FIRST_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    )
+    cdna_fill_first_parser.add_argument(
+        "--fill-log",
+        type=Path,
+        default=None,
+        help="Optional saved manual CDNA fill log. No API calls are made.",
+    )
+    cdna_fill_first_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
+    )
+    cdna_fill_first_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cdna_fill_first_scout.json",
+    )
+    cdna_fill_first_parser.add_argument(
+        "--markdown-output",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "cdna_fill_first_scout.md",
+    )
+
+    cdna_record_fill_parser = subparsers.add_parser(
+        "cdna-record-fill",
+        help=(
+            "Append a manually entered CDNA fill record to a saved JSON log. "
+            "This command never calls any venue API and rejects sensitive fields."
+        ),
+    )
+    cdna_record_fill_parser.add_argument("--fill-log", type=Path, required=True)
+    cdna_record_fill_parser.add_argument("--event-key", required=True)
+    cdna_record_fill_parser.add_argument("--market-family", required=True)
+    cdna_record_fill_parser.add_argument("--team", required=True)
+    cdna_record_fill_parser.add_argument("--side", choices=("YES", "NO"), required=True)
+    cdna_record_fill_parser.add_argument("--contract-id", required=True)
+    cdna_record_fill_parser.add_argument("--symbol", required=True)
+    cdna_record_fill_parser.add_argument("--requested-quantity", type=float, required=True)
+    cdna_record_fill_parser.add_argument("--filled-quantity", type=float, required=True)
+    cdna_record_fill_parser.add_argument("--filled-price", type=float, required=True)
+    cdna_record_fill_parser.add_argument("--fee-per-contract", type=float, default=0.02)
+    cdna_record_fill_parser.add_argument("--filled-at", required=True)
+    cdna_record_fill_parser.add_argument("--source-note", default="")
+    cdna_record_fill_parser.add_argument("--time-to-fill-seconds", type=float, default=None)
 
     scout_parser = subparsers.add_parser(
         "cross-venue-opportunity-scout",
@@ -2315,13 +2747,23 @@ def main(argv: list[str] | None = None) -> int:
     mlb_daily_residual_parser.add_argument(
         "--include-live-games",
         action="store_true",
-        help="Allow live/in-progress games to reach residual-risk review if all other diagnostic gates pass. Defaults off.",
+        help="Deprecated compatibility no-op: live games are included by default in the scoped operator-risk lane.",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--exclude-live-games",
+        action="store_true",
+        help="Exclude live/in-progress games from operator review; live rows become WATCH with live_game_excluded_by_operator_flag.",
     )
     mlb_daily_residual_parser.add_argument(
         "--max-quote-age-seconds",
         type=float,
         default=MLB_DAILY_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
         help="Maximum quote age before stale_or_missing_quote blocks the row.",
+    )
+    mlb_daily_residual_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
     )
     mlb_daily_residual_parser.add_argument(
         "--min-available-notional",
@@ -2394,12 +2836,22 @@ def main(argv: list[str] | None = None) -> int:
     mlb_daily_operator_check_parser.add_argument(
         "--include-live-games",
         action="store_true",
-        help="Allow live/in-progress games to reach operator review if all other diagnostic gates pass.",
+        help="Deprecated compatibility no-op: live games are included by default in the scoped operator-risk lane.",
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--exclude-live-games",
+        action="store_true",
+        help="Exclude live/in-progress games from operator review.",
     )
     mlb_daily_operator_check_parser.add_argument(
         "--max-quote-age-seconds",
         type=float,
         default=MLB_DAILY_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    )
+    mlb_daily_operator_check_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
     )
     mlb_daily_operator_check_parser.add_argument(
         "--min-available-notional",
@@ -2526,6 +2978,11 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=MLB_WORLD_SERIES_RESIDUAL_RISK_DEFAULT_MAX_QUOTE_AGE_SECONDS,
         help="Maximum quote age before stale_or_missing_quote blocks a row.",
+    )
+    mlb_world_series_residual_parser.add_argument(
+        "--operator-risk-mode",
+        choices=("conservative", "standard", "aggressive"),
+        default="conservative",
     )
     mlb_world_series_residual_parser.add_argument(
         "--min-available-notional",
@@ -3449,6 +3906,32 @@ def main(argv: list[str] | None = None) -> int:
             f"json={args.json_output} markdown={args.markdown_output}"
         )
         return 0
+    if args.command == "structural-basket-parlay-scout":
+        report = write_structural_basket_parlay_scout_files(
+            input_dir=args.input_dir,
+            graph_hints_json=args.graph_hints_json,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "structural_basket_parlay_scout_status=OK "
+            "diagnostic_only=true saved_files_only=true execution_enabled=false "
+            f"rows={counts.get('rows', 0)} "
+            f"structural_review_rows={counts.get('structural_basket_review_rows', 0)} "
+            f"cdna_fill_first_review_rows={counts.get('cdna_fill_first_review_rows', 0)} "
+            f"manual_review_rows={counts.get('manual_review_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"exact_ready_rows=0 "
+            f"top_blocker={top_blocker} json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
     if args.command == "audit-kalshi-event-metadata":
         report = audit_kalshi_event_metadata_files(
             metadata_paths=args.metadata_paths,
@@ -3980,6 +4463,67 @@ def main(argv: list[str] | None = None) -> int:
             f"json={args.json_output} markdown={args.markdown_output}"
         )
         return 0
+    if args.command == "cdna-fill-first-scout":
+        report = write_cdna_fill_first_scout_files(
+            cdna_evidence=args.cdna_evidence,
+            partner_evidence=args.partner_evidence,
+            partner_platform=args.partner_platform,
+            market_family=args.market_family,
+            league=args.league,
+            season=args.season,
+            operator_accept_display_price_risk=args.operator_accept_display_price_risk,
+            cdna_operator_size_cap=args.cdna_operator_size_cap,
+            max_partner_hedge_slippage=args.max_partner_hedge_slippage,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            fill_log=args.fill_log,
+            operator_risk_mode=args.operator_risk_mode,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "cdna_fill_first_scout_status=OK "
+            "diagnostic_only=true saved_files_only=true execution_enabled=false "
+            f"partner_platform={report.get('partner_platform')} "
+            f"rows={counts.get('rows', 0)} "
+            f"fill_first_review_rows={counts.get('cdna_fill_first_review_rows', 0)} "
+            f"display_review_rows={counts.get('cdna_display_price_operator_review_rows', 0)} "
+            f"fill_confirmed_hedge_required_rows={counts.get('cdna_fill_confirmed_hedge_required_rows', 0)} "
+            f"hedged_complete_rows={counts.get('cdna_hedged_complete_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"exact_ready_rows=0 standard_paper_candidate_rows=0 "
+            f"top_blocker={top_blocker} json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "cdna-record-fill":
+        report = record_cdna_fill_file(
+            fill_log=args.fill_log,
+            event_key=args.event_key,
+            market_family=args.market_family,
+            team=args.team,
+            side=args.side,
+            contract_id=args.contract_id,
+            symbol=args.symbol,
+            requested_quantity=args.requested_quantity,
+            filled_quantity=args.filled_quantity,
+            filled_price=args.filled_price,
+            fee_per_contract=args.fee_per_contract,
+            filled_at=args.filled_at,
+            source_note=args.source_note,
+            time_to_fill_seconds=args.time_to_fill_seconds,
+        )
+        status = "OK" if report.get("record_written") else "FAILED"
+        errors = ",".join(report.get("validation_errors") or [])
+        print(
+            f"cdna_record_fill_status={status} "
+            "diagnostic_only=true saved_files_only=true execution_enabled=false "
+            f"record_written={str(bool(report.get('record_written'))).lower()} "
+            f"records_count={report.get('records_count', 0)} "
+            f"validation_errors={errors or 'none'} fill_log={args.fill_log}"
+        )
+        return 0 if report.get("record_written") else 1
     if args.command == "polymarket-point-in-time-typed-key-audit":
         report = write_polymarket_point_in_time_typed_key_audit_files(
             taxonomy_json=args.taxonomy_json,
@@ -4131,6 +4675,278 @@ def main(argv: list[str] | None = None) -> int:
             f"top_target_payoff_shape={summary.get('top_target_payoff_shape')} "
             f"group_breakdown={group_str} "
             f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "crypto-threshold-basis-review-scout":
+        report = write_crypto_threshold_basis_review_scout_files(
+            kalshi_evidence=args.kalshi_evidence,
+            polymarket_evidence=args.polymarket_evidence,
+            cdna_evidence=args.cdna_evidence,
+            asset=args.asset,
+            operator_risk_mode=args.operator_risk_mode,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "crypto_threshold_basis_review_scout_status=OK "
+            "diagnostic_only=true basis_risk_only=true execution_enabled=false "
+            f"asset={report.get('asset')} "
+            f"kalshi_rows={counts.get('kalshi_rows_loaded', 0)} "
+            f"polymarket_rows={counts.get('polymarket_rows_loaded', 0)} "
+            f"cdna_rows={counts.get('cdna_rows_loaded', 0)} "
+            f"matched_threshold_rows={counts.get('matched_threshold_rows', 0)} "
+            f"basis_risk_review_rows={counts.get('basis_risk_review_rows', 0)} "
+            f"cdna_fill_first_review_rows={counts.get('cdna_fill_first_review_rows', 0)} "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"manual_review_rows={counts.get('manual_review_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"exact_ready_rows=0 total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"top_blocker={top_blocker} json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "run-daily-crypto-three-venue-check":
+        asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
+        report = write_daily_crypto_three_venue_check_files(
+            assets=asset_list,
+            date=args.date,
+            operator_risk_mode=args.operator_risk_mode,
+            include_cdna=args.include_cdna,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            cdna_operator_size_cap=args.cdna_operator_size_cap,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            evidence_roots=args.evidence_roots,
+            allow_top_of_book_depth=args.allow_top_of_book_depth,
+            operator_size_cap=args.operator_size_cap,
+            refresh_kalshi_polymarket=args.refresh_kalshi_polymarket,
+            cdna_evidence_dir=args.cdna_evidence_dir,
+            write_refreshed_evidence_root=args.write_refreshed_evidence,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_hard = (report.get("top_hard_blockers") or [{}])[0].get("blocker")
+        refresh = report.get("refresh_summary") or {}
+        refresh_root = refresh.get("output_root") or "none"
+        venue_counts = report.get("venue_market_counts") or {}
+        # Compact, space-free token so a zero is never silent in the status line.
+        no_rows_reason = report.get("no_cross_venue_rows_reason")
+        reason_token = (no_rows_reason or "rows_present").split(":")[0].split(" ")[0]
+        print(
+            "run_daily_crypto_three_venue_check_status=OK "
+            "diagnostic_only=true saved_files_only=true execution_enabled=false "
+            f"operator_risk_mode={report.get('operator_risk_mode')} "
+            f"assets={','.join(report.get('assets_requested') or [])} "
+            f"date_filter={report.get('date_filter') or 'any'} "
+            f"refresh_kalshi_polymarket={str(bool(report.get('refresh_kalshi_polymarket'))).lower()} "
+            f"refresh_root={refresh_root} "
+            f"allow_top_of_book_depth={str(bool(report.get('allow_top_of_book_depth'))).lower()} "
+            f"operator_size_cap={report.get('operator_size_cap', 0)} "
+            f"kalshi_markets={venue_counts.get('kalshi_markets', 0)} "
+            f"polymarket_markets={venue_counts.get('polymarket_markets', 0)} "
+            f"cdna_markets={venue_counts.get('cdna_markets', 0)} "
+            f"typed_key_candidates={venue_counts.get('typed_key_candidates', 0)} "
+            f"rows={counts.get('rows', 0)} "
+            f"total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"unmatched_target_time_rows={counts.get('unmatched_target_time_rows', 0)} "
+            f"unmatched_single_venue_rows={counts.get('unmatched_single_venue_rows', 0)} "
+            f"no_cross_venue_rows_reason={reason_token} "
+            f"top_hard_blocker={top_hard} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "run-crypto-interval-three-venue-check":
+        asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
+        report = write_crypto_interval_three_venue_check_files(
+            assets=asset_list,
+            lookahead_hours=args.lookahead_hours,
+            target_time_tolerance_seconds=args.target_time_tolerance_seconds,
+            operator_risk_mode=args.operator_risk_mode,
+            allow_top_of_book_depth=args.allow_top_of_book_depth,
+            operator_size_cap=args.operator_size_cap,
+            include_cdna=args.include_cdna,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            cdna_operator_size_cap=args.cdna_operator_size_cap,
+            cdna_evidence_dir=args.cdna_evidence_dir,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            refresh_kalshi_polymarket=args.refresh_kalshi_polymarket,
+            write_refreshed_evidence_root=args.write_refreshed_evidence,
+            evidence_roots=args.evidence_roots,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        venue_counts = report.get("venue_market_counts") or {}
+        reason_token = (report.get("no_cross_venue_rows_reason") or "rows_present").split(":")[0].split(" ")[0]
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "run_crypto_interval_three_venue_check_status=OK "
+            "diagnostic_only=true public_read_only=true execution_enabled=false "
+            f"operator_risk_mode={report.get('operator_risk_mode')} "
+            f"assets={','.join(report.get('assets_requested') or [])} "
+            f"lookahead_hours={report.get('lookahead_hours')} "
+            f"target_time_tolerance_seconds={report.get('target_time_tolerance_seconds')} "
+            f"refresh_kalshi_polymarket={str(bool(report.get('refresh_kalshi_polymarket'))).lower()} "
+            f"allow_top_of_book_depth={str(bool(report.get('allow_top_of_book_depth'))).lower()} "
+            f"operator_size_cap={report.get('operator_size_cap', 0)} "
+            f"kalshi_markets={venue_counts.get('kalshi_markets', 0)} "
+            f"polymarket_markets={venue_counts.get('polymarket_markets', 0)} "
+            f"cdna_markets={venue_counts.get('cdna_markets', 0)} "
+            f"exact_matched_windows={venue_counts.get('typed_key_candidates', 0)} "
+            f"harmonic_endpoints={(report.get('harmonic_summary') or {}).get('endpoints', 0)} "
+            f"harmonic_compatible_instants={(report.get('harmonic_summary') or {}).get('compatible_shared_target_instants', 0)} "
+            f"harmonic_point_in_time_matches={(report.get('harmonic_summary') or {}).get('harmonic_point_in_time_matches', 0)} "
+            f"direct_updown_matches={(report.get('harmonic_summary') or {}).get('direct_updown_matches', 0)} "
+            f"rows={counts.get('rows', 0)} "
+            f"paper_candidate_rows={counts.get('paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"synthetic_rows={counts.get('synthetic_rows', 0)} "
+            f"synthetic_paper_candidate_rows={counts.get('synthetic_paper_candidate_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"no_cross_venue_rows_reason={reason_token} "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "crypto-structural-payoff-arb-scout":
+        asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
+        report = write_crypto_structural_payoff_arb_scout_files(
+            assets=asset_list,
+            evidence_roots=args.evidence_roots,
+            operator_risk_mode=args.operator_risk_mode,
+            include_cdna=args.include_cdna,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            allow_top_of_book_depth=args.allow_top_of_book_depth,
+            operator_size_cap=args.operator_size_cap,
+            cdna_operator_size_cap=args.cdna_operator_size_cap,
+            cdna_evidence_dir=args.cdna_evidence_dir,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            max_basket_legs=args.max_basket_legs,
+            source_basis_buffer_bps=args.source_basis_buffer_bps,
+            source_basis_buffer_absolute=args.source_basis_buffer_absolute,
+            refresh_kalshi_polymarket=args.refresh_kalshi_polymarket,
+            lookahead_hours=args.lookahead_hours,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        ctc = report.get("candidate_type_counts") or {}
+        bbs = report.get("basis_buffer_sensitivity") or {}
+        top_blocker = (report.get("top_blockers") or [{}])[0].get("blocker")
+        print(
+            "run_crypto_structural_payoff_arb_scout_status=OK "
+            "diagnostic_only=true public_read_only=true execution_enabled=false "
+            f"operator_risk_mode={report.get('operator_risk_mode')} "
+            f"assets={','.join(report.get('assets_requested') or [])} "
+            f"load_source={(report.get('load_diagnostics') or {}).get('source')} "
+            f"grammar_families={len(report.get('contract_grammar_counts') or {})} "
+            f"state_grids_built={counts.get('state_grids_built', 0)} "
+            f"rows={counts.get('rows', 0)} "
+            f"paper_candidate_rows={counts.get('paper_candidate_rows', 0)} "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"long_only={ctc.get('LONG_ONLY_GUARANTEED_PAYOFF', 0)} "
+            f"bucket_to_threshold={ctc.get('BUCKET_TO_CUMULATIVE_THRESHOLD', 0)} "
+            f"cross_venue={ctc.get('CROSS_VENUE_THRESHOLD_BASIS', 0)} "
+            f"up_down={ctc.get('UP_DOWN_SAME_WINDOW', 0)} "
+            f"source_basis_buffer_bps={report.get('source_basis_buffer_bps', 0)} "
+            f"rows_removed_by_buffer={bbs.get('rows_removed_by_buffer', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} "
+            f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "batch-evidence-import-readiness":
+        report = write_batch_evidence_import_readiness_files(
+            input_roots=args.input_roots,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_crypto = ((report.get("crypto_worklist") or [{}])[0]).get("family") or "none"
+        top_sports = ((report.get("sports_worklist") or [{}])[0]).get("family") or "none"
+        print(
+            "batch_evidence_import_readiness=OK diagnostic_only=true saved_files_only=true "
+            f"families={counts.get('families', 0)} "
+            f"ready_crypto={counts.get('READY_FOR_CRYPTO_BASIS_SCOUT', 0)} "
+            f"ready_sports={counts.get('READY_FOR_SPORTS_OPERATOR_SCOUT', 0)} "
+            f"ready_cdna={counts.get('READY_FOR_CDNA_FILL_FIRST_SCOUT', 0)} "
+            f"ready_graph={counts.get('READY_FOR_GRAPH_REVIEW', 0)} "
+            f"top_crypto={top_crypto} top_sports={top_sports} "
+            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "championship-operator-scout-generic":
+        report = write_championship_operator_scout_generic_files(
+            family_folder=args.family_folder,
+            accept_operator_risk=args.accept_operator_risk,
+            include_cdna_fill_first=args.include_cdna_fill_first,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            operator_risk_mode=args.operator_risk_mode,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = ((report.get("top_blockers") or [{}])[0]).get("blocker") or "none"
+        print(
+            "championship_operator_scout_generic=OK diagnostic_only=true saved_files_only=true "
+            f"family={report.get('market_family')} rows={counts.get('rows', 0)} "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"exact_ready_rows=0 top_blocker={top_blocker} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "three-venue-operator-scout":
+        report = write_three_venue_operator_scout_files(
+            family_folders=args.family_folder,
+            include_cdna=args.include_cdna,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            cdna_operator_size_cap=args.cdna_operator_size_cap,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            allow_stale_for_diagnostic=args.allow_stale_for_diagnostic,
+            operator_risk_mode=args.operator_risk_mode,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        counts = report.get("summary_counts") or {}
+        top_blocker = ((report.get("top_blockers") or [{}])[0]).get("blocker") or "none"
+        print(
+            "three_venue_operator_scout=OK diagnostic_only=true saved_files_only=true "
+            f"rows={counts.get('rows', 0)} "
+            f"kalshi_poly_rows={counts.get('kalshi_poly_rows', 0)} "
+            f"cdna_kalshi_rows={counts.get('cdna_kalshi_rows', 0)} "
+            f"cdna_poly_rows={counts.get('cdna_poly_rows', 0)} "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"watch_rows={counts.get('watch_rows', 0)} ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
+            f"exact_ready_rows=0 top_blocker={top_blocker} "
             f"json={args.json_output} markdown={args.markdown_output}"
         )
         return 0
@@ -4457,8 +5273,10 @@ def main(argv: list[str] | None = None) -> int:
             accept_mlb_daily_contingency_risk=args.accept_mlb_daily_contingency_risk,
             operator_accepted_as_arb=args.operator_accepted_as_arb,
             include_live_games=args.include_live_games,
+            exclude_live_games=args.exclude_live_games,
             max_quote_age_seconds=args.max_quote_age_seconds,
             min_available_notional=args.min_available_notional,
+            operator_risk_mode=args.operator_risk_mode,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
@@ -4471,11 +5289,12 @@ def main(argv: list[str] | None = None) -> int:
             f"operator_accepted_as_arb={str(bool(report.get('operator_accepted_as_arb'))).lower()} "
             f"matched_games={report.get('matched_games', 0)} "
             f"rows={summary.get('rows', 0)} "
-            f"operator_arb_review_rows={summary.get('operator_arb_review_rows', 0)} "
-            f"residual_review_rows={summary.get('residual_review_rows', 0)} "
-            f"manual_review_rows={summary.get('manual_review_rows', 0)} "
+            f"strict_paper_candidate_rows={summary.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={summary.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={summary.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"total_paper_candidate_rows={summary.get('total_paper_candidate_rows', 0)} "
             f"watch_rows={summary.get('watch_rows', 0)} "
-            f"exact_ready_rows=0 paper_candidate_rows=0 "
+            f"exact_ready_rows=0 "
             f"top_blocker={top_blocker} "
             f"json={args.json_output} markdown={args.markdown_output}"
         )
@@ -4515,8 +5334,10 @@ def main(argv: list[str] | None = None) -> int:
             accept_mlb_daily_contingency_risk=args.accept_mlb_daily_contingency_risk,
             operator_accepted_as_arb=args.operator_accepted_as_arb,
             include_live_games=args.include_live_games,
+            exclude_live_games=args.exclude_live_games,
             max_quote_age_seconds=args.max_quote_age_seconds,
             min_available_notional=args.min_available_notional,
+            operator_risk_mode=args.operator_risk_mode,
             json_output=scout_json,
             markdown_output=scout_markdown,
         )
@@ -4547,7 +5368,11 @@ def main(argv: list[str] | None = None) -> int:
             f"manual_review_rows={counts.get('manual_review_rows', 0)} "
             f"watch_rows={counts.get('watch_rows', 0)} "
             f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
-            f"exact_ready_rows=0 standard_paper_candidate_rows=0 "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"exact_ready_rows=0 "
             f"top_blocker={top_blocker} "
             f"scout_json={scout_json} scout_markdown={scout_markdown} "
             f"summary_json={summary_json} summary_markdown={summary_markdown}"
@@ -4657,6 +5482,7 @@ def main(argv: list[str] | None = None) -> int:
             operator_accepted_as_arb=args.operator_accepted_as_arb,
             max_quote_age_seconds=args.max_quote_age_seconds,
             min_available_notional=args.min_available_notional,
+            operator_risk_mode=args.operator_risk_mode,
             json_output=args.json_output,
             markdown_output=args.markdown_output,
         )
@@ -4673,13 +5499,16 @@ def main(argv: list[str] | None = None) -> int:
             f"matched_team_rows={report.get('matched_team_rows', 0)} "
             f"rows={counts.get('rows', 0)} "
             f"operator_arb_review_rows={counts.get('operator_arb_review_rows', 0)} "
-            f"residual_review_rows={counts.get('residual_review_rows', 0)} "
             f"manual_review_rows={counts.get('manual_review_rows', 0)} "
             f"watch_rows={counts.get('watch_rows', 0)} "
             f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
             f"positive_gross_rows={counts.get('positive_gross_rows', 0)} "
             f"positive_net_rows={counts.get('positive_net_rows', 0)} "
-            f"exact_ready_rows=0 standard_paper_candidate_rows=0 "
+            f"strict_paper_candidate_rows={counts.get('strict_paper_candidate_rows', 0)} "
+            f"operator_paper_candidate_rows={counts.get('operator_paper_candidate_rows', 0)} "
+            f"cdna_fill_first_paper_candidate_rows={counts.get('cdna_fill_first_paper_candidate_rows', 0)} "
+            f"total_paper_candidate_rows={counts.get('total_paper_candidate_rows', 0)} "
+            f"exact_ready_rows=0 "
             f"top_blocker={top_blocker} "
             f"json={args.json_output} markdown={args.markdown_output}"
         )
@@ -14915,13 +15744,17 @@ def _mlb_daily_operator_check_summary(
         },
         "matched_games": scout_report.get("matched_games", collector_counts.get("matched_games", 0)),
         "scout_rows": scout_counts.get("rows", 0),
+        "strict_paper_candidate_rows": scout_counts.get("strict_paper_candidate_rows", 0),
+        "operator_paper_candidate_rows": scout_counts.get("operator_paper_candidate_rows", 0),
+        "cdna_fill_first_paper_candidate_rows": scout_counts.get("cdna_fill_first_paper_candidate_rows", 0),
+        "total_paper_candidate_rows": scout_counts.get("total_paper_candidate_rows", 0),
+        "standard_paper_candidate_rows": scout_counts.get("total_paper_candidate_rows", 0),
         "operator_arb_review_rows": scout_counts.get("operator_arb_review_rows", 0),
         "manual_review_rows": scout_counts.get("manual_review_rows", 0),
         "watch_rows": scout_counts.get("watch_rows", 0),
         "ignore_blocked_rows": scout_counts.get("ignore_blocked_rows", 0),
         "exact_ready_rows": 0,
-        "standard_paper_candidate_rows": 0,
-        "global_paper_candidate_emitted": False,
+        "global_paper_candidate_emitted": scout_counts.get("total_paper_candidate_rows", 0) > 0,
         "top_blockers": scout_counts.get("top_blockers") or [],
         "report_paths": {
             "kalshi_evidence": str(kalshi_evidence),
@@ -14940,8 +15773,8 @@ def _mlb_daily_operator_check_summary(
             "candidate_pair_creation": False,
             "evaluator_invoked": False,
             "exact_ready": False,
-            "standard_paper_candidate_rows": 0,
-            "global_paper_candidate_emitted": False,
+            "total_paper_candidate_rows": scout_counts.get("total_paper_candidate_rows", 0),
+            "global_paper_candidate_emitted": scout_counts.get("total_paper_candidate_rows", 0) > 0,
         },
     }
 
@@ -14961,12 +15794,15 @@ def _render_mlb_daily_operator_check_summary(summary: dict[str, Any]) -> str:
         f"- polymarket_games_found: `{(summary.get('games_found') or {}).get('polymarket', 0)}`",
         f"- matched_games: `{summary.get('matched_games', 0)}`",
         f"- scout_rows: `{summary.get('scout_rows', 0)}`",
-        f"- operator_arb_review_rows: `{summary.get('operator_arb_review_rows', 0)}`",
+        f"- strict_paper_candidate_rows: `{summary.get('strict_paper_candidate_rows', 0)}`",
+        f"- operator_paper_candidate_rows: `{summary.get('operator_paper_candidate_rows', 0)}`",
+        f"- cdna_fill_first_paper_candidate_rows: `{summary.get('cdna_fill_first_paper_candidate_rows', 0)}`",
+        f"- total_paper_candidate_rows: `{summary.get('total_paper_candidate_rows', 0)}`",
         f"- manual_review_rows: `{summary.get('manual_review_rows', 0)}`",
         f"- watch_rows: `{summary.get('watch_rows', 0)}`",
         f"- ignore_blocked_rows: `{summary.get('ignore_blocked_rows', 0)}`",
         f"- exact_ready_rows: `0`",
-        f"- standard_paper_candidate_rows: `0`",
+        f"- total_paper_candidate_rows: `{summary.get('total_paper_candidate_rows', 0)}`",
         "",
         "## Report Paths",
         "",
@@ -14999,8 +15835,8 @@ def _render_mlb_daily_operator_check_summary(summary: dict[str, Any]) -> str:
             "- candidate_pair_creation: `false`",
             "- evaluator_invoked: `false`",
             "- exact_ready: `false`",
-            "- standard_paper_candidate_rows: `0`",
-            "- global_paper_candidate_emitted: `false`",
+            f"- total_paper_candidate_rows: `{summary.get('total_paper_candidate_rows', 0)}`",
+            f"- global_paper_candidate_emitted: `{str(bool(summary.get('global_paper_candidate_emitted'))).lower()}`",
         ]
     )
     return "\n".join(lines) + "\n"
