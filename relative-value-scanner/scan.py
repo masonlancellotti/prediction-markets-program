@@ -131,7 +131,26 @@ from relative_value.crypto_interval_three_venue_check import (
 from relative_value.crypto_structural_payoff_arb_scout import (
     write_crypto_structural_payoff_arb_scout_files,
 )
+from relative_value.watch_crypto_structural_arb import run_watch as run_crypto_structural_watch
 from relative_value.batch_evidence_import_readiness import write_batch_evidence_import_readiness_files
+from relative_value.extract_crypto_paper_candidate_audit_pack import (
+    write_crypto_paper_candidate_audit_pack_files,
+)
+from relative_value.cdna_crypto_snapshot_ingest import write_cdna_crypto_snapshot_files
+from relative_value.execution_microstructure_plan import write_execution_plan_files
+from relative_value.crypto_micro_test_journal import (
+    start_crypto_micro_test,
+    record_crypto_micro_fill,
+    finalize_crypto_micro_test,
+    crypto_micro_test_report,
+    append_crypto_micro_quote_snapshot,
+)
+from relative_value.live_crypto_micro_executor import run_crypto_structural_trigger
+from relative_value.crypto_arb_surface_coverage_audit import write_crypto_arb_surface_coverage_audit_files
+from relative_value.crypto_fast_path_executor import (
+    build_active_candidate_universe,
+    run_crypto_fast_path_trigger,
+)
 from relative_value.championship_operator_scout_generic import write_championship_operator_scout_generic_files
 from relative_value.three_venue_operator_scout import write_three_venue_operator_scout_files
 from relative_value.manual_evidence_requirements import (
@@ -2191,6 +2210,272 @@ def main(argv: list[str] | None = None) -> int:
     structural_arb_parser.add_argument(
         "--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_structural_payoff_arb_scout.md"
     )
+
+    watch_structural_parser = subparsers.add_parser(
+        "watch-crypto-structural-arb",
+        help=(
+            "Repeatedly run crypto-structural-payoff-arb-scout over live crypto windows and "
+            "maintain a rolling summary of the best post-fee opportunities. Public-read-only; "
+            "CDNA saved-evidence-only; no alerts/notifications; no trading."
+        ),
+    )
+    watch_structural_parser.add_argument("--assets", default="BTC,ETH,SOL,XRP,DOGE")
+    watch_structural_parser.add_argument("--interval-seconds", type=float, default=60.0)
+    watch_structural_parser.add_argument("--iterations", type=int, default=30)
+    watch_structural_parser.add_argument(
+        "--burst-mode", action="store_true",
+        help="Scan faster near 5m/15m/20m/hourly/2h/4h boundaries to catch fleeting quotes.",
+    )
+    watch_structural_parser.add_argument("--burst-interval-seconds", type=float, default=5.0)
+    watch_structural_parser.add_argument(
+        "--normal-interval-seconds", type=float, default=None,
+        help="Off-boundary interval in burst mode (defaults to --interval-seconds).",
+    )
+    watch_structural_parser.add_argument("--boundary-window-seconds", type=float, default=90.0)
+    watch_structural_parser.add_argument(
+        "--operator-risk-mode", choices=("conservative", "standard", "aggressive"), default="aggressive"
+    )
+    watch_structural_parser.add_argument("--include-cdna", action="store_true")
+    watch_structural_parser.add_argument("--operator-accept-cdna-display-price-risk", action="store_true")
+    watch_structural_parser.add_argument("--allow-top-of-book-depth", action="store_true")
+    watch_structural_parser.add_argument("--operator-size-cap", type=float, default=0.0)
+    watch_structural_parser.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    watch_structural_parser.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    watch_structural_parser.add_argument("--max-quote-age-seconds", type=float, default=180.0)
+    watch_structural_parser.add_argument("--min-available-notional", type=float, default=1.0)
+    watch_structural_parser.add_argument("--max-basket-legs", type=int, default=12)
+    watch_structural_parser.add_argument("--source-basis-buffer-bps", type=float, default=0.0)
+    watch_structural_parser.add_argument("--source-basis-buffer-absolute", type=str, default=None)
+    watch_structural_parser.add_argument("--near-miss-net-edge-threshold", type=float, default=0.02)
+    watch_structural_parser.add_argument("--wide-near-miss-net-edge-threshold", type=float, default=0.10)
+    watch_structural_parser.add_argument("--lookahead-hours", type=float, default=8.0)
+    watch_structural_parser.add_argument(
+        "--output-dir", type=Path, default=PROJECT_ROOT / "reports" / "crypto_structural_watch"
+    )
+
+    audit_pack_parser = subparsers.add_parser(
+        "extract-crypto-paper-candidate-audit-pack",
+        help=(
+            "Extract every PAPER_CANDIDATE row from watcher iteration reports with full leg "
+            "detail and independently re-validate (payoff/cost/net edge, no missing/stale quote, "
+            "buy-only, no short, no midpoint). Read-only over local reports; no trading."
+        ),
+    )
+    audit_pack_parser.add_argument(
+        "--watch-dir", type=Path, required=True,
+        help="Watcher output dir containing <timestamp>/iteration.json reports.",
+    )
+    audit_pack_parser.add_argument(
+        "--json-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_paper_candidate_audit_pack.json",
+    )
+    audit_pack_parser.add_argument(
+        "--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_paper_candidate_audit_pack.md",
+    )
+
+    cdna_ingest_parser = subparsers.add_parser(
+        "ingest-cdna-crypto-snapshots",
+        help=(
+            "Ingest saved CDNA intraday crypto evidence snapshots into a normalized time "
+            "series (jsonl + latest.json + summary). Saved-evidence only; no CDNA network "
+            "fetch; no browser; no trading; sensitive fields redacted."
+        ),
+    )
+    cdna_ingest_parser.add_argument(
+        "--input-root", type=Path, required=True,
+        help="Root holding <snapshot_id>/cdna_crypto_intraday_evidence.json folders.",
+    )
+    cdna_ingest_parser.add_argument(
+        "--output-dir", type=Path, default=PROJECT_ROOT / "reports" / "cdna_crypto_timeseries",
+    )
+
+    exec_plan_parser = subparsers.add_parser(
+        "crypto-execution-plan",
+        help=(
+            "Convert audited buy-only PAPER_CANDIDATE rows into protected execution INTENTS "
+            "(slippage caps, freshness/latency budget, partial-fill + residual-exposure model, "
+            "CDNA fill-first). Produces order intents only — never places/cancels orders."
+        ),
+    )
+    exec_plan_parser.add_argument(
+        "--candidate-report", type=Path,
+        default=PROJECT_ROOT / "reports" / "crypto_paper_candidate_audit_pack.json",
+    )
+    exec_plan_parser.add_argument("--candidate-id", type=str, default=None)
+    exec_plan_parser.add_argument("--max-total-notional", type=float, default=10.0)
+    exec_plan_parser.add_argument("--max-leg-notional", type=float, default=5.0)
+    exec_plan_parser.add_argument("--max-slippage-cents", type=float, default=1.0)
+    exec_plan_parser.add_argument("--max-quote-age-ms", type=float, default=750.0)
+    exec_plan_parser.add_argument(
+        "--execution-style",
+        choices=("parallel_protected_limit", "fill_worst_leg_first", "manual"),
+        default="manual",
+    )
+    exec_plan_parser.add_argument(
+        "--json-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_execution_plan.json",
+    )
+    exec_plan_parser.add_argument(
+        "--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_execution_plan.md",
+    )
+
+    # --- Crypto micro-test forensic journal (manual; never trades) -------------- #
+    _MICRO_ROOT = PROJECT_ROOT / "reports" / "crypto_micro_tests"
+
+    mt_start = subparsers.add_parser(
+        "start-crypto-micro-test",
+        help="Freeze a candidate + execution plan into a manual micro-test journal (no trading).",
+    )
+    mt_start.add_argument("--candidate-audit-pack", type=Path, required=True)
+    mt_start.add_argument("--candidate-id", type=str, required=True)
+    mt_start.add_argument("--execution-plan", type=Path, default=None)
+    mt_start.add_argument("--max-total-notional", type=float, default=10.0)
+    mt_start.add_argument("--test-label", type=str, default=None)
+    mt_start.add_argument("--output-root", type=Path, default=_MICRO_ROOT)
+
+    mt_fill = subparsers.add_parser(
+        "record-crypto-micro-fill",
+        help="Record a manually-observed fill for a micro-test leg (no trading).",
+    )
+    mt_fill.add_argument("--test-id", type=str, required=True)
+    mt_fill.add_argument("--platform", choices=("kalshi", "polymarket", "cdna"), required=True)
+    mt_fill.add_argument("--market-id-or-ticker", type=str, required=True)
+    mt_fill.add_argument("--side", choices=("YES", "NO"), required=True)
+    mt_fill.add_argument("--intended-limit-price", type=float, default=None)
+    mt_fill.add_argument("--filled-price", type=float, default=None)
+    mt_fill.add_argument("--filled-quantity", type=float, default=None)
+    mt_fill.add_argument("--fees", type=float, default=None)
+    mt_fill.add_argument("--order-start-time-utc", type=str, default=None)
+    mt_fill.add_argument("--order-submit-time-utc", type=str, default=None)
+    mt_fill.add_argument("--first-fill-time-utc", type=str, default=None)
+    mt_fill.add_argument("--final-fill-time-utc", type=str, default=None)
+    mt_fill.add_argument("--order-status", choices=("filled", "partial", "not_filled", "canceled", "rejected"), default="filled")
+    mt_fill.add_argument("--notes", type=str, default=None)
+    mt_fill.add_argument("--output-root", type=Path, default=_MICRO_ROOT)
+
+    mt_final = subparsers.add_parser(
+        "finalize-crypto-micro-test",
+        help="Finalize a micro-test: compute economics, residual exposure, and verdict (no trading).",
+    )
+    mt_final.add_argument("--test-id", type=str, required=True)
+    mt_final.add_argument("--settlement-status", type=str, default=None)
+    mt_final.add_argument("--manual-notes", type=str, default=None)
+    mt_final.add_argument("--output-root", type=Path, default=_MICRO_ROOT)
+
+    mt_report = subparsers.add_parser(
+        "crypto-micro-test-report",
+        help="Render the 12-section forensic markdown report for a micro-test (no trading).",
+    )
+    mt_report.add_argument("--test-id", type=str, required=True)
+    mt_report.add_argument("--markdown-output", type=Path, default=None)
+    mt_report.add_argument("--output-root", type=Path, default=_MICRO_ROOT)
+
+    mt_quote = subparsers.add_parser(
+        "append-crypto-micro-quote-snapshot",
+        help="Append a quote snapshot (pre/post-order, after-fill) to a micro-test (no trading).",
+    )
+    mt_quote.add_argument("--test-id", type=str, required=True)
+    mt_quote.add_argument("--source", choices=("scanner", "manual", "api"), default="manual")
+    mt_quote.add_argument("--json-file", type=Path, default=None)
+    mt_quote.add_argument("--output-root", type=Path, default=_MICRO_ROOT)
+
+    # --- Guarded live micro-test trigger (dry-run default; never trades unattended) - #
+    trig = subparsers.add_parser(
+        "trigger-crypto-structural-arb",
+        help=(
+            "Guarded micro-test trigger: live-scan -> freeze candidate -> refresh quotes -> recompute "
+            "edge -> protected execution plan -> micro-test journal. Dry-run by default; live placement "
+            "requires ALL explicit gates. Protected LIMIT BUY only; no shorting; CDNA manual fill-first."
+        ),
+    )
+    trig.add_argument("--assets", default="BTC,ETH,SOL,XRP,DOGE")
+    trig.add_argument("--watch-once-or-loop", choices=("once", "loop"), default="once")
+    trig.add_argument("--iterations", type=int, default=300)
+    trig.add_argument("--min-net-edge", type=float, default=0.10)
+    trig.add_argument("--operator-risk-mode", choices=("conservative", "standard", "aggressive"), default="aggressive")
+    trig.add_argument("--burst-mode", action="store_true")
+    trig.add_argument("--burst-interval-seconds", type=float, default=3.0)
+    trig.add_argument("--normal-interval-seconds", type=float, default=20.0)
+    trig.add_argument("--boundary-window-seconds", type=float, default=120.0)
+    trig.add_argument("--max-quote-age-ms", type=float, default=750.0)
+    trig.add_argument("--max-slippage-cents", type=float, default=1.0)
+    trig.add_argument("--order-timeout-ms", type=float, default=1500.0)
+    trig.add_argument("--max-total-notional", type=float, default=30.0)
+    trig.add_argument("--max-platform-notional", type=float, default=10.0)
+    trig.add_argument("--max-leg-notional", type=float, default=5.0)
+    trig.add_argument("--operator-size-cap", type=float, default=10.0)
+    trig.add_argument("--max-daily-notional", type=float, default=30.0)
+    trig.add_argument("--max-orders", type=int, default=4)
+    trig.add_argument("--max-residual-exposure", type=float, default=5.0)
+    trig.add_argument("--include-cdna", action="store_true")
+    trig.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    trig.add_argument("--operator-accept-cdna-display-price-risk", action="store_true")
+    trig.add_argument("--cdna-operator-size-cap", type=float, default=1.0)
+    trig.add_argument("--source-basis-buffer-bps", type=float, default=0.0)
+    trig.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports" / "crypto_structural_trigger")
+    trig.add_argument("--execution-style", choices=("parallel_protected_limit", "least_liquid_first", "manual"), default="manual")
+    trig.add_argument("--dry-run", action="store_true")
+    trig.add_argument("--live", action="store_true")
+    trig.add_argument("--i-understand-this-places-real-orders", action="store_true")
+    trig.add_argument("--fail-fast", action="store_true")
+
+    cov_audit = subparsers.add_parser(
+        "crypto-arb-surface-coverage-audit",
+        help=(
+            "Verify the scanner is evaluating every plausible buy-only arb combination "
+            "(contract family × platform pair/triple × candidate type) and flag GAP / "
+            "EXPECTED_ZERO / NEEDS_DATA per candidate type. Read-only; no trading."
+        ),
+    )
+    cov_audit.add_argument("--input-report", type=Path, default=None)
+    cov_audit.add_argument("--latest-iteration-dir", type=Path, default=None)
+    cov_audit.add_argument("--assets", default="BTC,ETH,SOL,XRP,DOGE")
+    cov_audit.add_argument("--include-cdna", action="store_true")
+    cov_audit.add_argument("--json-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_arb_surface_coverage_audit.json")
+    cov_audit.add_argument("--markdown-output", type=Path, default=PROJECT_ROOT / "reports" / "crypto_arb_surface_coverage_audit.md")
+
+    # --- Fast path: discovery pass + hot quote-loop trigger -------------------- #
+    universe_parser = subparsers.add_parser(
+        "build-crypto-candidate-universe",
+        help="Discovery pass: run the full structural scout once and freeze the buy-only candidate universe (legs/strikes/instants/payoff vectors).",
+    )
+    universe_parser.add_argument("--assets", default="BTC,ETH,SOL,XRP,DOGE")
+    universe_parser.add_argument("--operator-risk-mode", choices=("conservative", "standard", "aggressive"), default="aggressive")
+    universe_parser.add_argument("--include-cdna", action="store_true")
+    universe_parser.add_argument("--cdna-evidence-dir", type=Path, default=None)
+    universe_parser.add_argument("--operator-size-cap", type=float, default=10.0)
+    universe_parser.add_argument("--min-net-edge", type=float, default=0.0)
+    universe_parser.add_argument("--max-candidates", type=int, default=50)
+    universe_parser.add_argument("--source-basis-buffer-bps", type=float, default=0.0)
+    universe_parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "reports" / "active_crypto_candidate_universe.json")
+
+    fast = subparsers.add_parser(
+        "trigger-crypto-fast-path",
+        help=(
+            "Fast quote-loop trigger over a frozen candidate universe (no full scan / no markdown in the hot path). "
+            "Measures recognition->order-intent and quote-refresh->order-submit latency; gates on decision/quote age. "
+            "Dry-run by default; protected LIMIT BUY only."
+        ),
+    )
+    fast.add_argument("--candidate-universe", type=Path, default=PROJECT_ROOT / "reports" / "active_crypto_candidate_universe.json")
+    fast.add_argument("--quote-loop-interval-ms", type=float, default=500.0)
+    fast.add_argument("--iterations", type=int, default=1)
+    fast.add_argument("--min-net-edge", type=float, default=0.10)
+    fast.add_argument("--max-decision-age-ms", type=float, default=500.0)
+    fast.add_argument("--max-quote-age-ms", type=float, default=750.0)
+    fast.add_argument("--refresh-universe-every-seconds", type=float, default=60.0)
+    fast.add_argument("--source-basis-buffer-bps", type=float, default=0.0)
+    fast.add_argument("--max-slippage-cents", type=float, default=1.0)
+    fast.add_argument("--order-timeout-ms", type=float, default=1500.0)
+    fast.add_argument("--max-total-notional", type=float, default=30.0)
+    fast.add_argument("--max-platform-notional", type=float, default=10.0)
+    fast.add_argument("--max-leg-notional", type=float, default=5.0)
+    fast.add_argument("--operator-size-cap", type=float, default=10.0)
+    fast.add_argument("--max-orders", type=int, default=4)
+    fast.add_argument("--max-residual-exposure", type=float, default=5.0)
+    fast.add_argument("--execution-style", choices=("parallel_protected_limit", "least_liquid_first", "manual"), default="manual")
+    fast.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "reports" / "crypto_fast_path_trigger")
+    fast.add_argument("--dry-run", action="store_true")
+    fast.add_argument("--live", action="store_true")
+    fast.add_argument("--i-understand-this-places-real-orders", action="store_true")
 
     batch_readiness_parser = subparsers.add_parser(
         "batch-evidence-import-readiness",
@@ -4872,6 +5157,275 @@ def main(argv: list[str] | None = None) -> int:
             f"ignore_blocked_rows={counts.get('ignore_blocked_rows', 0)} "
             f"top_blocker={top_blocker} "
             f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "watch-crypto-structural-arb":
+        asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
+        summary = run_crypto_structural_watch(
+            assets=asset_list,
+            interval_seconds=args.interval_seconds,
+            iterations=args.iterations,
+            burst_mode=args.burst_mode,
+            burst_interval_seconds=args.burst_interval_seconds,
+            normal_interval_seconds=args.normal_interval_seconds,
+            boundary_window_seconds=args.boundary_window_seconds,
+            operator_risk_mode=args.operator_risk_mode,
+            include_cdna=args.include_cdna,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            allow_top_of_book_depth=args.allow_top_of_book_depth,
+            operator_size_cap=args.operator_size_cap,
+            cdna_operator_size_cap=args.cdna_operator_size_cap,
+            cdna_evidence_dir=args.cdna_evidence_dir,
+            max_quote_age_seconds=args.max_quote_age_seconds,
+            min_available_notional=args.min_available_notional,
+            max_basket_legs=args.max_basket_legs,
+            source_basis_buffer_bps=args.source_basis_buffer_bps,
+            source_basis_buffer_absolute=args.source_basis_buffer_absolute,
+            near_miss_net_edge_threshold=args.near_miss_net_edge_threshold,
+            wide_near_miss_net_edge_threshold=args.wide_near_miss_net_edge_threshold,
+            lookahead_hours=args.lookahead_hours,
+            output_dir=args.output_dir,
+        )
+        totals = summary.get("totals") or {}
+        cadence = summary.get("cadence") or {}
+        watch_top_blocker = (totals.get("top_hard_blockers") or [{}])[0].get("blocker")
+        print(
+            "run_watch_crypto_structural_arb_status=OK "
+            "diagnostic_only=true public_read_only=true execution_enabled=false alerts_added=false "
+            f"operator_risk_mode={summary.get('operator_risk_mode')} "
+            f"assets={','.join(summary.get('assets') or [])} "
+            f"iterations_completed={summary.get('iterations_completed')} "
+            f"interval_seconds={summary.get('interval_seconds')} "
+            f"burst_mode={bool(cadence.get('burst_mode'))} "
+            f"iterations_by_cadence={cadence.get('iterations_by_mode') or {}} "
+            f"paper_candidates_found={totals.get('paper_candidates_found', 0)} "
+            f"manual_micro_test_candidates={totals.get('manual_micro_test_candidates', 0)} "
+            f"complement_quote_rows={totals.get('complement_quote_rows', 0)} "
+            f"run_quality={summary.get('run_quality_label')} "
+            f"best_priced_buy_only_net_edge_after_fees={totals.get('best_priced_buy_only_net_edge_after_fees')} "
+            f"best_priced_buy_only_reason={totals.get('best_priced_buy_only_net_edge_after_fees_reason')} "
+            f"best_near_miss_net_edge_after_fees={totals.get('best_near_miss_net_edge_after_fees')} "
+            f"worst_net_edge_after_fees={totals.get('worst_net_edge_after_fees')} "
+            f"top_blocker={watch_top_blocker} "
+            f"summary_dir={args.output_dir}"
+        )
+        return 0
+    if args.command == "extract-crypto-paper-candidate-audit-pack":
+        report = write_crypto_paper_candidate_audit_pack_files(
+            watch_dir=args.watch_dir,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        print(
+            "extract_crypto_paper_candidate_audit_pack=OK diagnostic_only=true public_read_only=true "
+            "execution_enabled=false network_access=false "
+            f"watch_dir={args.watch_dir} watch_dir_exists={report.get('watch_dir_exists')} "
+            f"iteration_reports_scanned={report.get('iteration_reports_scanned', 0)} "
+            f"canonical_rows_seen={report.get('canonical_rows_seen', 0)} "
+            f"summary_copies_seen={report.get('summary_copies_seen', 0)} "
+            f"naive_all_paths_total={report.get('naive_all_paths_total', 0)} "
+            f"unique_candidates={report.get('unique_candidates', 0)} "
+            f"duplicates_ignored={report.get('duplicates_ignored_count', 0)} "
+            f"verdict_counts={report.get('verdict_counts') or {}} "
+            f"best_adjusted_net_edge_after_fees={report.get('best_candidate_adjusted_net_edge_after_fees')} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "build-crypto-candidate-universe":
+        asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
+        universe = build_active_candidate_universe(
+            assets=asset_list, operator_risk_mode=args.operator_risk_mode, include_cdna=args.include_cdna,
+            cdna_evidence_dir=args.cdna_evidence_dir, operator_size_cap=args.operator_size_cap,
+            min_net_edge=args.min_net_edge, max_candidates=args.max_candidates,
+            source_basis_buffer_bps=args.source_basis_buffer_bps, output_path=args.output,
+        )
+        print(
+            "build_crypto_candidate_universe=OK diagnostic_only=true discovery_pass=true "
+            f"assets={','.join(asset_list)} candidate_count={universe.get('candidate_count')} "
+            f"watched_leg_count={universe.get('watched_leg_count')} output={args.output}"
+        )
+        return 0
+    if args.command == "trigger-crypto-fast-path":
+        try:
+            _uni = json.loads(Path(args.candidate_universe).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            _uni = None
+        _dp = (_uni or {}).get("discovery_params") if isinstance(_uni, dict) else None
+        _discovery_fn = None
+        if _dp:
+            def _discovery_fn():  # slow-cadence re-discovery; runs the full scout, never per tick
+                return build_active_candidate_universe(
+                    assets=_dp.get("assets") or [], operator_risk_mode=_dp.get("operator_risk_mode", "aggressive"),
+                    include_cdna=bool(_dp.get("include_cdna")), cdna_evidence_dir=(Path(_dp["cdna_evidence_dir"]) if _dp.get("cdna_evidence_dir") else None),
+                    operator_size_cap=_dp.get("operator_size_cap", 10.0), min_net_edge=_dp.get("min_net_edge", 0.0),
+                    max_candidates=_dp.get("max_candidates", 50), source_basis_buffer_bps=_dp.get("source_basis_buffer_bps", 0.0),
+                    output_path=args.candidate_universe,
+                )
+        summary = run_crypto_fast_path_trigger(
+            candidate_universe=args.candidate_universe, quote_loop_interval_ms=args.quote_loop_interval_ms,
+            iterations=args.iterations, min_net_edge=args.min_net_edge, max_decision_age_ms=args.max_decision_age_ms,
+            max_quote_age_ms=args.max_quote_age_ms, refresh_universe_every_seconds=args.refresh_universe_every_seconds,
+            source_basis_buffer_bps=args.source_basis_buffer_bps, discovery_fn=_discovery_fn,
+            max_slippage_cents=args.max_slippage_cents,
+            order_timeout_ms=args.order_timeout_ms, max_total_notional=args.max_total_notional,
+            max_platform_notional=args.max_platform_notional, max_leg_notional=args.max_leg_notional,
+            operator_size_cap=args.operator_size_cap, max_orders=args.max_orders,
+            max_residual_exposure=args.max_residual_exposure, execution_style=args.execution_style,
+            output_dir=args.output_dir, dry_run=args.dry_run, live=args.live,
+            i_understand_this_places_real_orders=args.i_understand_this_places_real_orders,
+        )
+        print(
+            "trigger_crypto_fast_path=OK dry_run_default=true protected_limit_buy_only=true market_orders=false "
+            "shorting=false hot_path_no_full_scan=true hot_path_no_markdown=true "
+            f"mode={summary.get('mode')} universe_candidate_count={summary.get('universe_candidate_count')} "
+            f"ticks={summary.get('ticks')} decisions={summary.get('decisions')} "
+            f"decisions_that_would_trade={summary.get('decisions_that_would_trade')} "
+            f"kill_switch_present={summary.get('kill_switch_present')} output_dir={args.output_dir}"
+        )
+        return 0
+    if args.command == "crypto-arb-surface-coverage-audit":
+        asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
+        report = write_crypto_arb_surface_coverage_audit_files(
+            input_report=args.input_report, latest_iteration_dir=args.latest_iteration_dir,
+            assets=asset_list, include_cdna=args.include_cdna,
+            json_output=args.json_output, markdown_output=args.markdown_output,
+        )
+        print(
+            "crypto_arb_surface_coverage_audit=OK diagnostic_only=true public_read_only=true network_access=false "
+            f"source_kind={report.get('source_kind')} verdict={report.get('verdict')} "
+            f"gap_count={report.get('gap_count')} gaps={report.get('gaps')} "
+            f"expected_zero_count={report.get('expected_zero_count')} needs_data_count={report.get('needs_data_count')} "
+            f"load_error={report.get('load_error')} json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "trigger-crypto-structural-arb":
+        asset_list = [a.strip().upper() for a in (args.assets or "").split(",") if a.strip()]
+        summary = run_crypto_structural_trigger(
+            assets=asset_list, watch_once_or_loop=args.watch_once_or_loop, iterations=args.iterations,
+            min_net_edge=args.min_net_edge, operator_risk_mode=args.operator_risk_mode, burst_mode=args.burst_mode,
+            burst_interval_seconds=args.burst_interval_seconds, normal_interval_seconds=args.normal_interval_seconds,
+            boundary_window_seconds=args.boundary_window_seconds, max_quote_age_ms=args.max_quote_age_ms,
+            max_slippage_cents=args.max_slippage_cents, order_timeout_ms=args.order_timeout_ms,
+            max_total_notional=args.max_total_notional, max_platform_notional=args.max_platform_notional,
+            max_leg_notional=args.max_leg_notional, operator_size_cap=args.operator_size_cap,
+            max_daily_notional=args.max_daily_notional, max_orders=args.max_orders,
+            max_residual_exposure=args.max_residual_exposure, include_cdna=args.include_cdna,
+            cdna_evidence_dir=args.cdna_evidence_dir,
+            operator_accept_cdna_display_price_risk=args.operator_accept_cdna_display_price_risk,
+            cdna_operator_size_cap=args.cdna_operator_size_cap, source_basis_buffer_bps=args.source_basis_buffer_bps,
+            output_dir=args.output_dir, execution_style=args.execution_style, dry_run=args.dry_run, live=args.live,
+            i_understand_this_places_real_orders=args.i_understand_this_places_real_orders, fail_fast=args.fail_fast,
+        )
+        print(
+            "trigger_crypto_structural_arb=OK dry_run_default=true protected_limit_buy_only=true "
+            "market_orders=false shorting=false browser_automation_added=false reads_credentials=false "
+            f"mode={summary.get('mode')} assets={','.join(summary.get('assets') or [])} "
+            f"iterations_completed={summary.get('iterations_completed')} "
+            f"triggers_created={summary.get('triggers_created')} "
+            f"triggers_that_would_trade={summary.get('triggers_that_would_trade')} "
+            f"kill_switch_present={summary.get('kill_switch_present')} output_dir={args.output_dir}"
+        )
+        return 0
+    if args.command == "start-crypto-micro-test":
+        result = start_crypto_micro_test(
+            candidate_audit_pack=args.candidate_audit_pack, candidate_id=args.candidate_id,
+            execution_plan=args.execution_plan, max_total_notional=args.max_total_notional,
+            test_label=args.test_label, output_root=args.output_root,
+        )
+        print(
+            "start_crypto_micro_test=OK forensic_journal_only=true live_order_placement=false "
+            "order_submit_or_cancel=false account_connection=false network_access=false "
+            f"test_id={result.get('test_id')} test_dir={result.get('test_dir')} "
+            f"intended_legs={result.get('intended_legs')} warnings={result.get('warnings')}"
+        )
+        return 0
+    if args.command == "record-crypto-micro-fill":
+        result = record_crypto_micro_fill(
+            test_id=args.test_id, platform=args.platform, market_id_or_ticker=args.market_id_or_ticker,
+            side=args.side, intended_limit_price=args.intended_limit_price, filled_price=args.filled_price,
+            filled_quantity=args.filled_quantity, fees=args.fees, order_start_time_utc=args.order_start_time_utc,
+            order_submit_time_utc=args.order_submit_time_utc, first_fill_time_utc=args.first_fill_time_utc,
+            final_fill_time_utc=args.final_fill_time_utc, order_status=args.order_status, notes=args.notes,
+            output_root=args.output_root,
+        )
+        print(
+            "record_crypto_micro_fill=OK forensic_journal_only=true live_order_placement=false "
+            f"test_id={result.get('test_id')} leg_key={result.get('leg_key')} warnings={result.get('warnings')}"
+        )
+        return 0
+    if args.command == "finalize-crypto-micro-test":
+        final = finalize_crypto_micro_test(
+            test_id=args.test_id, settlement_status=args.settlement_status,
+            manual_notes=args.manual_notes, output_root=args.output_root,
+        )
+        print(
+            "finalize_crypto_micro_test=OK forensic_journal_only=true live_order_placement=false "
+            f"test_id={final.get('test_id')} verdict={final.get('verdict')} "
+            f"guarantee_holds={final.get('guarantee_holds')} "
+            f"actual_net_edge_after_fees_if_all_filled={final.get('actual_net_edge_after_fees_if_all_filled')} "
+            f"filled_legs={final.get('filled_legs')}/{final.get('legs_total')}"
+        )
+        return 0
+    if args.command == "crypto-micro-test-report":
+        result = crypto_micro_test_report(
+            test_id=args.test_id, markdown_output=args.markdown_output, output_root=args.output_root,
+        )
+        print(
+            "crypto_micro_test_report=OK forensic_journal_only=true "
+            f"test_id={result.get('test_id')} verdict={result.get('verdict')} markdown={result.get('markdown_path')}"
+        )
+        return 0
+    if args.command == "append-crypto-micro-quote-snapshot":
+        result = append_crypto_micro_quote_snapshot(
+            test_id=args.test_id, source=args.source, json_file=args.json_file, output_root=args.output_root,
+        )
+        print(
+            "append_crypto_micro_quote_snapshot=OK forensic_journal_only=true network_access=false "
+            f"test_id={result.get('test_id')} appended={result.get('appended')} warnings={result.get('warnings')}"
+        )
+        return 0
+    if args.command == "crypto-execution-plan":
+        report = write_execution_plan_files(
+            candidate_report=args.candidate_report,
+            candidate_id=args.candidate_id,
+            max_total_notional=args.max_total_notional,
+            max_leg_notional=args.max_leg_notional,
+            max_slippage_cents=args.max_slippage_cents,
+            max_quote_age_ms=args.max_quote_age_ms,
+            execution_style=args.execution_style,
+            json_output=args.json_output,
+            markdown_output=args.markdown_output,
+        )
+        print(
+            "crypto_execution_plan=OK diagnostic_only=true produces_order_intents_only=true "
+            "live_order_placement=false order_submit_or_cancel=false network_access=false "
+            f"candidate_report={args.candidate_report} candidate_report_exists={report.get('candidate_report_exists')} "
+            f"execution_style={args.execution_style} "
+            f"candidate_plans_total={report.get('candidate_plans_total', 0)} "
+            f"executable_intent_plans={report.get('executable_intent_plans', 0)} "
+            f"do_not_trade_plans={report.get('do_not_trade_plans', 0)} "
+            f"json={args.json_output} markdown={args.markdown_output}"
+        )
+        return 0
+    if args.command == "ingest-cdna-crypto-snapshots":
+        report = write_cdna_crypto_snapshot_files(
+            input_root=args.input_root,
+            output_dir=args.output_dir,
+        )
+        files = report.get("output_files") or {}
+        by_asset = report.get("contracts_by_asset") or {}
+        print(
+            "ingest_cdna_crypto_snapshots=OK diagnostic_only=true saved_evidence_only=true "
+            "cdna_network_fetch_attempted=false browser_automation_added=false execution_enabled=false "
+            f"input_root={args.input_root} input_root_exists={report.get('input_root_exists')} "
+            f"snapshots_ingested={report.get('snapshots_ingested', 0)} "
+            f"raw_observations={report.get('raw_observations', 0)} "
+            f"duplicates_removed={report.get('duplicates_removed', 0)} "
+            f"distinct_contracts={report.get('distinct_contract_ids', 0)} "
+            f"contracts_by_asset={by_asset} "
+            f"target_instants_observed={len(report.get('target_instants_observed') or [])} "
+            f"sensitive_fields_redacted={report.get('redacted_field_count', 0)} "
+            f"jsonl={files.get('jsonl')} latest={files.get('latest')} summary={files.get('summary')}"
         )
         return 0
     if args.command == "batch-evidence-import-readiness":
